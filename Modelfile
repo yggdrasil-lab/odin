@@ -1,0 +1,5 @@
+# Option B (Balanced): Qwen 2.5 14B Q8_0 with 96k context window
+FROM qwen2.5:14b-instruct-q8_0
+
+# Set the context window to 96k (98,304 tokens)
+PARAMETER num_ctx 98304

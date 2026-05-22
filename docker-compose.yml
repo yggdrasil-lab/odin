@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_KV_CACHE_TYPE=q8_0
+    networks:
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    volumes:
+      - open-webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    networks:
+      - aether-net
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.odin-webui.rule=Host(`odin.${DOMAIN_NAME}`)"
+        - "traefik.http.routers.odin-webui.entrypoints=websecure"
+        - "traefik.http.routers.odin-webui.tls=true"
+        - "traefik.http.routers.odin-webui.tls.certresolver=cloudflare"
+        - "traefik.http.services.odin-webui.loadbalancer.server.port=8080"
+        - "traefik.docker.network=aether-net"
+        - "homepage.group=Odin"
+        - "homepage.name=Odin Chat"
+        - "homepage.icon=open-webui.png"
+        - "homepage.href=https://odin.${DOMAIN_NAME}"
+        - "homepage.description=Local LLM Chat Interface"
+
+  huginn-agent:
+    image: nousresearch/hermes-agent:latest
+    volumes:
+      # Mount active second-brain (read-write, archives are accessible inside under x/)
+      - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
+    environment:
+      - OPENAI_API_BASE=http://ollama:11434/v1
+      - OPENAI_API_KEY=ollama
+      - AGENT_MODEL=qwen2.5-muninn:latest
+    networks:
+      - aether-net
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        # Router for Huginn Dashboard (Port 9119)
+        - "traefik.http.routers.huginn-dashboard.rule=Host(`huginn.${DOMAIN_NAME}`)"
+        - "traefik.http.routers.huginn-dashboard.entrypoints=websecure"
+        - "traefik.http.routers.huginn-dashboard.tls=true"
+        - "traefik.http.routers.huginn-dashboard.tls.certresolver=cloudflare"
+        - "traefik.http.routers.huginn-dashboard.service=huginn-dashboard"
+        - "traefik.http.services.huginn-dashboard.loadbalancer.server.port=9119"
+        
+        # Router for Huginn API (Port 8642)
+        - "traefik.http.routers.huginn-api.rule=Host(`agent.${DOMAIN_NAME}`)"
+        - "traefik.http.routers.huginn-api.entrypoints=websecure"
+        - "traefik.http.routers.huginn-api.tls=true"
+        - "traefik.http.routers.huginn-api.tls.certresolver=cloudflare"
+        - "traefik.http.routers.huginn-api.service=huginn-api"
+        - "traefik.http.services.huginn-api.loadbalancer.server.port=8642"
+        
+        - "traefik.docker.network=aether-net"
+        - "homepage.group=Odin"
+        - "homepage.name=Huginn Dashboard"
+        - "homepage.icon=hermes.png"
+        - "homepage.href=https://huginn.${DOMAIN_NAME}"
+        - "homepage.description=Hermes Agent Web UI"
+
+volumes:
+  ollama_data:
+  open-webui_data:
+
+networks:
+  aether-net:
+    external: true
+  internal:
+    driver: overlay
+    attachable: true
