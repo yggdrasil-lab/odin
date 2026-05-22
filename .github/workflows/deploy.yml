@@ -1,0 +1,24 @@
+name: Deploy Odin
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, gaia]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Deploy Stack
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH }}
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh "odin" docker-compose.yml
