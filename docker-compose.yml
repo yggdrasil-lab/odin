@@ -54,7 +54,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: gateway run
     volumes:
-      - hermes_data:/opt/data
+      - /mnt/storage/backups/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
     environment:
       - OPENAI_API_BASE=http://ollama:11434/v1
@@ -89,7 +89,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: dashboard --host 0.0.0.0
     volumes:
-      - hermes_data:/opt/data
+      - /mnt/storage/backups/odin/hermes:/opt/data
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
     networks:
@@ -124,7 +124,6 @@ services:
 volumes:
   ollama_data:
   open-webui_data:
-  hermes_data:
 
 networks:
   aether-net:
