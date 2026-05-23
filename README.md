@@ -9,6 +9,15 @@ Odin is the central stack designed to host local AI models and agent services fo
 
 ## Deployment
 This stack is deployed in Docker Swarm mode and routed via Traefik.
+
+### Host Preparation
+Before deploying, run the host setup script to prepare the necessary backup directories:
+```bash
+chmod +x setup_host.sh
+./setup_host.sh
+```
+
+### Stack Deployment
 To deploy/update:
 ```bash
 # Set environment variables (e.g. DOMAIN_NAME, OBSIDIAN_VAULT_PATH)
