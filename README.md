@@ -3,7 +3,7 @@
 Odin is the central stack designed to host local AI models and agent services for the **Yggdrasil** home server ecosystem.
 
 ## Components
-*   **Muninn LLM (Ollama):** Running `qwen2.5:14b-instruct-q8_0` with a 96k context window optimized for background processing on Gaia's CPU.
+*   **Muninn LLM (Ollama):** Running `qwen2.5:7b-instruct` with a 64k context window optimized for background processing on Gaia's CPU.
 *   **Huginn Agent (Hermes Agent):** Nous Research Hermes Agent executing tools and maintaining vault state.
 *   **Odin Web UI (Open-WebUI):** High-performance chat UI.
 
