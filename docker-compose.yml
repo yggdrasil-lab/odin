@@ -10,6 +10,8 @@ services:
       - OLLAMA_KV_CACHE_TYPE=q8_0
     networks:
       - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
@@ -32,6 +34,8 @@ services:
     networks:
       - aether-net
       - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
@@ -70,6 +74,8 @@ services:
     networks:
       - aether-net
       - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
@@ -101,6 +107,8 @@ services:
       - internal
     depends_on:
       - huginn-gateway
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
