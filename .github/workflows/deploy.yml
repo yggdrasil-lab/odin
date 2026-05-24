@@ -15,10 +15,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Secrets
+        env:
+          LLDAP_LDAP_USER_PASS: ${{ secrets.LLDAP_LDAP_USER_PASS }}
+        run: |
+          chmod +x scripts/ensure_secret.sh
+          
+          # Resolve the external LLDAP password secret name from Cerberus
+          echo "LLDAP_LDAP_USER_PASS_NAME=$(echo "$LLDAP_LDAP_USER_PASS" | ./scripts/ensure_secret.sh cerberus_lldap_user_pass)" >> $GITHUB_ENV
+
       - name: Deploy Stack
         env:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH }}
+          LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
+          LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
         run: |
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml
