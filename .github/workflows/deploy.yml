@@ -10,7 +10,7 @@ jobs:
     runs-on: [self-hosted, gaia]
     env:
       OLLAMA_BASE_MODEL: qwen2.5-coder:7b
-      HERMES_CONTEXT_LENGTH: 131072
+      HERMES_CONTEXT_LENGTH: 65536
       AGENT_MODEL: qwen2.5-muninn:latest
       OLLAMA_NUM_THREADS: 8
     
