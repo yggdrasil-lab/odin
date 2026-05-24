@@ -8,7 +8,7 @@ services:
         target: /init.sh
     environment:
       - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_KV_CACHE_TYPE=q8_0
+      - OLLAMA_KV_CACHE_TYPE=q4_0
       - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
     entrypoint: ["/bin/sh", "/init.sh"]
@@ -22,10 +22,6 @@ services:
       placement:
         constraints:
           - node.role == manager
-      resources:
-        limits:
-          cpus: '4.0'
-          memory: 12g
       restart_policy:
         condition: on-failure
 
