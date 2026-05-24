@@ -29,10 +29,13 @@ services:
   muninn:
     image: ghcr.io/berriai/litellm:main-latest
     volumes:
-      - /opt/odin/config/muninn:/app/config
+      - /opt/odin/config/muninn:/app/data
+    configs:
+      - source: muninn_config
+        target: /app/config.yaml
     environment:
       - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
-    command: ["--config", "/app/config/config.yaml"]
+    command: ["--config", "/app/config.yaml"]
     networks:
       - internal
       - aether-net
@@ -247,6 +250,8 @@ configs:
     file: ./config/ollama-init/init.sh
   huginn_config:
     file: ./config/hermes/config.yaml
+  muninn_config:
+    file: ./config/muninn/config.yaml
 
 secrets:
   odin_lldap_user_pass:
