@@ -60,6 +60,7 @@ graph TD
 *   **Service Name:** `open-webui`
 *   **Routing:** Routed via Traefik to `https://odin.${DOMAIN_NAME}` (port `8080`).
 *   **Integration:** Communicates with Ollama over the `internal` overlay network via `http://ollama:11434`.
+*   **Authentication (LLDAP):** Integrated with the `cerberus_lldap` service (port `3890`) on the shared `aether-net` network, enabling centralized user authentication. It uses the external Docker Secret `odin_lldap_user_pass` to bind securely.
 
 ### 3. Huginn Gateway (Hermes Agent API)
 *   **Image:** `nousresearch/hermes-agent:latest`
@@ -105,6 +106,8 @@ Ensure the following environment variables are exported or placed in a `.env` fi
 | `STACK_NAME` | The prefix name for swarm services | `odin` |
 | `DOMAIN_NAME` | The root domain for DNS routing | `yggdrasil.local` |
 | `OBSIDIAN_VAULT_PATH` | Host path containing your Obsidian Vault | `/mnt/storage/vaults` |
+| `LLDAP_LDAP_BASE_DN` | The base DN of your LLDAP directory | `dc=yggdrasil,dc=local` |
+| `LLDAP_LDAP_USER_PASS_NAME` | Name of the external LLDAP admin password Docker Secret | `cerberus_lldap_user_pass_<hash>` |
 
 ### Step 1: Host Preparation
 Run the host preparation script to ensure required backup/data directories exist and have proper ownership:

@@ -31,6 +31,19 @@ services:
       - open-webui_data:/app/backend/data
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
+      # LDAP Configuration
+      - ENABLE_LDAP=true
+      - LDAP_SERVER_HOST=cerberus_lldap
+      - LDAP_SERVER_PORT=3890
+      - LDAP_USE_TLS=false
+      - LDAP_BIND_DN=uid=admin,ou=people,${LLDAP_LDAP_BASE_DN}
+      - LDAP_BIND_PASSWORD_FILE=/run/secrets/odin_lldap_user_pass
+      - LDAP_SEARCH_BASE=ou=people,${LLDAP_LDAP_BASE_DN}
+      - LDAP_USER_ATTRS_USERNAME=uid
+      - LDAP_USER_ATTRS_EMAIL=mail
+      - LDAP_USER_ATTRS_NAME=displayName
+    secrets:
+      - odin_lldap_user_pass
     networks:
       - aether-net
       - internal
@@ -175,3 +188,8 @@ networks:
 configs:
   huginn_backup_script:
     file: ./config/hermes-backup/backup.sh
+
+secrets:
+  odin_lldap_user_pass:
+    external: true
+    name: ${LLDAP_LDAP_USER_PASS_NAME}
