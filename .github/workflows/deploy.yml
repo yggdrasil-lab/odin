@@ -8,6 +8,11 @@ on:
 jobs:
   deploy:
     runs-on: [self-hosted, gaia]
+    env:
+      OLLAMA_BASE_MODEL: qwen2.5:7b-instruct
+      HERMES_CONTEXT_LENGTH: 65536
+      AGENT_MODEL: qwen2.5-muninn:latest
+      OPENAI_API_BASE: http://ollama:11434/v1
     
     steps:
       - name: Checkout code
@@ -33,5 +38,8 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
         run: |
+          # Generate config.yaml from template using environment variables
+          python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
+          
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml

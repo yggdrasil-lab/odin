@@ -9,8 +9,8 @@ services:
     environment:
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q8_0
-      - OLLAMA_BASE_MODEL=qwen2.5:7b-instruct
-      - HERMES_CONTEXT_LENGTH=65536
+      - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
+      - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
     entrypoint: ["/bin/sh", "/init.sh"]
     networks:
       - internal
@@ -132,9 +132,9 @@ services:
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
-      - OPENAI_API_BASE=http://ollama:11434/v1
-      - AGENT_MODEL=qwen2.5-muninn:latest
-      - HERMES_CONTEXT_LENGTH=65536
+      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - AGENT_MODEL=${AGENT_MODEL}
+      - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
     networks:
       - aether-net
       - internal
