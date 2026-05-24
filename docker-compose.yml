@@ -136,7 +136,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: gateway run
     volumes:
-      - /opt/odin/hermes:/opt/hermes
+      - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
     configs:
       - source: huginn_config
@@ -183,7 +183,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
-      - /opt/odin/hermes:/opt/hermes
+      - /opt/odin/hermes:/opt/data
     configs:
       - source: huginn_config
         target: /opt/hermes/config.yaml
