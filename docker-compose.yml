@@ -39,6 +39,8 @@ services:
     networks:
       - internal
       - aether-net
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
