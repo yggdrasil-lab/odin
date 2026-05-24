@@ -165,6 +165,8 @@ services:
       - BACKUP_KEEP_DAYS=30
     depends_on:
       - huginn-gateway
+    networks:
+      - internal
     deploy:
       mode: replicated
       replicas: 1
