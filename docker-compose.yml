@@ -156,8 +156,8 @@ services:
       - HERMES_API_TIMEOUT=600
       - HERMES_STREAM_READ_TIMEOUT=600
     networks:
-      - aether-net
       - internal
+      - aether-net
     labels:
       - "com.docker.compose.project=${STACK_NAME}"
     deploy:

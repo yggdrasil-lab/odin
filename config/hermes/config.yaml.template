@@ -14,7 +14,6 @@ model:
   
   # API configuration
   base_url: "http://muninn:4000/v1"
-  api_key: "${OPENAI_API_KEY}"
   context_length: ${HERMES_CONTEXT_LENGTH}
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────
