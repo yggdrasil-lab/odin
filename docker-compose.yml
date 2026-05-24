@@ -97,7 +97,7 @@ services:
 
   huginn-dashboard:
     image: nousresearch/hermes-agent:latest
-    command: dashboard --host 0.0.0.0
+    command: dashboard --host 0.0.0.0 --insecure
     volumes:
       - /mnt/storage/backups/odin/hermes:/opt/data
     environment:
