@@ -28,6 +28,14 @@ if [ ! -d "${LIVE_DIR}" ]; then
     sudo mkdir -p "${LIVE_DIR}"
     sudo chown -R 1000:1000 "${LIVE_DIR}"
 fi
+
+# Muninn Gateway Config Directory (inside repo root)
+MUNINN_DIR="${REPO_DIR}/config/muninn"
+if [ ! -d "${MUNINN_DIR}" ]; then
+    echo "Creating ${MUNINN_DIR}..."
+    sudo mkdir -p "${MUNINN_DIR}"
+    sudo chown -R 1000:1000 "${MUNINN_DIR}"
+fi
 # Hermes Agent Backups Directory
 BACKUP_DIR="/mnt/storage/backups/odin/hermes"
 if [ ! -d "${BACKUP_DIR}" ]; then
