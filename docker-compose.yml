@@ -142,9 +142,6 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
-    configs:
-      - source: huginn_config
-        target: /opt/data/config.yaml
     environment:
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
@@ -189,9 +186,6 @@ services:
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
       - /opt/odin/hermes:/opt/data
-    configs:
-      - source: huginn_config
-        target: /opt/data/config.yaml
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
@@ -277,8 +271,6 @@ configs:
     file: ./config/hermes-backup/backup.sh
   ollama_init_script:
     file: ./config/ollama-init/init.sh
-  huginn_config:
-    file: ./config/hermes/config.yaml
   muninn_config:
     file: ./config/muninn/config.yaml
 
