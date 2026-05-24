@@ -97,6 +97,8 @@ services:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS}
       - HERMES_CONTEXT_LENGTH=65536
+      - HERMES_API_TIMEOUT=600
+      - HERMES_STREAM_READ_TIMEOUT=600
     networks:
       - aether-net
       - internal
@@ -135,6 +137,8 @@ services:
       - OPENAI_API_BASE=http://ollama:11434/v1
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
+      - HERMES_API_TIMEOUT=600
+      - HERMES_STREAM_READ_TIMEOUT=600
     networks:
       - aether-net
       - internal
