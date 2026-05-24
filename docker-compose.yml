@@ -82,6 +82,9 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
+    configs:
+      - source: huginn_config
+        target: /opt/data/config.yaml
     environment:
       - OPENAI_API_BASE=http://ollama:11434/v1
       - OPENAI_API_KEY=ollama
@@ -120,6 +123,9 @@ services:
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
       - /opt/odin/hermes:/opt/data
+    configs:
+      - source: huginn_config
+        target: /opt/data/config.yaml
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
@@ -199,6 +205,8 @@ configs:
     file: ./Modelfile
   ollama_init_script:
     file: ./config/ollama-init/init.sh
+  huginn_config:
+    file: ./config/hermes/config.yaml
 
 secrets:
   odin_lldap_user_pass:
