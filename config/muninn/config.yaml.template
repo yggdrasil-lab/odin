@@ -6,4 +6,3 @@ model_list:
 
 general_settings:
   store_prompts_in_spend_logs: true
-  database_url: "sqlite:////app/data/litellm.db"

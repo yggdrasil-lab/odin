@@ -37,6 +37,8 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
           MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY }}
+          MUNINN_DB_PASS: ${{ secrets.MUNINN_DB_PASS }}
+          MUNINN_SALT_KEY: ${{ secrets.MUNINN_SALT_KEY }}
         run: |
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"

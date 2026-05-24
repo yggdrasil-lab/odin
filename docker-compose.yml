@@ -26,15 +26,34 @@ services:
       restart_policy:
         condition: on-failure
 
-  muninn:
-    image: ghcr.io/berriai/litellm:main-latest
+  muninn-db:
+    image: postgres:16-alpine
     volumes:
-      - /opt/odin/config/muninn:/app/data
+      - muninn-db_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=muninn_user
+      - POSTGRES_PASSWORD=${MUNINN_DB_PASS:-muninn_db_password_change_me}
+      - POSTGRES_DB=muninn_db
+    networks:
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  muninn:
+    image: ghcr.io/berriai/litellm-database:main-latest
     configs:
       - source: muninn_config
         target: /app/config.yaml
     environment:
       - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - DATABASE_URL=postgresql://muninn_user:${MUNINN_DB_PASS:-muninn_db_password_change_me}@muninn-db:5432/muninn_db
+      - LITELLM_SALT_KEY=${MUNINN_SALT_KEY:-muninn-salt-key-default}
     command: ["--config", "/app/config.yaml"]
     networks:
       - internal
@@ -237,6 +256,7 @@ services:
 volumes:
   ollama_data:
   open-webui_data:
+  muninn-db_data:
 
 networks:
   aether-net:
