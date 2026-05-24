@@ -132,7 +132,7 @@ services:
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
-      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - OPENAI_API_BASE=http://ollama:11434/v1
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
     networks:
