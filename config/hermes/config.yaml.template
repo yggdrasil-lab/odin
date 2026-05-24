@@ -42,8 +42,8 @@ auxiliary:
 # =============================================================================
 providers:
   custom:
-    request_timeout_seconds: 600
-    stale_timeout_seconds: 600
+    request_timeout_seconds: 1800
+    stale_timeout_seconds: 1800
 
 # =============================================================================
 # Terminal Tool Configuration
