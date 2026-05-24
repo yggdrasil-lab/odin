@@ -7,14 +7,14 @@
 # =============================================================================
 model:
   # Default model to use (can be overridden with --model flag)
-  default: "qwen2.5-muninn:latest"
+  default: "${AGENT_MODEL}"
   
   # Inference provider selection:
   provider: "custom"
   
   # API configuration
-  base_url: "http://ollama:11434/v1"
-  context_length: 65536
+  base_url: "${OPENAI_API_BASE}"
+  context_length: ${HERMES_CONTEXT_LENGTH}
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────
   #
