@@ -87,7 +87,7 @@ services:
     volumes:
       - open-webui_data:/app/backend/data
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - ENABLE_OLLAMA_API=False
       # LDAP Configuration
       - ENABLE_LDAP=true
       - LDAP_SERVER_HOST=cerberus_lldap
