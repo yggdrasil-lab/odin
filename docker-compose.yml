@@ -13,6 +13,8 @@ services:
       - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS:-}
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_MAX_QUEUE=512
     entrypoint: ["/bin/sh", "/init.sh"]
     networks:
       - internal
