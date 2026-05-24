@@ -139,6 +139,7 @@ services:
 
   huginn-gateway:
     image: nousresearch/hermes-agent:latest
+    user: "0:0"
     command: gateway run
     volumes:
       - /opt/odin/hermes:/opt/data
@@ -184,6 +185,7 @@ services:
 
   huginn-dashboard:
     image: nousresearch/hermes-agent:latest
+    user: "0:0"
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
       - /opt/odin/hermes:/opt/data
