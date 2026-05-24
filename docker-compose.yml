@@ -11,7 +11,7 @@ services:
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q4_0
       - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
-      - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
+      - HERMES_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
       - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS:-}
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_QUEUE=512
@@ -59,6 +59,7 @@ services:
       - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY}
       - DATABASE_URL=postgresql://muninn_user:muninn_password_secret_db_pass@muninn-db:5432/muninn_db
       - LITELLM_SALT_KEY=muninn_salt_secret_key_hash
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     command: ["--config", "/app/config.yaml"]
     networks:
       - internal
@@ -103,7 +104,7 @@ services:
       - LDAP_ATTRIBUTE_FOR_USERNAME=uid
       - LDAP_ATTRIBUTE_FOR_MAIL=mail
       - ENABLE_PERSISTENT_CONFIG=false
-      - DEFAULT_MODELS=${AGENT_MODEL}
+      - DEFAULT_MODELS=${CHAT_MODEL}
       - OPENAI_API_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
     entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
@@ -153,7 +154,7 @@ services:
       - GATEWAY_ALLOW_ALL_USERS=true
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS}
-      - HERMES_CONTEXT_LENGTH=65536
+      - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - HERMES_API_TIMEOUT=1800
       - HERMES_STREAM_READ_TIMEOUT=1800
       - HERMES_STREAM_STALE_TIMEOUT=1800

@@ -53,7 +53,7 @@ graph TD
 *   **Service Name:** `ollama`
 *   **Resource Limits:** Restricted to `4.0` CPUs and `12GB` memory limit.
 *   **Optimization:** Configured with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` for CPU efficiency on Gaia.
-*   **Custom Model Configuration:** Runs a customized `qwen2.5:7b-instruct` model named `qwen2.5-muninn:latest` with a **64k context window** (`num_ctx 65536`) defined via [Modelfile](Modelfile).
+*   **Custom Model Configuration:** Runs a customized Qwen model named `qwen-muninn:latest` with a customizable context window (defined via environment variables).
 
 ### 2. Odin Web UI (Open-WebUI)
 *   **Image:** `ghcr.io/open-webui/open-webui:main`
@@ -69,7 +69,7 @@ graph TD
 *   **Storage Mounts:**
     *   **Obsidian Vault:** Host path `${OBSIDIAN_VAULT_PATH}/second-brain` mounted to `/app/vault` with read-write (`rw`) permissions so the agent can interact with notes.
     *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` for active state, dynamic skills, and databases.
-*   **LLM Connection:** Configured to talk to Muninn LLM (Ollama) using its OpenAI-compatible endpoint at `http://ollama:11434/v1` with the model `qwen2.5-muninn:latest`.
+*   **LLM Connection:** Configured to talk to Muninn LLM (Ollama) using its OpenAI-compatible endpoint at `http://ollama:11434/v1` with the model `qwen-muninn:latest`.
 
 ### 4. Huginn Dashboard (Hermes Web UI)
 *   **Image:** `nousresearch/hermes-agent:latest`
@@ -135,6 +135,38 @@ set -a && source .env && set +a
 docker stack deploy -c docker-compose.yml odin
 ```
 
+### Using Google Gemini (Optional Cloud Model)
+Odin is configured to support Google Gemini models as an alternative to local CPU execution via Ollama. This runs through Muninn (LiteLLM) to preserve unified API logging and telemetry.
+
+#### 1. Obtain a Gemini API Key
+To obtain a developer API key:
+1. Go to [Google AI Studio](https://aistudio.google.com/).
+2. Sign in with your Google account.
+3. Click the **Get API key** button in the sidebar.
+4. Click **Create API key** (you can create it in a new or existing Google Cloud project).
+5. Copy your generated key (`AIzaSy...`).
+
+> [!NOTE]
+> Google AI Studio provides a highly generous **Free Tier** (e.g., 15 RPM / 1M TPM for `gemini-2.5-flash`), which is completely free and ideal for a personal agent.
+
+#### 2. Configure GitHub Secrets
+Add the copied API key to your repository secrets:
+* **Name:** `GEMINI_API_KEY`
+* **Value:** `<your-gemini-api-key>`
+
+#### 3. Update the Model in the Deployment Workflow
+In [.github/workflows/deploy.yml](file:///g:/My%20Drive/Second%20Brain/Forge/odin/.github/workflows/deploy.yml), update the `AGENT_MODEL` environment variable to a Gemini model:
+```yaml
+    env:
+      OLLAMA_BASE_MODEL: qwen2.5-coder:7b
+      OLLAMA_CONTEXT_LENGTH: 16384
+      HERMES_CONTEXT_LENGTH: 131072
+      AGENT_MODEL: gemini-2.5-flash
+      CHAT_MODEL: qwen2.5-muninn:latest
+      OLLAMA_NUM_THREADS: 8
+```
+Once pushed to `main`, Muninn will automatically route all agent requests through Google's cloud API (with a 128K context window), while leaving Open-WebUI connected to your lightweight, fast, local CPU-based Ollama model (with a 16K context window). This avoids CPU/RAM strain on your local Gaia host while maximizing the agent's capabilities.
+
 ---
 
 ## Troubleshooting & Operations
@@ -147,10 +179,10 @@ docker service logs -f odin_huginn-gateway
 ```
 
 ### Rebuilding / Pulling Custom Models
-To recreate the customized Ollama model with the 64k context window:
+To recreate the customized Ollama model manually:
 1. Exec into the Ollama container:
    ```bash
-   docker exec -it $(docker ps -q -f name=odin_ollama) ollama create qwen2.5-muninn:latest -f /Modelfile
+   docker exec -it $(docker ps -q -f name=odin_ollama) ollama create qwen-muninn:latest -f /Modelfile
    ```
 
 ### Cleaning Up Old Models

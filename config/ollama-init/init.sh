@@ -28,7 +28,7 @@ fi
 
 # Check if model exists
 MODEL_EXISTS=false
-if /bin/ollama list | grep -q "qwen2.5-muninn:latest"; then
+if /bin/ollama list | grep -q "qwen-muninn:latest"; then
   MODEL_EXISTS=true
 fi
 
@@ -46,13 +46,13 @@ EOF
     echo "PARAMETER num_thread ${OLLAMA_NUM_THREADS}" >> /tmp/Modelfile
   fi
 
-  /bin/ollama create qwen2.5-muninn:latest -f /tmp/Modelfile
+  /bin/ollama create qwen-muninn:latest -f /tmp/Modelfile
   
   # Save the spec to persistent storage
   echo "$CURRENT_SPEC" > "$SPEC_FILE"
   echo "Custom model built successfully."
 else
-  echo "Custom model qwen2.5-muninn:latest is up-to-date."
+  echo "Custom model qwen-muninn:latest is up-to-date."
 fi
 
 # Keep container running and stream logs

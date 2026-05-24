@@ -1,10 +1,32 @@
 model_list:
-  - model_name: ${AGENT_MODEL}
+  # Local Ollama Model
+  - model_name: qwen-muninn:latest
     litellm_params:
-      model: ollama/${AGENT_MODEL}
+      model: ollama/qwen-muninn:latest
       api_base: http://ollama:11434
       timeout: 1800
       stream_timeout: 1800
+
+  # Google Gemini Models (API key read from GEMINI_API_KEY environment variable)
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      timeout: 600
+
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      timeout: 600
+
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: gemini/gemini-1.5-flash
+      timeout: 600
+
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      timeout: 600
 
 general_settings:
   store_prompts_in_spend_logs: true
