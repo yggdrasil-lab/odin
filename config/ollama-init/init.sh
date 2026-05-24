@@ -12,8 +12,10 @@ done
 echo "Ollama started."
 
 # Ensure environment variables are set
-OLLAMA_BASE_MODEL="${OLLAMA_BASE_MODEL:-qwen2.5:7b-instruct}"
-HERMES_CONTEXT_LENGTH="${HERMES_CONTEXT_LENGTH:-65536}"
+if [ -z "$OLLAMA_BASE_MODEL" ] || [ -z "$HERMES_CONTEXT_LENGTH" ]; then
+  echo "Error: OLLAMA_BASE_MODEL and HERMES_CONTEXT_LENGTH environment variables must be set." >&2
+  exit 1
+fi
 
 CURRENT_SPEC="base_model: ${OLLAMA_BASE_MODEL} | context_length: ${HERMES_CONTEXT_LENGTH}"
 SPEC_FILE="/root/.ollama/muninn_build_spec.txt"
