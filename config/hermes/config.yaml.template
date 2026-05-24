@@ -15,6 +15,7 @@ model:
   # API configuration
   base_url: "http://muninn:4000/v1"
   context_length: ${HERMES_CONTEXT_LENGTH}
+  api_key: "none"
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────
   #
