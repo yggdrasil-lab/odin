@@ -1,8 +1,7 @@
 # =============================================================================
-# Model Configuration (Declarative IaC)
+# Model Configuration (IaC)
 # =============================================================================
 model:
-  # Uses the environment variables defined in the docker-compose service
-  default: "${AGENT_MODEL}"
+  default: "qwen2.5-muninn:latest"
   provider: "custom"
-  base_url: "${OPENAI_API_BASE}"
+  base_url: "http://ollama:11434/v1"
