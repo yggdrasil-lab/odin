@@ -94,6 +94,8 @@ services:
       - API_SERVER_PORT=8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
       - GATEWAY_ALLOW_ALL_USERS=true
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS}
     networks:
       - aether-net
       - internal

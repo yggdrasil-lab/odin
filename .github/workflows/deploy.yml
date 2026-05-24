@@ -30,6 +30,8 @@ jobs:
           OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH }}
           LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
           LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
         run: |
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml
