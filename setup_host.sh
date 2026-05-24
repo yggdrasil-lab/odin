@@ -12,8 +12,11 @@ REPO_DIR="/opt/odin"
 if [ ! -d "${REPO_DIR}" ]; then
     echo "Creating ${REPO_DIR}..."
     sudo mkdir -p "${REPO_DIR}"
-    sudo chown -R $(id -u):$(id -g) "${REPO_DIR}"
 fi
+echo "Setting ownership of ${REPO_DIR}..."
+TARGET_USER=${SUDO_USER:-$(id -un)}
+TARGET_GROUP=${SUDO_GID:-$(id -g)}
+sudo chown -R ${TARGET_USER}:${TARGET_GROUP} "${REPO_DIR}"
 
 # Copy gitignore to the repository root on host
 if [ -f ".gitignore" ]; then
@@ -26,16 +29,10 @@ LIVE_DIR="${REPO_DIR}/hermes"
 if [ ! -d "${LIVE_DIR}" ]; then
     echo "Creating ${LIVE_DIR}..."
     sudo mkdir -p "${LIVE_DIR}"
-    sudo chown -R 10000:10000 "${LIVE_DIR}"
+    sudo chown -R 10000:1000 "${LIVE_DIR}"
+    sudo chmod -R 775 "${LIVE_DIR}"
 fi
 
-# Muninn Gateway Config Directory (inside repo root)
-MUNINN_DIR="${REPO_DIR}/config/muninn"
-if [ ! -d "${MUNINN_DIR}" ]; then
-    echo "Creating ${MUNINN_DIR}..."
-    sudo mkdir -p "${MUNINN_DIR}"
-    sudo chown -R 1000:1000 "${MUNINN_DIR}"
-fi
 # Hermes Agent Backups Directory
 BACKUP_DIR="/mnt/storage/backups/odin/hermes"
 if [ ! -d "${BACKUP_DIR}" ]; then

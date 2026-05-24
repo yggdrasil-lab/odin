@@ -5,7 +5,29 @@
 hermes/**/*.db
 hermes/**/*.sqlite
 hermes/**/*.sqlite3
+hermes/**/*.db-shm
+hermes/**/*.db-wal
 hermes/**/cache/
+
+# Ignore Hermes Agent runtime directories
+hermes/.local/
+hermes/bin/
+hermes/cron/
+hermes/gateway/
+hermes/sessions/
+hermes/plugins/
+hermes/skills/
+
+# Ignore Hermes Agent lock and cache files
+hermes/**/.*_snapshot.json
+hermes/**/*.lock
+hermes/**/auth.lock
+hermes/**/channel_directory.json
+hermes/**/context_length_cache.yaml
+hermes/**/gateway_state.json
+hermes/**/models_dev_cache.json
+hermes/**/ollama_cloud_models_cache.json
+hermes/**/config.yaml
 
 # Ignore databases inside config/muninn/
 config/muninn/*.db
