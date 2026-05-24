@@ -17,7 +17,7 @@ if [ -z "$OLLAMA_BASE_MODEL" ] || [ -z "$HERMES_CONTEXT_LENGTH" ]; then
   exit 1
 fi
 
-CURRENT_SPEC="base_model: ${OLLAMA_BASE_MODEL} | context_length: ${HERMES_CONTEXT_LENGTH}"
+CURRENT_SPEC="base_model: ${OLLAMA_BASE_MODEL} | context_length: ${HERMES_CONTEXT_LENGTH} | threads: ${OLLAMA_NUM_THREADS:-auto}"
 SPEC_FILE="/root/.ollama/muninn_build_spec.txt"
 
 # Read saved spec
@@ -41,6 +41,10 @@ if [ "$MODEL_EXISTS" = "false" ] || [ "$CURRENT_SPEC" != "$SAVED_SPEC" ]; then
 FROM ${OLLAMA_BASE_MODEL}
 PARAMETER num_ctx ${HERMES_CONTEXT_LENGTH}
 EOF
+
+  if [ -n "$OLLAMA_NUM_THREADS" ]; then
+    echo "PARAMETER num_thread ${OLLAMA_NUM_THREADS}" >> /tmp/Modelfile
+  fi
 
   /bin/ollama create qwen2.5-muninn:latest -f /tmp/Modelfile
   
