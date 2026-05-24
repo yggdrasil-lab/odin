@@ -16,7 +16,9 @@ hermes/cron/
 hermes/gateway/
 hermes/sessions/
 hermes/plugins/
-hermes/skills/
+# Keep skills but ignore python cache files inside it
+hermes/skills/**/__pycache__/
+hermes/skills/**/*.pyc
 
 # Ignore Hermes Agent lock and cache files
 hermes/**/.*_snapshot.json
