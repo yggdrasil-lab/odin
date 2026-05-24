@@ -29,6 +29,14 @@ if [ ! -d "${LIVE_DIR}" ]; then
     sudo chown -R 1000:1000 "${LIVE_DIR}"
 fi
 
+# Bootstrap config.yaml if it doesn't exist in live directory
+if [ ! -f "${LIVE_DIR}/config.yaml" ] && [ -f "config/hermes/config.yaml" ]; then
+    echo "Bootstrapping config.yaml in ${LIVE_DIR}..."
+    sudo cp config/hermes/config.yaml "${LIVE_DIR}/config.yaml"
+    sudo chown 1000:1000 "${LIVE_DIR}/config.yaml"
+fi
+
+
 # Hermes Agent Backups Directory
 BACKUP_DIR="/mnt/storage/backups/odin/hermes"
 if [ ! -d "${BACKUP_DIR}" ]; then

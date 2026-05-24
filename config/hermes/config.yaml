@@ -1,0 +1,8 @@
+# =============================================================================
+# Model Configuration (Declarative IaC)
+# =============================================================================
+model:
+  # Uses the environment variables defined in the docker-compose service
+  default: "${AGENT_MODEL}"
+  provider: "custom"
+  base_url: "${OPENAI_API_BASE}"

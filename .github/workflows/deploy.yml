@@ -24,6 +24,15 @@ jobs:
           # Resolve the external LLDAP password secret name from Cerberus
           echo "LLDAP_LDAP_USER_PASS_NAME=$(echo "$LLDAP_LDAP_USER_PASS" | ./scripts/ensure_secret.sh cerberus_lldap_user_pass)" >> $GITHUB_ENV
 
+      - name: Bootstrap Config
+        run: |
+          LIVE_DIR="/opt/odin/hermes"
+          if [ -d "$LIVE_DIR" ] && [ ! -f "$LIVE_DIR/config.yaml" ] && [ -f "config/hermes/config.yaml" ]; then
+              echo "Bootstrapping config.yaml in $LIVE_DIR..."
+              cp config/hermes/config.yaml "$LIVE_DIR/config.yaml"
+              chown 1000:1000 "$LIVE_DIR/config.yaml" || true
+          fi
+
       - name: Deploy Stack
         env:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
