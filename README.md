@@ -223,3 +223,39 @@ A restore script is provided at [restore.sh](config/hermes-backup/restore.sh) to
    ```bash
    sudo ./config/hermes-backup/restore.sh /mnt/storage/backups/odin/hermes/hermes_backup_20260524_120000.db
    ```
+
+---
+
+## Interacting with the Huginn Agent
+
+Odin is configured to expose multiple ways to chat and collaborate with the Huginn Agent from your PC or other devices:
+
+### 1. Discord Bot (Push-based Chat)
+If configured with `DISCORD_BOT_TOKEN`, the agent acts as a Discord bot. You can invoke it by mentioning it in allowed channels, and reset conversation sessions using the `/new` command.
+
+### 2. Huginn Web Dashboard (Direct Control Panel)
+You can access the dedicated Hermes Agent Web Dashboard directly in your browser:
+* **URL:** `https://huginn.${DOMAIN_NAME}`
+* **Features:** Allows you to chat with the agent, view active tasks, monitor step-by-step executions, inspect memories, and view/edit dynamic python skills.
+
+### 3. Open-WebUI Integration (Recommended Chat Interface)
+Because the `huginn-gateway` runs an OpenAI-compatible API server, you can connect your Open-WebUI instance to it to use it as a unified chat interface:
+1. Open **Open-WebUI** in your browser (`https://odin.${DOMAIN_NAME}`).
+2. Navigate to **Admin Settings** → **Connections** → **OpenAI**.
+3. Click the **+** icon to add a new connection and enter:
+   * **API Base URL:** `http://huginn-gateway:8642/v1`
+   * **API Key:** `<your-api-server-key>` (defaults to `insecure_default_key_change_me` if not set in GitHub secrets)
+4. Save the connection.
+5. The `hermes-agent` model will now appear in your model selection dropdown! Any chat started with this model will run actions (like reading notes from your Obsidian vault) and stream progress indicators directly into the Open-WebUI chat bubble.
+
+### 4. Direct API / CLI Access
+You can query the agent programmatically from your PC using `curl` or any OpenAI-compatible client library:
+```bash
+curl https://agent.${DOMAIN_NAME}/v1/chat/completions \
+  -H "Authorization: Bearer <your-api-server-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "hermes-agent",
+    "messages": [{"role": "user", "content": "list my top projects from obsidian"}]
+  }'
+```
