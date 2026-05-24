@@ -238,15 +238,10 @@ You can access the dedicated Hermes Agent Web Dashboard directly in your browser
 * **URL:** `https://huginn.${DOMAIN_NAME}`
 * **Features:** Allows you to chat with the agent, view active tasks, monitor step-by-step executions, inspect memories, and view/edit dynamic python skills.
 
-### 3. Open-WebUI Integration (Recommended Chat Interface)
-Because the `huginn-gateway` runs an OpenAI-compatible API server, you can connect your Open-WebUI instance to it to use it as a unified chat interface:
-1. Open **Open-WebUI** in your browser (`https://odin.${DOMAIN_NAME}`).
-2. Navigate to **Admin Settings** → **Connections** → **OpenAI**.
-3. Click the **+** icon to add a new connection and enter:
-   * **API Base URL:** `http://huginn-gateway:8642/v1`
-   * **API Key:** `<your-api-server-key>` (defaults to `insecure_default_key_change_me` if not set in GitHub secrets)
-4. Save the connection.
-5. The `hermes-agent` model will now appear in your model selection dropdown! Any chat started with this model will run actions (like reading notes from your Obsidian vault) and stream progress indicators directly into the Open-WebUI chat bubble.
+### 3. Open-WebUI Integration (Auto-configured Chat Interface)
+Odin is pre-configured to automatically link your Open-WebUI instance to the Huginn Gateway API server on startup.
+* **Accessing the Agent**: Simply open Open-WebUI (`https://odin.${DOMAIN_NAME}`), and select the `hermes-agent` model from the top-left model selection dropdown.
+* **Behavior**: Any chat started with the `hermes-agent` model will run actions (like reading notes from your Obsidian vault) and stream progress indicators directly into the Open-WebUI chat bubble. No manual connection setup is required.
 
 ### 4. Direct API / CLI Access
 You can query the agent programmatically from your PC using `curl` or any OpenAI-compatible client library:
