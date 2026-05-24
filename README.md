@@ -153,6 +153,25 @@ To recreate the customized Ollama model with the 64k context window:
    docker exec -it $(docker ps -q -f name=odin_ollama) ollama create qwen2.5-muninn:latest -f /Modelfile
    ```
 
+### Cleaning Up Old Models
+When you change the base model (e.g., from `qwen2.5-coder:14b` to `qwen2.5-coder:7b`), the old base models and their unreferenced data blocks remain stored inside the persistent `ollama_data` Docker volume.
+
+To free up disk space:
+1. **List models inside the container**:
+   You can run the helper script on the host:
+   ```bash
+   /opt/odin/scripts/clean_ollama_models.sh
+   ```
+   Or run the listing manually:
+   ```bash
+   docker exec -it $(docker ps -q -f name=odin_ollama) ollama list
+   ```
+2. **Remove the old base model**:
+   To delete a model and free up its disk space, run:
+   ```bash
+   docker exec -it $(docker ps -q -f name=odin_ollama) ollama rm qwen2.5-coder:14b
+   ```
+
 ### Database Backup & Restore
 
 #### Manually Triggering a Backup
