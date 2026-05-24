@@ -15,7 +15,7 @@ model:
   # API configuration
   base_url: "http://muninn:4000/v1"
   context_length: ${HERMES_CONTEXT_LENGTH}
-  api_key: "none"
+  api_key: "${MUNINN_MASTER_KEY}"
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────
   #
@@ -43,6 +43,7 @@ auxiliary:
 providers:
   custom:
     request_timeout_seconds: 600
+    stale_timeout_seconds: 600
 
 # =============================================================================
 # Terminal Tool Configuration

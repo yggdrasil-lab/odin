@@ -56,7 +56,7 @@ services:
       - source: muninn_config
         target: /app/config.yaml
     environment:
-      - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY}
       - DATABASE_URL=postgresql://muninn_user:muninn_password_secret_db_pass@muninn-db:5432/muninn_db
       - LITELLM_SALT_KEY=muninn_salt_secret_key_hash
     command: ["--config", "/app/config.yaml"]
@@ -105,7 +105,7 @@ services:
       - ENABLE_PERSISTENT_CONFIG=false
       - DEFAULT_MODELS=${AGENT_MODEL}
       - OPENAI_API_BASE_URL=http://muninn:4000/v1
-      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
     entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
     secrets:
       - odin_lldap_user_pass
@@ -147,7 +147,7 @@ services:
         target: /opt/data/config.yaml
     environment:
       - OPENAI_BASE_URL=http://muninn:4000/v1
-      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
       - AGENT_MODEL=${AGENT_MODEL}
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
@@ -159,6 +159,7 @@ services:
       - HERMES_CONTEXT_LENGTH=65536
       - HERMES_API_TIMEOUT=600
       - HERMES_STREAM_READ_TIMEOUT=600
+      - HERMES_STREAM_STALE_TIMEOUT=600
     networks:
       - internal
       - aether-net
@@ -195,11 +196,12 @@ services:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
       - OPENAI_BASE_URL=http://muninn:4000/v1
-      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - HERMES_API_TIMEOUT=600
       - HERMES_STREAM_READ_TIMEOUT=600
+      - HERMES_STREAM_STALE_TIMEOUT=600
     networks:
       - aether-net
       - internal
