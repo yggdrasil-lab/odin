@@ -36,12 +36,13 @@ services:
       - LDAP_SERVER_HOST=cerberus_lldap
       - LDAP_SERVER_PORT=3890
       - LDAP_USE_TLS=false
-      - LDAP_BIND_DN=uid=admin,ou=people,${LLDAP_LDAP_BASE_DN}
-      - LDAP_BIND_PASSWORD=${LLDAP_LDAP_USER_PASS}
+      - LDAP_APP_DN=uid=admin,ou=people,${LLDAP_LDAP_BASE_DN}
+      - LDAP_APP_PASSWORD_FILE=/run/secrets/odin_lldap_user_pass
       - LDAP_SEARCH_BASE=ou=people,${LLDAP_LDAP_BASE_DN}
-      - LDAP_USER_ATTRS_USERNAME=uid
-      - LDAP_USER_ATTRS_EMAIL=mail
-      - LDAP_USER_ATTRS_NAME=displayName
+      - LDAP_ATTRIBUTE_FOR_USERNAME=uid
+      - LDAP_ATTRIBUTE_FOR_MAIL=mail
+    secrets:
+      - odin_lldap_user_pass
     networks:
       - aether-net
       - internal
@@ -188,3 +189,8 @@ networks:
 configs:
   huginn_backup_script:
     file: ./config/hermes-backup/backup.sh
+
+secrets:
+  odin_lldap_user_pass:
+    external: true
+    name: ${LLDAP_LDAP_USER_PASS_NAME}
