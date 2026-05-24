@@ -36,9 +36,11 @@ jobs:
           LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
+          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY }}
         run: |
-          # Generate config.yaml from template using environment variables
+          # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
+          python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml

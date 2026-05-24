@@ -7,6 +7,7 @@ services:
       - source: ollama_init_script
         target: /init.sh
     environment:
+      - OLLAMA_DEBUG=1
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q4_0
       - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
@@ -25,6 +26,38 @@ services:
       restart_policy:
         condition: on-failure
 
+  muninn:
+    image: ghcr.io/berriai/litellm:main-latest
+    volumes:
+      - /opt/odin/config/muninn:/app/config
+    environment:
+      - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+    command: ["--config", "/app/config/config.yaml"]
+    networks:
+      - internal
+      - aether-net
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.muninn.rule=Host(`muninn.${DOMAIN_NAME}`)"
+        - "traefik.http.routers.muninn.entrypoints=websecure"
+        - "traefik.http.routers.muninn.tls=true"
+        - "traefik.http.routers.muninn.tls.certresolver=cloudflare"
+        - "traefik.http.services.muninn.loadbalancer.server.port=4000"
+        - "traefik.docker.network=aether-net"
+        - "homepage.group=Odin"
+        - "homepage.name=Muninn Dashboard"
+        - "homepage.icon=litellm.png"
+        - "homepage.href=https://muninn.${DOMAIN_NAME}/ui"
+        - "homepage.description=Ollama Prompt & Response Observability"
+
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     volumes:
@@ -41,7 +74,9 @@ services:
       - LDAP_ATTRIBUTE_FOR_USERNAME=uid
       - LDAP_ATTRIBUTE_FOR_MAIL=mail
       - ENABLE_PERSISTENT_CONFIG=false
-      - DEFAULT_MODELS=qwen2.5-muninn:latest
+      - DEFAULT_MODELS=${AGENT_MODEL}
+      - OPENAI_API_BASE_URL=http://muninn:4000/v1
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
     entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
     secrets:
       - odin_lldap_user_pass
@@ -82,9 +117,9 @@ services:
       - source: huginn_config
         target: /opt/data/config.yaml
     environment:
-      - OPENAI_API_BASE=http://ollama:11434/v1
-      - OPENAI_API_KEY=ollama
-      - AGENT_MODEL=qwen2.5-muninn:latest
+      - OPENAI_API_BASE=http://muninn:4000/v1
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
+      - AGENT_MODEL=${AGENT_MODEL}
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
       - API_SERVER_PORT=8642
@@ -130,7 +165,8 @@ services:
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
-      - OPENAI_API_BASE=http://ollama:11434/v1
+      - OPENAI_API_BASE=http://muninn:4000/v1
+      - OPENAI_API_KEY=${MUNINN_MASTER_KEY:-sk-muninn-insecure-master-key}
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - HERMES_API_TIMEOUT=600

@@ -7,3 +7,6 @@ hermes/**/*.sqlite
 hermes/**/*.sqlite3
 hermes/**/cache/
 
+# Ignore databases inside config/muninn/
+config/muninn/*.db
+config/muninn/*.db-journal
