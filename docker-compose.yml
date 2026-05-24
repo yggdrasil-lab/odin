@@ -62,7 +62,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: gateway run
     volumes:
-      - /mnt/storage/backups/odin/hermes:/opt/data
+      - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
     environment:
       - OPENAI_API_BASE=http://ollama:11434/v1
@@ -99,7 +99,7 @@ services:
     image: nousresearch/hermes-agent:latest
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
-      - /mnt/storage/backups/odin/hermes:/opt/data
+      - /opt/odin/hermes:/opt/data
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
     networks:
@@ -133,6 +133,31 @@ services:
         - "homepage.href=https://huginn.${DOMAIN_NAME}"
         - "homepage.description=Hermes Agent Web UI"
 
+  huginn-backup:
+    image: alpine:latest
+    container_name: huginn-backup
+    restart: always
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    entrypoint: ["sh", "-c", "apk add --no-cache sqlite tzdata && echo \"0 3 * * * /config/backup.sh >> /var/log/huginn-backup.log 2>&1\" | crontab - && exec crond -f -l 2"]
+    volumes:
+      - /opt/odin/hermes:/data:ro
+      - /mnt/storage/backups/odin/hermes:/backup
+    configs:
+      - source: huginn_backup_script
+        target: /config/backup.sh
+    environment:
+      - TZ=Pacific/Auckland
+      - BACKUP_KEEP_DAYS=30
+    depends_on:
+      - huginn-gateway
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
 volumes:
   ollama_data:
   open-webui_data:
@@ -143,3 +168,7 @@ networks:
   internal:
     driver: overlay
     attachable: true
+
+configs:
+  huginn_backup_script:
+    file: ./config/hermes-backup/backup.sh

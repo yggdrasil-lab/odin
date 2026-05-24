@@ -1,2 +1,9 @@
 .env
 *.log
+
+# Ignore databases and cache inside hermes active data folder
+hermes/**/*.db
+hermes/**/*.sqlite
+hermes/**/*.sqlite3
+hermes/**/cache/
+
