@@ -1,13 +1,17 @@
-version: '3.8'
-
 services:
   ollama:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
+    configs:
+      - source: ollama_modelfile
+        target: /Modelfile
+      - source: ollama_init_script
+        target: /init.sh
     environment:
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q8_0
+    entrypoint: ["/bin/sh", "/init.sh"]
     networks:
       - internal
     labels:
@@ -41,6 +45,7 @@ services:
       - LDAP_ATTRIBUTE_FOR_USERNAME=uid
       - LDAP_ATTRIBUTE_FOR_MAIL=mail
       - ENABLE_PERSISTENT_CONFIG=false
+      - DEFAULT_MODELS=qwen2.5-muninn:latest
     entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
     secrets:
       - odin_lldap_user_pass
@@ -190,6 +195,10 @@ networks:
 configs:
   huginn_backup_script:
     file: ./config/hermes-backup/backup.sh
+  ollama_modelfile:
+    file: ./Modelfile
+  ollama_init_script:
+    file: ./config/ollama-init/init.sh
 
 secrets:
   odin_lldap_user_pass:
