@@ -1,6 +1,0 @@
-# Base model: Qwen 2.5 7B Instruct (Q4_K_M quantization for CPU efficiency)
-# Highly capable, uses ~4.7GB RAM, and supports 128k context window natively.
-FROM qwen2.5:7b-instruct
-
-# Set the context window to 64k (65,536 tokens)
-PARAMETER num_ctx 65536

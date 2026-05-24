@@ -11,13 +11,42 @@ until /bin/ollama list > /dev/null 2>&1; do
 done
 echo "Ollama started."
 
-# Check and build the custom model
-if ! /bin/ollama list | grep -q "qwen2.5-muninn:latest"; then
-  echo "Custom model qwen2.5-muninn:latest not found. Building it..."
-  /bin/ollama create qwen2.5-muninn:latest -f /Modelfile
+# Ensure environment variables are set
+OLLAMA_BASE_MODEL="${OLLAMA_BASE_MODEL:-qwen2.5:7b-instruct}"
+HERMES_CONTEXT_LENGTH="${HERMES_CONTEXT_LENGTH:-65536}"
+
+CURRENT_SPEC="base_model: ${OLLAMA_BASE_MODEL} | context_length: ${HERMES_CONTEXT_LENGTH}"
+SPEC_FILE="/root/.ollama/muninn_build_spec.txt"
+
+# Read saved spec
+SAVED_SPEC=""
+if [ -f "$SPEC_FILE" ]; then
+  SAVED_SPEC=$(cat "$SPEC_FILE")
+fi
+
+# Check if model exists
+MODEL_EXISTS=false
+if /bin/ollama list | grep -q "qwen2.5-muninn:latest"; then
+  MODEL_EXISTS=true
+fi
+
+if [ "$MODEL_EXISTS" = "false" ] || [ "$CURRENT_SPEC" != "$SAVED_SPEC" ]; then
+  echo "Building/rebuilding custom model qwen2.5-muninn:latest..."
+  echo "Spec: $CURRENT_SPEC"
+  
+  # Generate Modelfile dynamically
+  cat <<EOF > /tmp/Modelfile
+FROM ${OLLAMA_BASE_MODEL}
+PARAMETER num_ctx ${HERMES_CONTEXT_LENGTH}
+EOF
+
+  /bin/ollama create qwen2.5-muninn:latest -f /tmp/Modelfile
+  
+  # Save the spec to persistent storage
+  echo "$CURRENT_SPEC" > "$SPEC_FILE"
   echo "Custom model built successfully."
 else
-  echo "Custom model qwen2.5-muninn:latest already exists."
+  echo "Custom model qwen2.5-muninn:latest is up-to-date."
 fi
 
 # Keep container running and stream logs

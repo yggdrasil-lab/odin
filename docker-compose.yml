@@ -4,13 +4,13 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     configs:
-      - source: ollama_modelfile
-        target: /Modelfile
       - source: ollama_init_script
         target: /init.sh
     environment:
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q8_0
+      - OLLAMA_BASE_MODEL=qwen2.5:7b-instruct
+      - HERMES_CONTEXT_LENGTH=65536
     entrypoint: ["/bin/sh", "/init.sh"]
     networks:
       - internal
@@ -207,8 +207,6 @@ networks:
 configs:
   huginn_backup_script:
     file: ./config/hermes-backup/backup.sh
-  ollama_modelfile:
-    file: ./Modelfile
   ollama_init_script:
     file: ./config/ollama-init/init.sh
   huginn_config:
