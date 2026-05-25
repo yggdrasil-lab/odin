@@ -145,7 +145,7 @@ services:
     command: gateway run
     volumes:
       - /opt/odin/hermes:/opt/data
-      - ${OBSIDIAN_VAULT_PATH}/second-brain:/app/vault:rw
+      - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
