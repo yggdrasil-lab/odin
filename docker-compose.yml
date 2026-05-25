@@ -141,7 +141,10 @@ services:
         - "homepage.description=Local LLM Chat Interface"
 
   huginn-gateway:
-    image: nousresearch/hermes-agent:latest
+    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME:-latest}
+    build:
+      context: ./hermes-agent
+      dockerfile: Dockerfile
     user: "0:0"
     command: gateway run
     volumes:
@@ -189,7 +192,10 @@ services:
         - "traefik.docker.network=aether-net"
 
   huginn-dashboard:
-    image: nousresearch/hermes-agent:latest
+    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME:-latest}
+    build:
+      context: ./hermes-agent
+      dockerfile: Dockerfile
     user: "0:0"
     command: dashboard --host 0.0.0.0 --insecure
     volumes:
@@ -236,6 +242,43 @@ services:
         - "homepage.icon=hermes.png"
         - "homepage.href=https://huginn.${DOMAIN_NAME}"
         - "homepage.description=Hermes Agent Web UI"
+
+  mnemosyne-dashboard:
+    image: ${REGISTRY_PREFIX}mnemosyne-dashboard:${STACK_NAME:-latest}
+    build:
+      context: ./mnemosyne-dashboard
+      dockerfile: Dockerfile
+    volumes:
+      # Mount the Hermes agent state directory as read-only for database visualization
+      - /opt/odin/hermes:/opt/data:ro
+    environment:
+      - PORT=8080
+      - DB_PATH=/opt/data/mnemosyne/mnemosyne.db
+      - TZ=Pacific/Auckland
+    networks:
+      - aether-net
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.mnemosyne-db.rule=Host(`mnemosyne.${DOMAIN_NAME}`)"
+        - "traefik.http.routers.mnemosyne-db.entrypoints=websecure"
+        - "traefik.http.routers.mnemosyne-db.tls=true"
+        - "traefik.http.routers.mnemosyne-db.tls.certresolver=cloudflare"
+        - "traefik.http.services.mnemosyne-db.loadbalancer.server.port=8080"
+        - "traefik.docker.network=aether-net"
+        - "homepage.group=Odin"
+        - "homepage.name=Mnemosyne Dashboard"
+        - "homepage.icon=brain.png"
+        - "homepage.href=https://mnemosyne.${DOMAIN_NAME}"
+        - "homepage.description=Memory Store Visualizer & Event Inspector"
 
   huginn-backup:
     image: alpine:latest

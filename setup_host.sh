@@ -33,6 +33,15 @@ if [ ! -d "${LIVE_DIR}" ]; then
     sudo chmod -R 775 "${LIVE_DIR}"
 fi
 
+# Mnemosyne Memory Directory
+MNEMOSYNE_DIR="${LIVE_DIR}/mnemosyne"
+if [ ! -d "${MNEMOSYNE_DIR}" ]; then
+    echo "Creating ${MNEMOSYNE_DIR}..."
+    sudo mkdir -p "${MNEMOSYNE_DIR}"
+    sudo chown -R 1000:1000 "${MNEMOSYNE_DIR}"
+    sudo chmod -R 775 "${MNEMOSYNE_DIR}"
+fi
+
 # Hermes Agent Backups Directory
 BACKUP_DIR="/mnt/storage/backups/odin/hermes"
 if [ ! -d "${BACKUP_DIR}" ]; then
