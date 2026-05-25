@@ -12,8 +12,8 @@ done
 echo "Ollama started."
 
 # Ensure environment variables are set
-if [ -z "$OLLAMA_BASE_MODEL" ] || [ -z "$HERMES_CONTEXT_LENGTH" ]; then
-  echo "Error: OLLAMA_BASE_MODEL and HERMES_CONTEXT_LENGTH environment variables must be set." >&2
+if [ -z "$OLLAMA_BASE_MODEL" ] || [ -z "$OLLAMA_MODEL_NAME" ] || [ -z "$HERMES_CONTEXT_LENGTH" ]; then
+  echo "Error: OLLAMA_BASE_MODEL, OLLAMA_MODEL_NAME and HERMES_CONTEXT_LENGTH environment variables must be set." >&2
   exit 1
 fi
 
@@ -28,12 +28,12 @@ fi
 
 # Check if model exists
 MODEL_EXISTS=false
-if /bin/ollama list | grep -q "qwen-muninn:latest"; then
+if /bin/ollama list | grep -q "${OLLAMA_MODEL_NAME}"; then
   MODEL_EXISTS=true
 fi
 
 if [ "$MODEL_EXISTS" = "false" ] || [ "$CURRENT_SPEC" != "$SAVED_SPEC" ]; then
-  echo "Building/rebuilding custom model qwen2.5-muninn:latest..."
+  echo "Building/rebuilding custom model ${OLLAMA_MODEL_NAME}..."
   echo "Spec: $CURRENT_SPEC"
   
   # Generate Modelfile dynamically
@@ -46,13 +46,13 @@ EOF
     echo "PARAMETER num_thread ${OLLAMA_NUM_THREADS}" >> /tmp/Modelfile
   fi
 
-  /bin/ollama create qwen-muninn:latest -f /tmp/Modelfile
+  /bin/ollama create "${OLLAMA_MODEL_NAME}" -f /tmp/Modelfile
   
   # Save the spec to persistent storage
   echo "$CURRENT_SPEC" > "$SPEC_FILE"
   echo "Custom model built successfully."
 else
-  echo "Custom model qwen-muninn:latest is up-to-date."
+  echo "Custom model ${OLLAMA_MODEL_NAME} is up-to-date."
 fi
 
 # Keep container running and stream logs

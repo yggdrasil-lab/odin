@@ -53,7 +53,7 @@ graph TD
 *   **Service Name:** `ollama`
 *   **Resource Limits:** Restricted to `4.0` CPUs and `12GB` memory limit.
 *   **Optimization:** Configured with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` for CPU efficiency on Gaia.
-*   **Custom Model Configuration:** Runs a customized Qwen model named `qwen-muninn:latest` with a customizable context window (defined via environment variables).
+*   **Custom Model Configuration:** Runs a customized local model (defined via environment variables, defaulting to `local-model:latest`) with a customizable context window.
 
 ### 2. Odin Web UI (Open-WebUI)
 *   **Image:** `ghcr.io/open-webui/open-webui:main`
@@ -69,7 +69,7 @@ graph TD
 *   **Storage Mounts:**
     *   **Obsidian Vault:** Host path `${OBSIDIAN_VAULT_PATH}/second-brain` mounted to `/app/vault` with read-write (`rw`) permissions so the agent can interact with notes.
     *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` for active state, dynamic skills, and databases.
-*   **LLM Connection:** Configured to talk to Muninn LLM (Ollama) using its OpenAI-compatible endpoint at `http://ollama:11434/v1` with the model `qwen-muninn:latest`.
+*   **LLM Connection:** Configured to talk to Muninn (LiteLLM) proxy using its OpenAI-compatible endpoint at `http://muninn:4000/v1` with the model defined in `AGENT_MODEL` (e.g. `deepseek-v4-flash`).
 
 ### 4. Huginn Dashboard (Hermes Web UI)
 *   **Image:** `nousresearch/hermes-agent:latest`
@@ -135,37 +135,30 @@ set -a && source .env && set +a
 docker stack deploy -c docker-compose.yml odin
 ```
 
-### Using Google Gemini (Optional Cloud Model)
-Odin is configured to support Google Gemini models as an alternative to local CPU execution via Ollama. This runs through Muninn (LiteLLM) to preserve unified API logging and telemetry.
+### Using Cloud LLM APIs (DeepSeek & Gemini)
+Odin is configured to support cloud-based LLM APIs (DeepSeek v4 and Google Gemini) as alternatives to local CPU execution. This runs through Muninn (LiteLLM) to preserve unified API logging and telemetry.
 
-#### 1. Obtain a Gemini API Key
-To obtain a developer API key:
-1. Go to [Google AI Studio](https://aistudio.google.com/).
-2. Sign in with your Google account.
-3. Click the **Get API key** button in the sidebar.
-4. Click **Create API key** (you can create it in a new or existing Google Cloud project).
-5. Copy your generated key (`AIzaSy...`).
-
-> [!NOTE]
-> Google AI Studio provides a highly generous **Free Tier** (e.g., 15 RPM / 1M TPM for `gemini-2.5-flash`), which is completely free and ideal for a personal agent.
+#### 1. Obtain API Keys
+- **DeepSeek API Key:** Register on the [DeepSeek Platform](https://platform.deepseek.com/) and create an API Key.
+- **Gemini API Key:** Go to [Google AI Studio](https://aistudio.google.com/), click **Get API key**, and generate a free-tier key.
 
 #### 2. Configure GitHub Secrets
-Add the copied API key to your repository secrets:
-* **Name:** `GEMINI_API_KEY`
-* **Value:** `<your-gemini-api-key>`
+Add the API keys to your repository secrets:
+* **Name:** `DEEPSEEK_API_KEY` -> `<your-deepseek-api-key>`
+* **Name:** `GEMINI_API_KEY` -> `<your-gemini-api-key>`
 
 #### 3. Update the Model in the Deployment Workflow
-In [.github/workflows/deploy.yml](file:///g:/My%20Drive/Second%20Brain/Forge/odin/.github/workflows/deploy.yml), update the `AGENT_MODEL` environment variable to a Gemini model:
+In [.github/workflows/deploy.yml](file:///g:/My%20Drive/Second%20Brain/Forge/odin/.github/workflows/deploy.yml), verify the configuration environment variables:
 ```yaml
     env:
-      OLLAMA_BASE_MODEL: qwen2.5-coder:7b
+      OLLAMA_BASE_MODEL: qwen3.5:9b
+      OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       HERMES_CONTEXT_LENGTH: 131072
-      AGENT_MODEL: gemini-2.5-flash
-      CHAT_MODEL: qwen2.5-muninn:latest
-      OLLAMA_NUM_THREADS: 8
+      AGENT_MODEL: deepseek-v4-flash
+      CHAT_MODEL: local-model:latest
 ```
-Once pushed to `main`, Muninn will automatically route all agent requests through Google's cloud API (with a 128K context window), while leaving Open-WebUI connected to your lightweight, fast, local CPU-based Ollama model (with a 16K context window). This avoids CPU/RAM strain on your local Gaia host while maximizing the agent's capabilities.
+Once pushed to `main`, Muninn will automatically route all agent requests through DeepSeek's cloud API, while leaving Open-WebUI connected to your lightweight, fast, local CPU-based Ollama model. This avoids CPU/RAM strain on your local Gaia host while maximizing the agent's capabilities.
 
 ---
 
@@ -182,8 +175,9 @@ docker service logs -f odin_huginn-gateway
 To recreate the customized Ollama model manually:
 1. Exec into the Ollama container:
    ```bash
-   docker exec -it $(docker ps -q -f name=odin_ollama) ollama create qwen-muninn:latest -f /Modelfile
+   docker exec -it $(docker ps -q -f name=odin_ollama) ollama create local-model:latest -f /Modelfile
    ```
+   *(Note: replace `local-model:latest` with the value of your `OLLAMA_MODEL_NAME` environment variable if customized).*
 
 ### Cleaning Up Old Models
 When you change the base model (e.g., from `qwen2.5-coder:14b` to `qwen2.5-coder:7b`), the old base models and their unreferenced data blocks remain stored inside the persistent `ollama_data` Docker volume.
@@ -254,3 +248,9 @@ curl https://agent.${DOMAIN_NAME}/v1/chat/completions \
     "messages": [{"role": "user", "content": "list my top projects from obsidian"}]
   }'
 ```
+
+### 5. Live Model Switching (Mid-Chat)
+Since the stack runs through the unified LiteLLM proxy (`muninn`), you can switch the agent's active model mid-conversation in Open-WebUI or the Huginn Dashboard:
+* **Switch model for the current session:** Type `/model custom:deepseek-v4-pro` (or `/model custom:gemini-2.5-pro`) to switch the agent's brain to the pro model for the current session.
+* **Inspect active model:** Type `/model` by itself to see what model the agent is currently using.
+* **Set model globally:** Type `/model custom:deepseek-v4-pro --global` to set the default model globally for all new sessions.

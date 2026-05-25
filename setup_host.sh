@@ -42,3 +42,19 @@ if [ ! -d "${BACKUP_DIR}" ]; then
 fi
 
 echo "Done. Host is ready for Odin deployment."
+
+# =============================================================================
+# Obsidian Vault Write Access (for Huginn Agent)
+# The vault is owned by root:root. This grants write access to 'others'
+# (covers the container process regardless of UID) so Huginn can create and
+# edit notes. This must be re-run after a Charon vault restore.
+# =============================================================================
+VAULT_PATH="${OBSIDIAN_VAULT_PATH:-/opt/atlas/vault}/second-brain"
+if [ -d "${VAULT_PATH}" ]; then
+    echo "Granting vault write access to Huginn Agent at ${VAULT_PATH}..."
+    sudo chmod -R o+w "${VAULT_PATH}"
+    echo "Vault permissions updated."
+else
+    echo "Warning: Vault not found at ${VAULT_PATH}. Skipping permission update."
+    echo "Set OBSIDIAN_VAULT_PATH and re-run this script after the vault is restored."
+fi
