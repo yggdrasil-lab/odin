@@ -146,7 +146,14 @@ services:
       context: ./hermes-agent
       dockerfile: Dockerfile
     user: "0:0"
-    command: gateway run
+    command: >
+      sh -c '
+      if [ -d "/app/venv" ]; then /app/venv/bin/python -m mnemosyne.install;
+      elif [ -d "/app/.venv" ]; then /app/.venv/bin/python -m mnemosyne.install;
+      elif [ -d "/venv" ]; then /venv/bin/python -m mnemosyne.install;
+      else python -m mnemosyne.install || python3 -m mnemosyne.install; fi;
+      exec gateway run
+      '
     volumes:
       - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
@@ -198,7 +205,14 @@ services:
       context: ./hermes-agent
       dockerfile: Dockerfile
     user: "0:0"
-    command: dashboard --host 0.0.0.0 --insecure
+    command: >
+      sh -c '
+      if [ -d "/app/venv" ]; then /app/venv/bin/python -m mnemosyne.install;
+      elif [ -d "/app/.venv" ]; then /app/.venv/bin/python -m mnemosyne.install;
+      elif [ -d "/venv" ]; then /venv/bin/python -m mnemosyne.install;
+      else python -m mnemosyne.install || python3 -m mnemosyne.install; fi;
+      exec dashboard --host 0.0.0.0 --insecure
+      '
     volumes:
       - /opt/odin/hermes:/opt/data
     environment:
