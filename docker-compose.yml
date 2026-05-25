@@ -106,6 +106,7 @@ services:
       - LDAP_ATTRIBUTE_FOR_USERNAME=uid
       - LDAP_ATTRIBUTE_FOR_MAIL=mail
       - ENABLE_PERSISTENT_CONFIG=false
+      - ENABLE_FOLLOW_UP_GENERATION=False
       - DEFAULT_MODELS=${CHAT_MODEL}
       - OPENAI_API_BASE_URLS=http://muninn:4000/v1;http://huginn-gateway:8642/v1
       - OPENAI_API_KEYS=${MUNINN_MASTER_KEY};${API_SERVER_KEY:-insecure_default_key_change_me}
