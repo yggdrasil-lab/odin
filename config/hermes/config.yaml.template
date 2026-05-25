@@ -119,3 +119,10 @@ memory:
     sleep_threshold: 50         # Number of working memories before trigger
     vector_type: "int8"         # Vector quantization type (float32, int8, or bit)
     db_path: "/opt/data/mnemosyne/mnemosyne.db"
+
+# =============================================================================
+# Plugins Configuration
+# =============================================================================
+plugins:
+  enabled:
+    - "mnemosyne"
