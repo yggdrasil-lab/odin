@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Clone the dashboard source
 RUN git clone https://github.com/wysie/mnemosyne-dashboard.git .
 
-# Install requirements
-RUN pip install --no-cache-dir -r requirements.txt
+# Install mnemosyne-memory (since the dashboard core imports it)
+RUN pip install --no-cache-dir --break-system-packages mnemosyne-memory[all]
 
 EXPOSE 8080
 
-CMD ["python", "app.py"]
+CMD ["python", "server.py"]
