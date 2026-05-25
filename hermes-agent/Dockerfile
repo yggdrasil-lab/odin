@@ -2,10 +2,15 @@ FROM nousresearch/hermes-agent:latest
 
 USER root
 
-# Install mnemosyne-memory within the container's environment (using uv if available, falling back to pip)
-RUN if command -v uv >/dev/null 2>&1; then \
-      uv pip install --system mnemosyne-memory[all]; \
+# Install mnemosyne-memory in the virtual environment or fallback to system python with break-system-packages
+RUN if [ -d "/app/venv" ]; then \
+      /app/venv/bin/pip install --no-cache-dir mnemosyne-memory[all]; \
+    elif [ -d "/app/.venv" ]; then \
+      /app/.venv/bin/pip install --no-cache-dir mnemosyne-memory[all]; \
+    elif [ -d "/venv" ]; then \
+      /venv/bin/pip install --no-cache-dir mnemosyne-memory[all]; \
     else \
+      pip install --no-cache-dir --break-system-packages mnemosyne-memory[all] || \
       pip install --no-cache-dir mnemosyne-memory[all]; \
     fi
 
