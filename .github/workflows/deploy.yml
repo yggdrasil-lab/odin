@@ -13,7 +13,7 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       HERMES_CONTEXT_LENGTH: 131072
-      AGENT_MODEL: deepseek-v4-flash
+      AGENT_MODEL: deepseek-v4-pro
       CHAT_MODEL: local-model:latest
     
     steps:

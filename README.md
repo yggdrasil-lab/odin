@@ -69,7 +69,7 @@ graph TD
 *   **Storage Mounts:**
     *   **Obsidian Vault:** Host path `${OBSIDIAN_VAULT_PATH}/second-brain` mounted to `/app/vault` with read-write (`rw`) permissions so the agent can interact with notes.
     *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` for active state, dynamic skills, and databases.
-*   **LLM Connection:** Configured to talk to Muninn (LiteLLM) proxy using its OpenAI-compatible endpoint at `http://muninn:4000/v1` with the model defined in `AGENT_MODEL` (e.g. `deepseek-v4-flash`).
+*   **LLM Connection:** Configured to talk to Muninn (LiteLLM) proxy using its OpenAI-compatible endpoint at `http://muninn:4000/v1` with the model defined in `AGENT_MODEL` (e.g. `deepseek-v4-pro`).
 
 ### 4. Huginn Dashboard (Hermes Web UI)
 *   **Image:** `nousresearch/hermes-agent:latest`
@@ -155,7 +155,7 @@ In [.github/workflows/deploy.yml](file:///g:/My%20Drive/Second%20Brain/Forge/odi
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       HERMES_CONTEXT_LENGTH: 131072
-      AGENT_MODEL: deepseek-v4-flash
+      AGENT_MODEL: deepseek-v4-pro
       CHAT_MODEL: local-model:latest
 ```
 Once pushed to `main`, Muninn will automatically route all agent requests through DeepSeek's cloud API, while leaving Open-WebUI connected to your lightweight, fast, local CPU-based Ollama model. This avoids CPU/RAM strain on your local Gaia host while maximizing the agent's capabilities.
