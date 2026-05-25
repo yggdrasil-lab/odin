@@ -48,8 +48,8 @@ jobs:
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
-          # Write hermes config directly to host path and fix permissions (UID 10000, GID 1000)
-          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 10000:1000 /opt/data && chmod 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
+          # Write hermes config directly to host path and fix permissions (UID 1000, GID 1000)
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml

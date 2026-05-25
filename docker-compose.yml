@@ -161,6 +161,8 @@ services:
       - HERMES_API_TIMEOUT=1800
       - HERMES_STREAM_READ_TIMEOUT=1800
       - HERMES_STREAM_STALE_TIMEOUT=1800
+      - HERMES_UID=1000
+      - HERMES_GID=1000
     networks:
       - internal
       - aether-net
@@ -201,6 +203,8 @@ services:
       - HERMES_API_TIMEOUT=1800
       - HERMES_STREAM_READ_TIMEOUT=1800
       - HERMES_STREAM_STALE_TIMEOUT=1800
+      - HERMES_UID=1000
+      - HERMES_GID=1000
     networks:
       - aether-net
       - internal

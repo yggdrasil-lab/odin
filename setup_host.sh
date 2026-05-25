@@ -29,7 +29,7 @@ LIVE_DIR="${REPO_DIR}/hermes"
 if [ ! -d "${LIVE_DIR}" ]; then
     echo "Creating ${LIVE_DIR}..."
     sudo mkdir -p "${LIVE_DIR}"
-    sudo chown -R 10000:1000 "${LIVE_DIR}"
+    sudo chown -R 1000:1000 "${LIVE_DIR}"
     sudo chmod -R 775 "${LIVE_DIR}"
 fi
 
