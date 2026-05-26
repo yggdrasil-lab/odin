@@ -16,7 +16,8 @@ graph TD
 
     subgraph GaiaHostStorage ["Gaia Host Storage"]
         Obsidian["Obsidian Vault<br>(${OBSIDIAN_VAULT_PATH}/second-brain)"]
-        Backup["Hermes Backups<br>(/mnt/storage/backups/odin/hermes)"]
+        MnemosyneDB["Mnemosyne Memory DB<br>(/opt/odin/mnemosyne)"]
+        Backup["Hermes & Memory Backups<br>(/mnt/storage/backups/odin/hermes)"]
     end
 
     subgraph AetherNet ["aether-net (External Overlay Network)"]
@@ -28,20 +29,27 @@ graph TD
         Ollama[Muninn LLM<br>ollama]
         Gateway[Huginn Gateway<br>hermes-agent gateway]
         Dashboard[Huginn Dashboard<br>hermes-agent dashboard]
+        Mnemosyne[Mnemosyne Dashboard<br>mnemosyne-dashboard]
     end
 
     Browser -->|HTTPS| Traefik
     Traefik -->|odin.DOMAIN| OpenWebUI
     Traefik -->|agent.DOMAIN| Gateway
     Traefik -->|huginn.DOMAIN| Dashboard
+    Traefik -->|mnemosyne.DOMAIN| Mnemosyne
 
     OpenWebUI -->|OLLAMA_BASE_URL| Ollama
     Gateway -->|OPENAI_API_BASE| Ollama
     Dashboard -->|GATEWAY_HEALTH_URL| Gateway
 
     Gateway <.->|Read/Write Mount| Obsidian
+    Gateway -.->|SQLite Write| MnemosyneDB
+    Dashboard -.->|SQLite Write| MnemosyneDB
+    MnemosyneDB -.->|Read-Only Mount| Mnemosyne
+    
     Gateway <.->|Persistent Backup| Backup
     Dashboard <.->|Persistent Backup| Backup
+    MnemosyneDB <.->|Persistent Backup| Backup
 ```
 
 ---
@@ -63,28 +71,38 @@ graph TD
 *   **Authentication (LLDAP):** Integrated with the `cerberus_lldap` service (port `3890`) on the shared `aether-net` network, enabling centralized user authentication. It uses the external Docker Secret `odin_lldap_user_pass` to bind securely.
 
 ### 3. Huginn Gateway (Hermes Agent API)
-*   **Image:** `nousresearch/hermes-agent:latest`
-*   **Command:** `gateway run`
+*   **Image:** `registry.tienzo.net/hermes-agent:latest` (custom-built)
+*   **Command:** Runs Git global user name/email setup, SSH credentials validation, Mnemosyne plugins symlinking via Python, and then executes `hermes gateway run`.
 *   **Routing:** Exposed via Traefik to `https://agent.${DOMAIN_NAME}` (port `8642`).
 *   **Storage Mounts:**
-    *   **Obsidian Vault:** Host path `${OBSIDIAN_VAULT_PATH}/second-brain` mounted to `/app/vault` with read-write (`rw`) permissions so the agent can interact with notes.
-    *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` for active state, dynamic skills, and databases.
+    *   **Obsidian Vault:** Host path `${OBSIDIAN_VAULT_PATH}/second-brain` mounted to `/app/vault` with read-write (`rw`) permissions.
+    *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` for active state, SSH configurations, and dynamic skills.
+    *   **Memory Data:** Host path `/opt/odin/mnemosyne` mounted to `/opt/data/.hermes/mnemosyne` to store the agent's SQLite databases and vector indexes.
+*   **Memory Engine (Mnemosyne):** Integrates the local-first, zero-dependency `mnemosyne-memory` provider, utilizing hybrid semantic search (via `sqlite-vec`) and keyword search (via FTS5).
+*   **LLM Consolidation:** Periodically summarizes and consolidates episodic memories using `deepseek-v4-flash` via the local `muninn` proxy.
 *   **LLM Connection:** Configured to talk to Muninn (LiteLLM) proxy using its OpenAI-compatible endpoint at `http://muninn:4000/v1` with the model defined in `AGENT_MODEL` (e.g. `deepseek-v4-pro`).
 
 ### 4. Huginn Dashboard (Hermes Web UI)
-*   **Image:** `nousresearch/hermes-agent:latest`
-*   **Command:** `dashboard --host 0.0.0.0 --insecure`
+*   **Image:** `registry.tienzo.net/hermes-agent:latest` (custom-built)
+*   **Command:** Runs Mnemosyne plugins symlinking via Python, then executes `hermes dashboard --host 0.0.0.0 --insecure`.
 *   **Routing:** Exposed via Traefik to `https://huginn.${DOMAIN_NAME}` (port `9119`).
 *   **Storage Mounts:**
-    *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` so it can access configuration, state, and skill files in sync with the gateway.
-*   **Security Configuration:** Because the dashboard is run containerized behind a reverse proxy (Traefik), it binds to `0.0.0.0` inside its container isolation. The `--insecure` flag bypasses the agent's safety refusal to bind to wildcard addresses.
+    *   **Hermes Data:** Host path `/opt/odin/hermes` mounted to `/opt/data` to sync configurations and dynamic skills.
+    *   **Memory Data:** Host path `/opt/odin/mnemosyne` mounted to `/opt/data/.hermes/mnemosyne` to sync persistent memories.
 
-### 5. Huginn Backup (SQLite Database Snapshot Cron)
+### 5. Mnemosyne Dashboard (Memory Store Visualizer)
+*   **Image:** `registry.tienzo.net/mnemosyne-dashboard:latest` (custom-built)
+*   **Routing:** Exposed via Traefik to `https://mnemosyne.${DOMAIN_NAME}` (port `8080`).
+*   **Storage Mounts:**
+    *   **Memory Data:** Host path `/opt/odin/mnemosyne` mounted read-only (`ro`) to `/opt/data` to read the SQLite database at `/opt/data/data/mnemosyne.db`.
+*   **Features:** Provides a web-based timeline, semantic constellation map, and detailed inspection of the episodic and working memory tiers of your agent.
+
+### 6. Huginn Backup (SQLite Database Snapshot Cron)
 *   **Image:** `alpine:latest` (with dynamic `sqlite3` and `tzdata` installation)
 *   **Service Name:** `huginn-backup`
 *   **Frequency:** Runs daily at 3:00 AM.
-*   **Purpose:** Takes hot, non-locking SQLite database backups (`.db`/`.sqlite` files) from `/opt/odin/hermes` to the `/mnt/storage/backups/odin/hermes` directory and prunes backups older than 30 days.
-*   **Git Tracking:** Since active database and cache files inside `/opt/odin/hermes` are excluded in [.gitignore](.gitignore), only config files and custom python skills in `/opt/odin/hermes/skills/` are committed to the stack's Git repo, while databases are backed up via this service.
+*   **Purpose:** Takes hot, non-locking SQLite database backups (`.db`/`.sqlite` files) from both `/opt/odin/hermes` and `/opt/odin/mnemosyne` recursively to the `/mnt/storage/backups/odin/hermes` directory, preserving structure, and prunes backups older than 30 days.
+*   **Git Tracking:** Config files and custom python skills in `/opt/odin/hermes/skills/` are committed to the stack's Git repo, while databases are excluded and backed up via this service.
 
 ---
 
@@ -232,7 +250,12 @@ You can access the dedicated Hermes Agent Web Dashboard directly in your browser
 * **URL:** `https://huginn.${DOMAIN_NAME}`
 * **Features:** Allows you to chat with the agent, view active tasks, monitor step-by-step executions, inspect memories, and view/edit dynamic python skills.
 
-### 3. Open-WebUI Integration (Auto-configured Chat Interface)
+### 3. Mnemosyne Memory Visualizer (Episodic Constellation Map)
+You can inspect the agent's long-term and working memories graphically in your browser:
+* **URL:** `https://mnemosyne.${DOMAIN_NAME}`
+* **Features:** A interactive constellation map showing semantic memory associations, chronological timelines of episodic history, and diagnostic outputs for memory consolidation sleep cycles.
+
+### 4. Open-WebUI Integration (Auto-configured Chat Interface)
 Odin is pre-configured to automatically link your Open-WebUI instance to the Huginn Gateway API server on startup.
 * **Accessing the Agent**: Simply open Open-WebUI (`https://odin.${DOMAIN_NAME}`), and select the `hermes-agent` model from the top-left model selection dropdown.
 * **Behavior**: Any chat started with the `hermes-agent` model will run actions (like reading notes from your Obsidian vault) and stream progress indicators directly into the Open-WebUI chat bubble. No manual connection setup is required.
