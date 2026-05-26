@@ -147,24 +147,7 @@ services:
       dockerfile: Dockerfile
     user: "0:0"
     command: >
-      sh -c '
-      if [ -d "/opt/hermes/.venv" ]; then
-        /opt/hermes/.venv/bin/python -m mnemosyne.install
-        exec /opt/hermes/.venv/bin/gateway run
-      elif [ -d "/app/venv" ]; then
-        /app/venv/bin/python -m mnemosyne.install
-        exec /app/venv/bin/gateway run
-      elif [ -d "/app/.venv" ]; then
-        /app/.venv/bin/python -m mnemosyne.install
-        exec /app/.venv/bin/gateway run
-      elif [ -d "/venv" ]; then
-        /venv/bin/python -m mnemosyne.install
-        exec /venv/bin/gateway run
-      else
-        python -m mnemosyne.install || python3 -m mnemosyne.install
-        exec gateway run
-      fi
-      '
+      sh -c '/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes gateway run'
     volumes:
       - /opt/odin/hermes:/opt/data
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
@@ -217,24 +200,7 @@ services:
       dockerfile: Dockerfile
     user: "0:0"
     command: >
-      sh -c '
-      if [ -d "/opt/hermes/.venv" ]; then
-        /opt/hermes/.venv/bin/python -m mnemosyne.install
-        exec /opt/hermes/.venv/bin/dashboard --host 0.0.0.0 --insecure
-      elif [ -d "/app/venv" ]; then
-        /app/venv/bin/python -m mnemosyne.install
-        exec /app/venv/bin/dashboard --host 0.0.0.0 --insecure
-      elif [ -d "/app/.venv" ]; then
-        /app/.venv/bin/python -m mnemosyne.install
-        exec /app/.venv/bin/dashboard --host 0.0.0.0 --insecure
-      elif [ -d "/venv" ]; then
-        /venv/bin/python -m mnemosyne.install
-        exec /venv/bin/dashboard --host 0.0.0.0 --insecure
-      else
-        python -m mnemosyne.install || python3 -m mnemosyne.install
-        exec dashboard --host 0.0.0.0 --insecure
-      fi
-      '
+      sh -c '/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 0.0.0.0 --insecure'
     volumes:
       - /opt/odin/hermes:/opt/data
     environment:
