@@ -6,7 +6,7 @@ USER root
 RUN if [ -d "/opt/hermes/.venv" ]; then \
       if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
         echo "Installing pip inside virtualenv..." && \
-        /opt/hermes/.venv/bin/python -c "import urllib.request, ssl; urllib.request.urlretrieve('https://bootstrap.pypa.io/get-pip.py', 'get-pip.py', context=ssl._create_unverified_context())" && \
+        /opt/hermes/.venv/bin/python -c "import urllib.request, ssl; open('get-pip.py', 'wb').write(urllib.request.urlopen('https://bootstrap.pypa.io/get-pip.py', context=ssl._create_unverified_context()).read())" && \
         /opt/hermes/.venv/bin/python get-pip.py && \
         rm get-pip.py; \
       fi && \
