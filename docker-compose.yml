@@ -151,6 +151,7 @@ services:
       mkdir -p /opt/data/.ssh && chmod 700 /opt/data/.ssh;
       if [ -f /run/secrets/hermes_ssh_key ]; then
         tr -d "\r" < /run/secrets/hermes_ssh_key > /opt/data/.ssh/id_rsa;
+        echo "" >> /opt/data/.ssh/id_rsa;
         chmod 600 /opt/data/.ssh/id_rsa;
         ssh-keyscan github.com > /opt/data/.ssh/known_hosts 2>/dev/null;
         chmod 600 /opt/data/.ssh/known_hosts;
