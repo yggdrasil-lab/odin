@@ -173,8 +173,8 @@ services:
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
-      - GIT_USER_NAME=${HERMES_GIT_USER_NAME:-Hermes Agent}
-      - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL:-hermes-agent@users.noreply.github.com}
+      - GIT_USER_NAME=${HERMES_GIT_USER_NAME}
+      - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL}
       - GH_SETUP_TOKEN=${GH_TOKEN:-}
       - GH_CONFIG_DIR=/opt/data/.config/gh
     secrets:

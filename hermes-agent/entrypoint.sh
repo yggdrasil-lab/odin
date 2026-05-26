@@ -40,8 +40,8 @@ else
   fi
 
   # 3. Configure Git user name/email and safe directory
-  git config --global user.name "${GIT_USER_NAME:-Hermes Agent}"
-  git config --global user.email "${GIT_USER_EMAIL:-hermes-agent@users.noreply.github.com}"
+  git config --global user.name "${GIT_USER_NAME}"
+  git config --global user.email "${GIT_USER_EMAIL}"
   git config --global --add safe.directory /app/vault
 
   # 4. Remove secret tokens from the process environment
