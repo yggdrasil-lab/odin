@@ -193,6 +193,7 @@ services:
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
       - GIT_USER_NAME=${HERMES_GIT_USER_NAME:-Hermes Agent}
       - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL:-hermes-agent@users.noreply.github.com}
+      - GH_TOKEN=${GH_TOKEN:-}
     secrets:
       - source: hermes_ssh_key
         target: hermes_ssh_key

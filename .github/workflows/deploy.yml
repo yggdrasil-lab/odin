@@ -65,6 +65,7 @@ jobs:
           MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED }}
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
