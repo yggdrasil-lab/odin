@@ -164,6 +164,14 @@ services:
       git config --global user.name "$${GIT_USER_NAME}";
       git config --global user.email "$${GIT_USER_EMAIL}";
       git config --global --add safe.directory /app/vault;
+      if [ -n "$${GH_TOKEN}" ]; then
+        echo "$${GH_TOKEN}" | gh auth login --with-token;
+        mkdir -p /opt/data/home/.config/gh && chmod 700 /opt/data/home/.config/gh;
+        cp -r /root/.config/gh/* /opt/data/home/.config/gh/ 2>/dev/null || true;
+        chown -R 1000:1000 /opt/data/home/.config/gh/ 2>/dev/null || true;
+      fi;
+      unset GH_TOKEN;
+      unset GITHUB_TOKEN;
       /opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes gateway run'
     volumes:
       - /opt/odin/hermes:/opt/data
