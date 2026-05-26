@@ -172,7 +172,7 @@ services:
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
-      - MNEMOSYNE_LLM_API_KEY=${MNEMOSYNE_LLM_API_KEY:-${MUNINN_MASTER_KEY}}
+      - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
     networks:
       - internal
