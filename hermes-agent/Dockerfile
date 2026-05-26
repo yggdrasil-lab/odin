@@ -21,6 +21,10 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
     fi && \
     /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[all] sqlite-vec
 
+# Copy and setup entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER 1000:1000
 
 
