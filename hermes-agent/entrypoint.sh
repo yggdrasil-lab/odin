@@ -33,9 +33,7 @@ else
     echo "Logging in to GitHub CLI..."
     if echo "${GH_SETUP_TOKEN}" | gh auth login --with-token; then
       echo "GitHub CLI login successful."
-      mkdir -p /opt/data/home/.config/gh && chmod 700 /opt/data/home/.config/gh
-      cp -r /root/.config/gh/* /opt/data/home/.config/gh/ 2>/dev/null || true
-      chown -R 1000:1000 /opt/data/home/.config/gh/ 2>/dev/null || true
+      chown -R 1000:1000 /opt/data/.config/gh 2>/dev/null || true
     else
       echo "Warning: GitHub CLI authentication failed."
     fi
