@@ -120,7 +120,11 @@ done
 for pair in ${BACKUP_PAIRS}; do
   src="${pair%%:*}"
   dest_rel="${pair##*:}"
-  dest="${LIVE_DIR}/${dest_rel}"
+  if [[ "${dest_rel}" == mnemosyne* ]]; then
+    dest="/opt/odin/${dest_rel}"
+  else
+    dest="${LIVE_DIR}/${dest_rel}"
+  fi
   
   # Ensure destination subdirectory exists
   dest_dir=$(dirname "${dest}")
@@ -133,6 +137,10 @@ done
 # Ensure files are owned by the container user (1000:1000)
 echo "Fixing permissions on ${LIVE_DIR}..."
 chown -R 1000:1000 "${LIVE_DIR}"
+if [ -d "/opt/odin/mnemosyne" ]; then
+  echo "Fixing permissions on /opt/odin/mnemosyne..."
+  chown -R 1000:1000 "/opt/odin/mnemosyne"
+fi
 
 # Scaling services back up to 1 replica
 echo "Scaling up ${GATEWAY_SERVICE} and ${DASHBOARD_SERVICE} back to 1 replica..."

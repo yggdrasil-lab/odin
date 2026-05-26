@@ -34,7 +34,7 @@ if [ ! -d "${LIVE_DIR}" ]; then
 fi
 
 # Mnemosyne Memory Directory
-MNEMOSYNE_DIR="${LIVE_DIR}/mnemosyne"
+MNEMOSYNE_DIR="/opt/odin/mnemosyne"
 if [ ! -d "${MNEMOSYNE_DIR}" ]; then
     echo "Creating ${MNEMOSYNE_DIR}..."
     sudo mkdir -p "${MNEMOSYNE_DIR}"

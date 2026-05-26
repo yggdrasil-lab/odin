@@ -150,6 +150,7 @@ services:
       sh -c '/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes gateway run'
     volumes:
       - /opt/odin/hermes:/opt/data
+      - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
       - OPENAI_BASE_URL=http://muninn:4000/v1
@@ -169,6 +170,10 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
+      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
+      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
+      - MNEMOSYNE_LLM_API_KEY=${MNEMOSYNE_LLM_API_KEY:-${MUNINN_MASTER_KEY}}
+      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
     networks:
       - internal
       - aether-net
@@ -203,6 +208,7 @@ services:
       sh -c '/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 0.0.0.0 --insecure'
     volumes:
       - /opt/odin/hermes:/opt/data
+      - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
     environment:
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
@@ -216,6 +222,10 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
+      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
+      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
+      - MNEMOSYNE_LLM_API_KEY=${MNEMOSYNE_LLM_API_KEY:-${MUNINN_MASTER_KEY}}
+      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
     networks:
       - aether-net
       - internal
@@ -253,8 +263,8 @@ services:
       context: ./mnemosyne-dashboard
       dockerfile: Dockerfile
     volumes:
-      # Mount the Hermes agent state directory as read-only for database visualization
-      - /opt/odin/hermes:/opt/data:ro
+      # Mount the Mnemosyne host directory as read-only for database visualization
+      - /opt/odin/mnemosyne:/opt/data:ro
     environment:
       - MNEMOSYNE_DASHBOARD_PORT=8080
       - MNEMOSYNE_DASHBOARD_DB=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
@@ -293,7 +303,8 @@ services:
       - "com.docker.compose.project=${STACK_NAME}"
     entrypoint: ["sh", "-c", "apk add --no-cache sqlite tzdata && echo \"0 3 * * * /config/backup.sh >> /var/log/huginn-backup.log 2>&1\" | crontab - && exec crond -f -l 2"]
     volumes:
-      - /opt/odin/hermes:/data:ro
+      - /opt/odin/hermes:/data/hermes:ro
+      - /opt/odin/mnemosyne:/data/mnemosyne:ro
       - /mnt/storage/backups/odin/hermes:/backup
     configs:
       - source: huginn_backup_script

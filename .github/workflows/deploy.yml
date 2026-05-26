@@ -51,13 +51,17 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
           REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX }}
+          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED }}
+          MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL }}
+          MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL }}
         run: |
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
-          # Write hermes config directly to host path and fix permissions (UID 1000, GID 1000)
-          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data/mnemosyne && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
+          # Write config files and fix permissions on host directories (UID 1000, GID 1000)
+          docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml
