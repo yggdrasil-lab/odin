@@ -3,8 +3,11 @@ FROM nousresearch/hermes-agent:latest
 USER root
 
 # Install mnemosyne-memory in the virtual environment or fallback to system python using uv/pip
-RUN if [ -d "/opt/hermes/.venv" ]; then \
+RUN if [ -x "/opt/hermes/.venv/bin/pip" ]; then \
       /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[all]; \
+    elif [ -x "/opt/hermes/.venv/bin/python" ]; then \
+      /opt/hermes/.venv/bin/python -m pip install --no-cache-dir mnemosyne-memory[all] || \
+      ( /opt/hermes/.venv/bin/python -m ensurepip && /opt/hermes/.venv/bin/python -m pip install --no-cache-dir mnemosyne-memory[all] ); \
     elif [ -d "/app/venv" ]; then \
       /app/venv/bin/pip install --no-cache-dir mnemosyne-memory[all]; \
     elif [ -d "/app/.venv" ]; then \
