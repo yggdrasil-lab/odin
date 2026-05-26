@@ -267,7 +267,7 @@ services:
       - /opt/odin/mnemosyne:/opt/data:ro
     environment:
       - MNEMOSYNE_DASHBOARD_PORT=8080
-      - MNEMOSYNE_DASHBOARD_DB=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
+      - MNEMOSYNE_DASHBOARD_DB=/opt/data/data/mnemosyne.db
       - MNEMOSYNE_DASHBOARD_HOST=0.0.0.0
       - TZ=Pacific/Auckland
     networks:
