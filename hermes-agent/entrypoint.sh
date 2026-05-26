@@ -29,9 +29,9 @@ else
   fi
 
   # 2. Configure GitHub CLI (gh) credentials
-  if [ -n "${GH_TOKEN}" ]; then
+  if [ -n "${GH_SETUP_TOKEN}" ]; then
     echo "Logging in to GitHub CLI..."
-    if echo "${GH_TOKEN}" | gh auth login --with-token; then
+    if echo "${GH_SETUP_TOKEN}" | gh auth login --with-token; then
       echo "GitHub CLI login successful."
       mkdir -p /opt/data/home/.config/gh && chmod 700 /opt/data/home/.config/gh
       cp -r /root/.config/gh/* /opt/data/home/.config/gh/ 2>/dev/null || true
@@ -47,6 +47,7 @@ else
   git config --global --add safe.directory /app/vault
 
   # 4. Remove secret tokens from the process environment
+  unset GH_SETUP_TOKEN
   unset GH_TOKEN
   unset GITHUB_TOKEN
 
