@@ -168,7 +168,7 @@ services:
       - HERMES_STREAM_STALE_TIMEOUT=1800
       - HERMES_UID=1000
       - HERMES_GID=1000
-      - MNEMOSYNE_DB_PATH=/opt/data/mnemosyne/mnemosyne.db
+      - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
     networks:
       - internal
       - aether-net
@@ -215,7 +215,7 @@ services:
       - HERMES_STREAM_STALE_TIMEOUT=1800
       - HERMES_UID=1000
       - HERMES_GID=1000
-      - MNEMOSYNE_DB_PATH=/opt/data/mnemosyne/mnemosyne.db
+      - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
     networks:
       - aether-net
       - internal
@@ -257,7 +257,7 @@ services:
       - /opt/odin/hermes:/opt/data:ro
     environment:
       - MNEMOSYNE_DASHBOARD_PORT=8080
-      - MNEMOSYNE_DASHBOARD_DB=/opt/data/mnemosyne/mnemosyne.db
+      - MNEMOSYNE_DASHBOARD_DB=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DASHBOARD_HOST=0.0.0.0
       - TZ=Pacific/Auckland
     networks:

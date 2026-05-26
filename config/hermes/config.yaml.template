@@ -118,7 +118,7 @@ memory:
     auto_sleep: true            # Enable automatic consolidation (sleep cycle summaries)
     sleep_threshold: 50         # Number of working memories before trigger
     vector_type: "int8"         # Vector quantization type (float32, int8, or bit)
-    db_path: "/opt/data/mnemosyne/mnemosyne.db"
+    db_path: "/opt/data/.hermes/mnemosyne/data/mnemosyne.db"
 
 # =============================================================================
 # Plugins Configuration
