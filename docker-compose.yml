@@ -147,7 +147,18 @@ services:
       dockerfile: Dockerfile
     user: "0:0"
     command: >
-      sh -c '/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes gateway run'
+      sh -c '
+      mkdir -p /root/.ssh && chmod 700 /root/.ssh;
+      if [ -f /run/secrets/hermes_ssh_key ]; then
+        tr -d "\r" < /run/secrets/hermes_ssh_key > /root/.ssh/id_rsa;
+        chmod 600 /root/.ssh/id_rsa;
+        ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null;
+        chmod 600 /root/.ssh/known_hosts;
+      fi;
+      git config --global user.name "$${GIT_USER_NAME}";
+      git config --global user.email "$${GIT_USER_EMAIL}";
+      git config --global --add safe.directory /app/vault;
+      /opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes gateway run'
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
@@ -174,6 +185,11 @@ services:
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
+      - GIT_USER_NAME=${HERMES_GIT_USER_NAME:-Hermes Agent}
+      - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL:-hermes-agent@users.noreply.github.com}
+    secrets:
+      - source: hermes_ssh_key
+        target: hermes_ssh_key
     networks:
       - internal
       - aether-net
@@ -347,3 +363,6 @@ secrets:
   odin_lldap_user_pass:
     external: true
     name: ${LLDAP_LDAP_USER_PASS_NAME}
+  hermes_ssh_key:
+    external: true
+    name: ${HERMES_SSH_KEY_NAME}
