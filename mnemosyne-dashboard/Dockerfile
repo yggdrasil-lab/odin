@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone https://github.com/wysie/mnemosyne-dashboard.git .
 
 # Install mnemosyne-memory (since the dashboard core imports it)
-RUN pip install --no-cache-dir --break-system-packages mnemosyne-memory[all]
+RUN pip install --no-cache-dir --break-system-packages mnemosyne-memory[all] sqlite-vec
 
 EXPOSE 8080
 
