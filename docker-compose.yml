@@ -148,12 +148,17 @@ services:
     user: "0:0"
     command: >
       sh -c '
-      mkdir -p /root/.ssh && chmod 700 /root/.ssh;
+      mkdir -p /opt/data/.ssh && chmod 700 /opt/data/.ssh;
       if [ -f /run/secrets/hermes_ssh_key ]; then
-        tr -d "\r" < /run/secrets/hermes_ssh_key > /root/.ssh/id_rsa;
-        chmod 600 /root/.ssh/id_rsa;
-        ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null;
-        chmod 600 /root/.ssh/known_hosts;
+        tr -d "\r" < /run/secrets/hermes_ssh_key > /opt/data/.ssh/id_rsa;
+        chmod 600 /opt/data/.ssh/id_rsa;
+        ssh-keyscan github.com > /opt/data/.ssh/known_hosts 2>/dev/null;
+        chmod 600 /opt/data/.ssh/known_hosts;
+        for dest_dir in "/opt/data/home/.ssh" "$$HOME/.ssh"; do
+          mkdir -p "$$dest_dir" && chmod 700 "$$dest_dir";
+          cp /opt/data/.ssh/id_rsa "$$dest_dir/id_rsa" && chmod 600 "$$dest_dir/id_rsa";
+          cp /opt/data/.ssh/known_hosts "$$dest_dir/known_hosts" && chmod 600 "$$dest_dir/known_hosts";
+        done;
       fi;
       git config --global user.name "$${GIT_USER_NAME}";
       git config --global user.email "$${GIT_USER_EMAIL}";
@@ -240,7 +245,7 @@ services:
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
-      - MNEMOSYNE_LLM_API_KEY=${MNEMOSYNE_LLM_API_KEY:-${MUNINN_MASTER_KEY}}
+      - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
     networks:
       - aether-net
