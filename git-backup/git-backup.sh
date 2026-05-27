@@ -50,14 +50,34 @@ if [ "$CURRENT_BRANCH" != "main" ]; then
     fi
 fi
 
-# Pull latest changes
-echo "Pulling latest changes..."
-git pull origin main 2>/dev/null || echo "Pull failed (may be initial empty repo — continuing)"
+# Reset to remote state, keeping all local changes staged.
+# This avoids merge conflicts when the remote has moved (e.g. another
+# backup ran earlier, or the user manually pushed changes). All local
+# modifications — whether from Hermes, manual edits, or file cleanup —
+# are captured as a single new commit on top of origin/main.
+echo "Syncing with remote..."
+git fetch origin main
+git reset --soft origin/main
 
-# Add all files (respects .gitignore)
+# Untrack files now covered by updated .gitignore patterns.
+# After git reset --soft, .gitignore reflects the latest remote version.
+# Any tracked file matching the new patterns needs to be rm --cached
+# so it won't be re-committed on the next backup. Uses --no-index to
+# evaluate what WOULD be ignored regardless of current tracking status.
+if [ -f ".gitignore" ]; then
+  IGNORED_FILES=$(git ls-files --cached | git check-ignore --stdin --no-index 2>/dev/null || true)
+  if [ -n "$IGNORED_FILES" ]; then
+    echo "Cleaning up tracked files now covered by .gitignore:"
+    printf '%s\n' $IGNORED_FILES | sed 's/^/  /'
+    printf '%s\n' $IGNORED_FILES | xargs -r git rm --cached --
+    echo "Cleanup complete."
+  fi
+fi
+
+# Stage all files (respects .gitignore)
 git add .
 
-# Commit if there are changes
+# Commit and push if there are changes
 if git diff --staged --quiet; then
     echo "No changes to commit."
 else
@@ -65,14 +85,8 @@ else
     git commit -m "Daily backup: $(date '+%Y-%m-%d %H:%M')"
     
     echo "Pushing to remote..."
-    if git push origin main; then
-        echo "Backup pushed successfully."
-    else
-        echo "Push failed. Attempting pull-rebase and retry..."
-        git pull --rebase origin main
-        git push origin main
-        echo "Backup pushed after rebase."
-    fi
+    git push origin main
+    echo "Backup pushed successfully."
 fi
 
 echo "[$(date)] Backup complete."

@@ -66,3 +66,10 @@ hermes/.hermes/mnemosyne/
 
 # Ignore host-level mnemosyne mount
 mnemosyne/
+
+# Ignore Hermes Agent runtime files that change on every start
+hermes/.clean_shutdown
+hermes/.gitconfig
+hermes/gateway.pid
+hermes/skills/.bundled_manifest
+hermes/skills/.usage.json
