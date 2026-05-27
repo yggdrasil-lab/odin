@@ -44,6 +44,25 @@ hermes/**/models_dev_cache.json
 hermes/**/ollama_cloud_models_cache.json
 hermes/**/config.yaml
 
+# Ignore Hermes Agent runtime logs
+hermes/logs/
+hermes/**/*.log
+
+# Ignore container home directory (shell history, wget state, etc.)
+hermes/home/
+
+# Ignore browser and runtime caches
+hermes/.config/
+
+# Ignore web cache files
+hermes/**/.wget-hsts
+
 # Ignore databases inside config/muninn/
 config/muninn/*.db
 config/muninn/*.db-journal
+
+# Ignore Mnemosyne runtime data (DB, logs, embedding models)
+hermes/.hermes/mnemosyne/
+
+# Ignore host-level mnemosyn mount
+mnemosyn/

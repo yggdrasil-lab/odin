@@ -328,6 +328,41 @@ services:
         constraints:
           - node.role == manager
 
+  odin-git-backup:
+    image: ${REGISTRY_PREFIX}odin-git-backup:${STACK_NAME:-latest}
+    build:
+      context: ./git-backup
+      dockerfile: Dockerfile
+    working_dir: /git
+    entrypoint: /bin/sh
+    command: -c '
+        echo "Setting up daily git backup...";
+        echo "0 3 * * * /usr/local/bin/git-backup.sh >> /var/log/git-backup.log 2>&1" | crontab -;
+        echo "Starting crond...";
+        crond -f -l 2
+      '
+    environment:
+      - GIT_REPO_URL=${ODIN_GIT_REPO_URL}
+      - GIT_USER_EMAIL=${ODIN_GIT_USER_EMAIL}
+      - GIT_USER_NAME=${ODIN_GIT_USER_NAME}
+    secrets:
+      - source: hermes_ssh_key
+        target: odin_git_backup_ssh_key
+    volumes:
+      - /opt/odin:/git
+    networks:
+      - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
 volumes:
   ollama_data:
   open-webui_data:

@@ -66,6 +66,10 @@ jobs:
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # Odin git backup
+          ODIN_GIT_REPO_URL: ${{ vars.ODIN_GIT_REPO_URL }}
+          ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
+          ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
         run: |
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
