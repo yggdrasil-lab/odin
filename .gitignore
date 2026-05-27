@@ -10,12 +10,25 @@ hermes/**/*.db-wal
 hermes/**/cache/
 
 # Ignore Hermes Agent runtime directories
+hermes/.cache/
 hermes/.local/
+hermes/.npm/
+hermes/.ssh/
+hermes/audio_cache/
 hermes/bin/
-hermes/cron/
+hermes/cron/*
+!hermes/cron/jobs.json
 hermes/gateway/
-hermes/sessions/
+hermes/home/
+hermes/image_cache/
+hermes/lsp/
+hermes/pairing/
+hermes/plans/
 hermes/plugins/
+hermes/sandboxes/
+hermes/sessions/
+hermes/skins/
+hermes/workspace/
 # Keep skills but ignore python cache files inside it
 hermes/skills/**/__pycache__/
 hermes/skills/**/*.pyc
