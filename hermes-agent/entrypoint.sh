@@ -42,7 +42,7 @@ else
   # 3. Configure Git user name/email and safe directory
   git config --global user.name "${GIT_USER_NAME}"
   git config --global user.email "${GIT_USER_EMAIL}"
-  git config --global --add safe.directory /app/vault
+  git config --global safe.directory /app/vault
 
   # 4. Remove secret tokens from the process environment
   unset GH_SETUP_TOKEN
