@@ -50,14 +50,19 @@ if [ "$CURRENT_BRANCH" != "main" ]; then
     fi
 fi
 
-# Pull latest changes
-echo "Pulling latest changes..."
-git pull origin main 2>/dev/null || echo "Pull failed (may be initial empty repo — continuing)"
+# Reset to remote state, keeping all local changes staged.
+# This avoids merge conflicts when the remote has moved (e.g. another
+# backup ran earlier, or the user manually pushed changes). All local
+# modifications — whether from Hermes, manual edits, or file cleanup —
+# are captured as a single new commit on top of origin/main.
+echo "Syncing with remote..."
+git fetch origin main
+git reset --soft origin/main
 
-# Add all files (respects .gitignore)
+# Stage all files (respects .gitignore)
 git add .
 
-# Commit if there are changes
+# Commit and push if there are changes
 if git diff --staged --quiet; then
     echo "No changes to commit."
 else
@@ -65,14 +70,8 @@ else
     git commit -m "Daily backup: $(date '+%Y-%m-%d %H:%M')"
     
     echo "Pushing to remote..."
-    if git push origin main; then
-        echo "Backup pushed successfully."
-    else
-        echo "Push failed. Attempting pull-rebase and retry..."
-        git pull --rebase origin main
-        git push origin main
-        echo "Backup pushed after rebase."
-    fi
+    git push origin main
+    echo "Backup pushed successfully."
 fi
 
 echo "[$(date)] Backup complete."
