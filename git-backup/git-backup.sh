@@ -6,6 +6,8 @@ echo "[$(date)] Starting odin git backup..."
 # Configure Git
 git config --global user.email "${GIT_USER_EMAIL}"
 git config --global user.name "${GIT_USER_NAME}"
+# Trust mounted volume (host UID differs from container UID)
+git config --global --add safe.directory /git
 
 # Setup SSH keys from Docker Secret
 mkdir -p /root/.ssh
