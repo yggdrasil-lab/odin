@@ -336,7 +336,9 @@ services:
     working_dir: /git
     entrypoint: /bin/sh
     command: -c '
-        echo "Setting up daily git backup...";
+        echo "Running initial backup...";
+        /usr/local/bin/git-backup.sh;
+        echo "Initial backup complete. Setting up daily cron...";
         echo "0 3 * * * /usr/local/bin/git-backup.sh >> /var/log/git-backup.log 2>&1" | crontab -;
         echo "Starting crond...";
         crond -f -l 2
