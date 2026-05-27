@@ -4,8 +4,8 @@ set -e
 echo "[$(date)] Starting odin git backup..."
 
 # Configure Git
-git config --global user.email "${GIT_USER_EMAIL:-huginn@tienzo.net}"
-git config --global user.name "${GIT_USER_NAME:-Huginn}"
+git config --global user.email "${GIT_USER_EMAIL}"
+git config --global user.name "${GIT_USER_NAME}"
 
 # Setup SSH keys from Docker Secret
 mkdir -p /root/.ssh

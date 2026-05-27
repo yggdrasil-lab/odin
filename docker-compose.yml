@@ -343,8 +343,8 @@ services:
       '
     environment:
       - GIT_REPO_URL=${ODIN_GIT_REPO_URL}
-      - GIT_USER_EMAIL=${ODIN_GIT_USER_EMAIL:-huginn@tienzo.net}
-      - GIT_USER_NAME=${ODIN_GIT_USER_NAME:-Huginn}
+      - GIT_USER_EMAIL=${ODIN_GIT_USER_EMAIL}
+      - GIT_USER_NAME=${ODIN_GIT_USER_NAME}
     secrets:
       - source: hermes_ssh_key
         target: odin_git_backup_ssh_key
