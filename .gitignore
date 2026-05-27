@@ -67,7 +67,7 @@ hermes/.hermes/mnemosyne/
 # Ignore host-level mnemosyne mount
 mnemosyne/
 
-# Ignore Hermes Agent runtime files that change on every start
+# Runtime artifacts that change on every container start
 hermes/.clean_shutdown
 hermes/.gitconfig
 hermes/gateway.pid

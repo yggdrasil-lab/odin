@@ -50,17 +50,22 @@ if [ "$CURRENT_BRANCH" != "main" ]; then
     fi
 fi
 
-# Reset to remote state, keeping all local changes staged.
-# This avoids merge conflicts when the remote has moved (e.g. another
-# backup ran earlier, or the user manually pushed changes). All local
-# modifications — whether from Hermes, manual edits, or file cleanup —
-# are captured as a single new commit on top of origin/main.
+# Merge remote changes, resolving conflicts in favour of remote.
+# Preserves local commit history and uncommitted working-tree changes:
+# - git merge -X theirs: local commits survive on top of remote;
+#   when both sides touched the same file, remote wins.
+# - If merge fails (uncommitted local changes conflict), fall back
+#   to a safe hard-reset that keeps the working tree on disk so the
+#   following `git add .` + commit still capture everything.
 echo "Syncing with remote..."
 git fetch origin main
-git reset --soft origin/main
+if ! git merge -X theirs origin/main; then
+  echo "Merge failed (likely uncommitted changes). Falling back to hard-reset..."
+  git reset --hard origin/main
+fi
 
 # Untrack files now covered by updated .gitignore patterns.
-# After git reset --soft, .gitignore reflects the latest remote version.
+# After syncing with remote, .gitignore reflects the latest remote version.
 # Any tracked file matching the new patterns needs to be rm --cached
 # so it won't be re-committed on the next backup. Uses --no-index to
 # evaluate what WOULD be ignored regardless of current tracking status.
