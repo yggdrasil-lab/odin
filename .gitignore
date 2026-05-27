@@ -64,5 +64,5 @@ config/muninn/*.db-journal
 # Ignore Mnemosyne runtime data (DB, logs, embedding models)
 hermes/.hermes/mnemosyne/
 
-# Ignore host-level mnemosyn mount
-mnemosyn/
+# Ignore host-level mnemosyne mount
+mnemosyne/
