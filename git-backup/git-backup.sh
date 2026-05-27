@@ -59,6 +59,21 @@ echo "Syncing with remote..."
 git fetch origin main
 git reset --soft origin/main
 
+# Untrack files now covered by updated .gitignore patterns.
+# After git reset --soft, .gitignore reflects the latest remote version.
+# Any tracked file matching the new patterns needs to be rm --cached
+# so it won't be re-committed on the next backup. Uses --no-index to
+# evaluate what WOULD be ignored regardless of current tracking status.
+if [ -f ".gitignore" ]; then
+  IGNORED_FILES=$(git ls-files --cached | git check-ignore --stdin --no-index 2>/dev/null || true)
+  if [ -n "$IGNORED_FILES" ]; then
+    echo "Cleaning up tracked files now covered by .gitignore:"
+    printf '%s\n' $IGNORED_FILES | sed 's/^/  /'
+    printf '%s\n' $IGNORED_FILES | xargs -r git rm --cached --
+    echo "Cleanup complete."
+  fi
+fi
+
 # Stage all files (respects .gitignore)
 git add .
 
