@@ -211,7 +211,7 @@ services:
       context: ./hermes-agent
       dockerfile: Dockerfile
     user: "0:0"
-    command: /entrypoint.sh dashboard
+    entrypoint: ["/entrypoint.sh", "dashboard"]
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
