@@ -152,6 +152,7 @@ services:
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
+      - TZ=Pacific/Auckland
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
       - AGENT_MODEL=${AGENT_MODEL}
@@ -215,6 +216,7 @@ services:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
     environment:
+      - TZ=Pacific/Auckland
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
       - OPENAI_BASE_URL=http://muninn:4000/v1
