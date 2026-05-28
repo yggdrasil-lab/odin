@@ -33,7 +33,7 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
       /opt/hermes/.venv/bin/python get-pip.py && \
       rm get-pip.py; \
     fi && \
-    /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[all] sqlite-vec
+    /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[embeddings,mcp] sqlite-vec
 
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
