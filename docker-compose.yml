@@ -310,8 +310,8 @@ services:
       - "com.docker.compose.project=${STACK_NAME}"
     entrypoint: ["sh", "-c", "apk add --no-cache sqlite tzdata && echo \"Running initial backup...\" && sh /config/backup.sh && echo \"Initial backup complete. Setting up daily cron...\" && echo \"0 3 * * * sh /config/backup.sh >> /var/log/huginn-backup.log 2>&1\" | crontab - && echo \"Starting crond...\" && exec crond -f -l 2"]
     volumes:
-      - /opt/odin/hermes:/data/hermes:ro
-      - /opt/odin/mnemosyne:/data/mnemosyne:ro
+      - /opt/odin/hermes:/data/hermes
+      - /opt/odin/mnemosyne:/data/mnemosyne
       - /mnt/storage/backups/odin/hermes:/backup
     configs:
       - source: huginn_backup_script
