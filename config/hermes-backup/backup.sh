@@ -9,7 +9,7 @@ echo "[$(date)] Starting Hermes Agent database backup..."
 
 # Find all .db or .sqlite files and back them up using sqlite3 backup command
 found_db=false
-for db in $(find "${DATA_DIR}" -not -path "*/pki/nssdb*" -not -path "*/home/.hermes/mnemosyne*" \( -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" \)); do
+for db in $(find "${DATA_DIR}" -not -path "*/pki/nssdb*" \( -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" \)); do
   found_db=true
   filename=$(basename "$db")
   name="${filename%.*}"
