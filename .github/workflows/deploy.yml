@@ -74,6 +74,9 @@ jobs:
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
 
+          # Cleanup stale mnemosyne path from hermes home (old pre-split layout)
+          docker run --rm -v /opt/odin/hermes:/opt/data alpine sh -c "rm -rf /opt/data/home/.hermes/mnemosyne"
+
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
