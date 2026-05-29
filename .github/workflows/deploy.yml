@@ -57,7 +57,7 @@ jobs:
           HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
-          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY || 'sk-muninn-insecure-master-key' }}
+          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY || 'sk-mun...-key' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
@@ -71,6 +71,9 @@ jobs:
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
         run: |
+          # Create backup directory for huginn-backup if it doesn't exist
+          docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
+
           # Generate config files from templates using environment variables
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
