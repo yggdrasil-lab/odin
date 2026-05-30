@@ -74,6 +74,11 @@ browser:
   # Inactivity timeout in seconds - browser sessions are automatically closed
   inactivity_timeout: 120
 
+  # Camofox anti-detection browser (Firefox-based fingerprint spoofing)
+  camofox:
+    # Enable persistence so cookies and logins survive across sessions
+    managed_persistence: true
+
 # =============================================================================
 # Tool Loop Guardrails
 # =============================================================================

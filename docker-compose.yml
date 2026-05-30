@@ -170,6 +170,7 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       - SEARXNG_URL=http://searxng:8080
+      - CAMOFOX_URL=http://camofox:9377
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
@@ -327,6 +328,31 @@ services:
       restart_policy:
         condition: on-failure
 
+  camofox:
+    image: ghcr.io/redf0x1/camofox-browser:latest
+    volumes:
+      - camofox_data:/root/.camofox
+    environment:
+      - TZ=Pacific/Auckland
+      - CAMOFOX_PORT=9377
+    networks:
+      - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
   huginn-backup:
     image: alpine:latest
     container_name: huginn-backup
@@ -397,6 +423,7 @@ volumes:
   open-webui_data:
   muninn-db_data:
   searxng_data:
+  camofox_data:
 
 networks:
   aether-net:
