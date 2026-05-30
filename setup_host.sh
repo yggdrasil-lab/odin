@@ -62,6 +62,7 @@ VAULT_PATH="${OBSIDIAN_VAULT_PATH:-/opt/atlas/vault}/second-brain"
 if [ -d "${VAULT_PATH}" ]; then
     echo "Granting vault write access to Huginn Agent at ${VAULT_PATH}..."
     sudo chmod -R o+w "${VAULT_PATH}"
+    sudo chown -R 1000:1000 "${VAULT_PATH}"
     echo "Vault permissions updated."
 else
     echo "Warning: Vault not found at ${VAULT_PATH}. Skipping permission update."
