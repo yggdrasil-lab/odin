@@ -1,0 +1,2 @@
+# SearXNG limiter configuration — disabled at server level (limiter: false in settings.yml)
+# This empty file silences the "missing config file: /etc/searxng/limiter.toml" warning
