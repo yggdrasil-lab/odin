@@ -19,6 +19,7 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 | odin-git-backup | custom (git-backup/Dockerfile) | Nightly git backup of /opt/odin (IaC) |
 | searxng | searxng/searxng:latest | Self-hosted metasearch engine — Hermes web_search backend |
 | camofox | ghcr.io/redf0x1/camofox-browser | Anti-detection browser — Hermes stealth browser (Firefox + C++ fingerprint spoofing) |
+| nginx-camofox | nginx:alpine | Auth proxy for Camofox — injects API key on every request |
 
 ## Architecture
 
@@ -47,6 +48,7 @@ graph TD
         Muninn[Muninn Proxy]
         SearXNG[SearXNG]
         Camofox[Camofox Browser]
+        NginxCamofox[Nginx Camofox Proxy]
     end
 
     Browser -->|HTTPS| Traefik
@@ -63,7 +65,8 @@ graph TD
 
     Gateway <-->|rw| Obsidian
     Gateway -->|search| SearXNG
-    Gateway -->|browser| Camofox
+    Gateway -->|browser| NginxCamofox
+    NginxCamofox -->|proxy + auth| Camofox
     Gateway -->|write| MnemosyneDB
     Dashboard -.->|read| MnemosyneDB
     Gateway -->|backup| Backup
