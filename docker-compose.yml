@@ -171,6 +171,7 @@ services:
       - HERMES_GID=1000
       - SEARXNG_URL=http://searxng:8080
       - CAMOFOX_URL=http://camofox:9377
+      - CAMOFOX_API_KEY=${CAMOFOX_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
@@ -334,7 +335,9 @@ services:
       - camofox_data:/root/.camofox
     environment:
       - TZ=Pacific/Auckland
+      - CAMOFOX_HOST=0.0.0.0
       - CAMOFOX_PORT=9377
+      - CAMOFOX_API_KEY=${CAMOFOX_API_KEY}
     networks:
       - internal
     labels:
