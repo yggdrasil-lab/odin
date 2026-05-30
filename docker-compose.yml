@@ -145,7 +145,7 @@ services:
     build:
       context: ./hermes-agent
       dockerfile: Dockerfile
-    user: "0:0"
+    user: "1000:1000"
     command: /entrypoint.sh
     volumes:
       - /opt/odin/hermes:/opt/data
@@ -210,7 +210,7 @@ services:
     build:
       context: ./hermes-agent
       dockerfile: Dockerfile
-    user: "0:0"
+    user: "1000:1000"
     entrypoint: ["/entrypoint.sh", "dashboard"]
     volumes:
       - /opt/odin/hermes:/opt/data
