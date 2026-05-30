@@ -87,6 +87,9 @@ jobs:
           fi
           python3 -c "import os; open('config/searxng/settings.yml', 'w').write(os.path.expandvars(open('config/searxng/settings.yml.template').read()))"
           
+          # Expand Camofox nginx template with API key
+          python3 -c "import os; open('config/camofox/nginx.conf', 'w').write(os.path.expandvars(open('config/camofox/nginx.conf.template').read()))"
+          
           # Write config files and fix permissions on host directories (UID 1000, GID 1000)
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
           docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
