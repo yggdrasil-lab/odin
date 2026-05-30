@@ -15,6 +15,17 @@ search:
   # SearXNG automatically rotates through other engines when one is throttled
   safe_search: 0
 
+# Disable engines that fail in containerized environments
+# ahmia, torch: require Tor — not available
+# radio_browser: SQLite cache init fails on fresh volumes (no such table: properties)
+engines:
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true
+  - name: radio browser
+    disabled: true
+
 ui:
   # Disable the web UI since Hermes uses the JSON API only
   static_use_hash: true

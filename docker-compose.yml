@@ -310,6 +310,8 @@ services:
     configs:
       - source: searxng_settings
         target: /etc/searxng/settings.yml
+      - source: searxng_limiter
+        target: /etc/searxng/limiter.toml
     environment:
       - TZ=Pacific/Auckland
     networks:
@@ -412,6 +414,8 @@ configs:
     file: ./config/muninn/config.yaml
   searxng_settings:
     file: ./config/searxng/settings.yml
+  searxng_limiter:
+    file: ./config/searxng/limiter.toml
 
 secrets:
   odin_lldap_user_pass:
