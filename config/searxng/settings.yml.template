@@ -18,9 +18,13 @@ botdetection:
       - 0.0.0.0/0
 
 search:
+  # Enable JSON format so Hermes can query via /search?format=json
   formats:
     - html
     - json
+  # Built-in CAPTCHA cooldown per upstream engine
+  # Google: 1hr block, reCAPTCHA: 7-day block
+  # SearXNG automatically rotates through other engines when one is throttled
   safe_search: 0
   autocomplete: ""
 
