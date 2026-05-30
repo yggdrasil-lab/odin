@@ -169,6 +169,7 @@ services:
       - HERMES_STREAM_STALE_TIMEOUT=1800
       - HERMES_UID=1000
       - HERMES_GID=1000
+      - SEARXNG_URL=http://searxng:8080
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
@@ -302,6 +303,28 @@ services:
         - "homepage.href=https://mnemosyne.${DOMAIN_NAME}"
         - "homepage.description=Memory Store Visualizer & Event Inspector"
 
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - searxng_data:/etc/searxng
+    configs:
+      - source: searxng_settings
+        target: /etc/searxng/settings.yml
+    environment:
+      - TZ=Pacific/Auckland
+    networks:
+      - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
   huginn-backup:
     image: alpine:latest
     container_name: huginn-backup
@@ -371,6 +394,7 @@ volumes:
   ollama_data:
   open-webui_data:
   muninn-db_data:
+  searxng_data:
 
 networks:
   aether-net:
@@ -386,6 +410,8 @@ configs:
     file: ./config/ollama-init/init.sh
   muninn_config:
     file: ./config/muninn/config.yaml
+  searxng_settings:
+    file: ./config/searxng/settings.yml
 
 secrets:
   odin_lldap_user_pass:
