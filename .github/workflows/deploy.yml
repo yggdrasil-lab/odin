@@ -84,7 +84,7 @@ jobs:
           
           # Fix root-owned files in the obsidian vault (only if vault path is set and exists)
           if [ -n "$OBSIDIAN_VAULT_PATH" ] && [ -d "$OBSIDIAN_VAULT_PATH" ]; then
-            docker run --rm -v "$OBSIDIAN_VAULT_PATH":/app/vault alpine sh -c "chown -R 1000:1000 /app/vault/x && echo 'Vault archive ownership fixed.'"
+            docker run --rm -v "$OBSIDIAN_VAULT_PATH":/app/vault alpine sh -c "chown -R 1000:1000 /app/vault && echo 'Vault ownership fixed.'"
           fi
           
           chmod +x scripts/deploy.sh
