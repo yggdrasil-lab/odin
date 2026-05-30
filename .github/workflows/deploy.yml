@@ -82,10 +82,19 @@ jobs:
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
           docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
-          # Fix root-owned files in the obsidian vault (only if vault path is set and exists)
-          if [ -n "$OBSIDIAN_VAULT_PATH" ] && [ -d "$OBSIDIAN_VAULT_PATH" ]; then
-            docker run --rm -v "$OBSIDIAN_VAULT_PATH":/app/vault alpine sh -c "chown -R 1000:1000 /app/vault/x && echo 'Vault archive ownership fixed.'"
-          fi
-          
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml
+          
+          # Fix root-owned files in the obsidian vault archive.
+          # Runs inside the gateway container after deploy (avoids env-var path issues).
+          echo "Waiting for huginn-gateway container..."
+          for i in $(seq 1 30); do
+            CONTAINER=$(docker ps --filter "name=huginn-gateway" --format "{{.Names}}" 2>/dev/null | head -1)
+            [ -n "$CONTAINER" ] && break
+            sleep 2
+          done
+          if [ -n "$CONTAINER" ]; then
+            docker exec "$CONTAINER" chown -R 1000:1000 /app/vault/x && echo "Vault archive ownership fixed."
+          else
+            echo "WARNING: huginn-gateway container not found — vault chown skipped"
+          fi
