@@ -1,31 +1,82 @@
 # SearXNG configuration — template expanded by deploy.yml
 # See https://docs.searxng.org/admin/settings/index.html
 
-use_default_settings: true
+# Disable default settings merge — we control the full engine list
+use_default_settings: false
 
 server:
   secret_key: "$SEARXNG_SECRET"
   bind_address: "0.0.0.0"
-  # Disable rate limiting for internal Hermes use
   limiter: false
+  # Allow internal traffic without X-Forwarded-For headers
+  image_proxy: false
+
+# Bot detection: pass all internal network traffic (Hermes → Gateway → SearXNG)
+botdetection:
+  ip_lists:
+    pass_ip:
+      - 0.0.0.0/0
 
 search:
-  # Built-in CAPTCHA cooldown per upstream engine
-  # Google: 1hr block, reCAPTCHA: 7-day block
-  # SearXNG automatically rotates through other engines when one is throttled
+  formats:
+    - html
+    - json
   safe_search: 0
+  autocomplete: ""
 
-# Disable engines that fail in containerized environments
-# ahmia, torch: require Tor — not available
-# radio_browser: SQLite cache init fails on fresh volumes (no such table: properties)
+# Minimal, reliable engine list — no Tor engines, no broken ones
 engines:
-  - name: ahmia
-    disabled: true
-  - name: torch
-    disabled: true
-  - name: radio browser
-    disabled: true
+  # General web search
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+
+  - name: mojeek
+    engine: mojeek
+    shortcut: mj
+    disabled: false
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+    disabled: false
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    disabled: false
+
+  - name: yahoo
+    engine: yahoo
+    shortcut: yh
+    disabled: false
+
+  # Encyclopedias / knowledge
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+    disabled: false
 
 ui:
-  # Disable the web UI since Hermes uses the JSON API only
   static_use_hash: true
