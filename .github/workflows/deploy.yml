@@ -71,7 +71,7 @@ jobs:
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           SEARXNG_SECRET: ${{ vars.SEARXNG_SECRET || '' }}
-          CAMOFOX_API_KEY: ${{ vars.CAMOFOX_API_KEY }}
+          CAMOFOX_API_KEY: ${{ secrets.CAMOFOX_API_KEY }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
