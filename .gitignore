@@ -1,4 +1,6 @@
+.ssh
 .env
+.gitconfig
 *.log
 
 # Ignore databases and cache inside hermes active data folder
