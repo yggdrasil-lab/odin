@@ -71,7 +71,6 @@ jobs:
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           SEARXNG_SECRET: ${{ vars.SEARXNG_SECRET || '' }}
-          CAMOFOX_API_KEY: ${{ secrets.CAMOFOX_API_KEY }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
@@ -86,9 +85,6 @@ jobs:
             echo "SEARXNG_SECRET=${SEARXNG_SECRET}" >> $GITHUB_ENV
           fi
           python3 -c "import os; open('config/searxng/settings.yml', 'w').write(os.path.expandvars(open('config/searxng/settings.yml.template').read()))"
-          
-          # Expand Camofox nginx template with API key
-          python3 -c "import os; open('config/camofox/nginx.conf', 'w').write(os.path.expandvars(open('config/camofox/nginx.conf.template').read()))"
           
           # Write config files and fix permissions on host directories (UID 1000, GID 1000)
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
