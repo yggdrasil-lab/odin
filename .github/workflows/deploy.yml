@@ -82,5 +82,10 @@ jobs:
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
           docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
+          # Fix root-owned files in the obsidian vault (only if vault path is set and exists)
+          if [ -n "$OBSIDIAN_VAULT_PATH" ] && [ -d "$OBSIDIAN_VAULT_PATH" ]; then
+            docker run --rm -v "$OBSIDIAN_VAULT_PATH":/app/vault alpine sh -c "chown -R 1000:1000 /app/vault/x && echo 'Vault archive ownership fixed.'"
+          fi
+          
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh "odin" docker-compose.yml
