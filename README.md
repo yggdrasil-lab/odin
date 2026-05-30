@@ -17,8 +17,7 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 | mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer |
 | huginn-backup | alpine + sqlite | Nightly SQLite backups, 30-day retention |
 | odin-git-backup | custom (git-backup/Dockerfile) | Nightly git backup of /opt/odin (IaC) |
-
----
+| searxng | searxng/searxng:latest | Self-hosted metasearch engine — Hermes web_search backend |
 
 ## Architecture
 
@@ -45,6 +44,7 @@ graph TD
         Dashboard[Huginn Dashboard]
         MnemosyneVis[Mnemosyne Dashboard]
         Muninn[Muninn Proxy]
+        SearXNG[SearXNG]
     end
 
     Browser -->|HTTPS| Traefik
@@ -60,6 +60,7 @@ graph TD
     Muninn -.->|Cloud API| Gemini
 
     Gateway <-->|rw| Obsidian
+    Gateway -->|search| SearXNG
     Gateway -->|write| MnemosyneDB
     Dashboard -.->|read| MnemosyneDB
     Gateway -->|backup| Backup
@@ -111,4 +112,4 @@ Deploy workflow runs on the self-hosted `gaia` runner. Pushes to main auto-trigg
 
 ## Details
 
-Full documentation with service deep-dives, deployment pipeline, backup architecture, Hermes container internals, and pitfalls: see the Odin Stack reference in the vault under `Areas/90-Infrastructure/Odin Stack.md`.
+Full documentation with service deep-dives, deployment pipeline, backup architecture, Hermes container internals, and pitfalls: see the Odin Stack reference in the vault under `Areas/90-Infrastructure/Odin/Odin Stack.md`.
