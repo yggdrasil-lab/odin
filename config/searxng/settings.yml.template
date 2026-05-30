@@ -1,0 +1,20 @@
+# SearXNG configuration — template expanded by deploy.yml
+# See https://docs.searxng.org/admin/settings/index.html
+
+use_default_settings: true
+
+server:
+  secret_key: "$SEARXNG_SECRET"
+  bind_address: "0.0.0.0"
+  # Disable rate limiting for internal Hermes use
+  limiter: false
+
+search:
+  # Built-in CAPTCHA cooldown per upstream engine
+  # Google: 1hr block, reCAPTCHA: 7-day block
+  # SearXNG automatically rotates through other engines when one is throttled
+  safe_search: 0
+
+ui:
+  # Disable the web UI since Hermes uses the JSON API only
+  static_use_hash: true

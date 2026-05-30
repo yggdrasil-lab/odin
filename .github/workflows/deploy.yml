@@ -74,9 +74,16 @@ jobs:
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
 
-          # Generate config files from templates using environment variables
+          # Expand config templates
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
+          
+          # Generate SearXNG secret key for session signing (stable across deploys if set as GitHub var)
+          if [ -z "${SEARXNG_SECRET}" ]; then
+            export SEARXNG_SECRET=$(openssl rand -hex 32)
+            echo "SEARXNG_SECRET=${SEARXNG_SECRET}" >> $GITHUB_ENV
+          fi
+          python3 -c "import os; open('config/searxng/settings.yml', 'w').write(os.path.expandvars(open('config/searxng/settings.yml.template').read()))"
           
           # Write config files and fix permissions on host directories (UID 1000, GID 1000)
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
