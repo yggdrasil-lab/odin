@@ -1,82 +1,62 @@
 # SearXNG configuration — template expanded by deploy.yml
 # See https://docs.searxng.org/admin/settings/index.html
 
-# Disable default settings merge — we control the full engine list
-use_default_settings: false
+use_default_settings: true
 
 server:
   secret_key: "$SEARXNG_SECRET"
   bind_address: "0.0.0.0"
   limiter: false
-  # Allow internal traffic without X-Forwarded-For headers
   image_proxy: false
-
-# Bot detection: pass all internal network traffic (Hermes → Gateway → SearXNG)
-botdetection:
-  ip_lists:
-    pass_ip:
-      - 0.0.0.0/0
 
 search:
   formats:
     - html
     - json
   safe_search: 0
-  autocomplete: ""
 
-# Minimal, reliable engine list — no Tor engines, no broken ones
+# Explicit engine list — SearXNG replaces its defaults with what we list here.
+# No Tor engines (ahmia, torch), no radio_browser (broken cache init).
 engines:
-  # General web search
   - name: google
     engine: google
     shortcut: g
-    disabled: false
 
   - name: bing
     engine: bing
     shortcut: bi
-    disabled: false
 
   - name: duckduckgo
     engine: duckduckgo
     shortcut: ddg
-    disabled: false
 
   - name: brave
     engine: brave
     shortcut: br
-    disabled: false
 
   - name: mojeek
     engine: mojeek
     shortcut: mj
-    disabled: false
 
   - name: qwant
     engine: qwant
     shortcut: qw
-    disabled: false
 
   - name: startpage
     engine: startpage
     shortcut: sp
-    disabled: false
 
   - name: yahoo
     engine: yahoo
     shortcut: yh
-    disabled: false
 
-  # Encyclopedias / knowledge
   - name: wikipedia
     engine: wikipedia
     shortcut: wp
-    disabled: false
 
   - name: wikidata
     engine: wikidata
     shortcut: wd
-    disabled: false
 
 ui:
   static_use_hash: true
