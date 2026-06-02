@@ -338,6 +338,8 @@ services:
       - CAMOFOX_HOST=0.0.0.0
       - CAMOFOX_PORT=9377
       - CAMOFOX_AUTH_MODE=disabled
+      - CAMOFOX_IDLE_TIMEOUT_MS=86400000
+      - CAMOFOX_IDLE_EXIT_TIMEOUT_MS=86400000
     networks:
       - internal
     labels:
@@ -349,7 +351,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 2G
