@@ -64,9 +64,8 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
     command: ["--config", "/app/config.yaml"]
     networks:
-      internal:
-      aether-net:
-        ipv4_address: 10.0.1.172
+      - internal
+      - aether-net
     labels:
       - "com.docker.compose.project=${STACK_NAME}"
     deploy:
@@ -117,9 +116,8 @@ services:
       - odin_lldap_user_pass
       - odin_webui_secret_key
     networks:
-      aether-net:
-        ipv4_address: 10.0.1.188
-      internal:
+      - aether-net
+      - internal
     labels:
       - "com.docker.compose.project=${STACK_NAME}"
     deploy:
@@ -189,9 +187,8 @@ services:
       - source: hermes_ssh_key
         target: hermes_ssh_key
     networks:
-      internal:
-      aether-net:
-        ipv4_address: 10.0.1.180
+      - internal
+      - aether-net
     labels:
       - "com.docker.compose.project=${STACK_NAME}"
     deploy:
@@ -242,9 +239,8 @@ services:
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
       - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-deepseek-v4-flash}
     networks:
-      aether-net:
-        ipv4_address: 10.0.1.176
-      internal:
+      - aether-net
+      - internal
     depends_on:
       - huginn-gateway
     labels:
@@ -287,9 +283,8 @@ services:
       - MNEMOSYNE_DASHBOARD_HOST=0.0.0.0
       - TZ=Pacific/Auckland
     networks:
-      aether-net:
-        ipv4_address: 10.0.1.184
-      internal:
+      - aether-net
+      - internal
     deploy:
       mode: replicated
       replicas: 1
