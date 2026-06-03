@@ -26,6 +26,7 @@ jobs:
         env:
           LLDAP_LDAP_USER_PASS: ${{ secrets.LLDAP_LDAP_USER_PASS }}
           HERMES_SSH_KEY: ${{ secrets.HERMES_SSH_KEY }}
+          WEBUI_SECRET_KEY: ${{ secrets.WEBUI_SECRET_KEY }}
         run: |
           chmod +x scripts/ensure_secret.sh
           
@@ -38,6 +39,9 @@ jobs:
           else
             echo "HERMES_SSH_KEY_NAME=" >> $GITHUB_ENV
           fi
+
+          # Resolve the external WEBUI_SECRET_KEY secret name
+          echo "WEBUI_SECRET_KEY_NAME=$(echo "$WEBUI_SECRET_KEY" | ./scripts/ensure_secret.sh odin_webui_secret_key)" >> $GITHUB_ENV
 
       - name: Log in to Registry
         uses: docker/login-action@v3
@@ -53,6 +57,7 @@ jobs:
           LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
           LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
           HERMES_SSH_KEY_NAME: ${{ env.HERMES_SSH_KEY_NAME }}
+          WEBUI_SECRET_KEY_NAME: ${{ env.WEBUI_SECRET_KEY_NAME }}
           HERMES_GIT_USER_NAME: ${{ vars.HERMES_GIT_USER_NAME || 'Huginn' }}
           HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
