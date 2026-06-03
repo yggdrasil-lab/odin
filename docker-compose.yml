@@ -111,9 +111,11 @@ services:
       - DEFAULT_MODELS=${CHAT_MODEL}
       - OPENAI_API_BASE_URLS=http://muninn:4000/v1;http://huginn-gateway:8642/v1
       - OPENAI_API_KEYS=${MUNINN_MASTER_KEY};${API_SERVER_KEY:-insecure_default_key_change_me}
+      - WEBUI_SECRET_KEY_FILE=/run/secrets/odin_webui_secret_key
     entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
     secrets:
       - odin_lldap_user_pass
+      - odin_webui_secret_key
     networks:
       aether-net:
         ipv4_address: 10.0.1.188
@@ -460,3 +462,6 @@ secrets:
   hermes_ssh_key:
     external: true
     name: ${HERMES_SSH_KEY_NAME}
+  odin_webui_secret_key:
+    external: true
+    name: ${WEBUI_SECRET_KEY_NAME}
