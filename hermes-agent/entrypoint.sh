@@ -34,6 +34,11 @@ else
     if echo "${GH_SETUP_TOKEN}" | gh auth login --with-token; then
       echo "GitHub CLI login successful."
       chown -R 1000:1000 /opt/data/.config/gh 2>/dev/null || true
+      # Copy to Hermes user home (uid 1000, HOME=/opt/data/home) —
+      # gh auth login writes to root's HOME; the agent runs as uid 1000
+      mkdir -p /opt/data/home/.config/gh
+      cp /opt/data/.config/gh/hosts.yml /opt/data/home/.config/gh/hosts.yml
+      chown -R 1000:1000 /opt/data/home/.config/gh
     else
       echo "Warning: GitHub CLI authentication failed."
     fi
