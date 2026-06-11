@@ -37,7 +37,8 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
 
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && chown -R 1000:1000 /opt/hermes
 
 USER 1000:1000
 
