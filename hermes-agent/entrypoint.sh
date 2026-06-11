@@ -28,19 +28,25 @@ else
     done
   fi
 
-  # 2. Configure GitHub CLI (gh) credentials for the hermes user (uid 1000)
+  # 2. Configure GitHub CLI (gh) credentials
   if [ -n "${GH_SETUP_TOKEN}" ]; then
     echo "Logging in to GitHub CLI..."
-    if echo "${GH_SETUP_TOKEN}" | runuser -u hermes -c "gh auth login --with-token"; then
+    if echo "${GH_SETUP_TOKEN}" | gh auth login --with-token; then
       echo "GitHub CLI login successful."
+      chown -R 1000:1000 /opt/data/.config/gh 2>/dev/null || true
+      # Copy to Hermes user home (uid 1000, HOME=/opt/data/home) —
+      # gh auth login writes to root's HOME; the agent runs as uid 1000
+      mkdir -p /opt/data/home/.config/gh
+      cp /opt/data/.config/gh/hosts.yml /opt/data/home/.config/gh/hosts.yml
+      chown -R 1000:1000 /opt/data/home/.config/gh
     else
       echo "Warning: GitHub CLI authentication failed."
     fi
   fi
 
-  # 3. Configure Git user name/email for the hermes user (uid 1000)
-  runuser -u hermes -c "git config --global user.name '${GIT_USER_NAME}'"
-  runuser -u hermes -c "git config --global user.email '${GIT_USER_EMAIL}'"
+  # 3. Configure Git user name/email and safe directory
+  git config --global user.name "${GIT_USER_NAME}"
+  git config --global user.email "${GIT_USER_EMAIL}"
   git config --global safe.directory /app/vault
 
   # 4. Remove secret tokens from the process environment
