@@ -264,6 +264,8 @@ services:
         - "traefik.http.routers.huginn-dashboard.entrypoints=websecure"
         - "traefik.http.routers.huginn-dashboard.tls=true"
         - "traefik.http.routers.huginn-dashboard.tls.certresolver=cloudflare"
+        - "traefik.http.routers.huginn-dashboard.middlewares=authelia,huginn-dummy-auth"
+        - "traefik.http.middlewares.huginn-dummy-auth.headers.customrequestheaders.Authorization=Basic YWRtaW46YWRtaW4="
         - "traefik.http.routers.huginn-dashboard.service=huginn-dashboard"
         - "traefik.http.services.huginn-dashboard.loadbalancer.server.port=9119"
         - "traefik.docker.network=aether-net"
