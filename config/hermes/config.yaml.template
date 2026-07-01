@@ -142,3 +142,11 @@ web:
 plugins:
   enabled:
     - "mnemosyne"
+
+# =============================================================================
+# Dashboard Configuration
+# =============================================================================
+dashboard:
+  basic_auth:
+    username: admin
+    password_hash: "$2b$12$N9cR5B8j5x6g9yG.Yl0D.eO2U7z1K4p8Vq1X6l3T5c2W9m8b7j0hG"
