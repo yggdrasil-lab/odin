@@ -6,8 +6,23 @@ MODE=${1:-gateway}
 if [ "$MODE" = "dashboard" ]; then
   echo "Starting Huginn Dashboard..."
   /opt/hermes/.venv/bin/python -m mnemosyne.install
-  # Proxy Traefik (port 9120) to local dashboard (port 9119) to bypass the auth gate
-  socat TCP-LISTEN:9120,fork,reuseaddr TCP:127.0.0.1:9119 &
+  # Configure Nginx to rewrite the Host header to 127.0.0.1 and proxy to dashboard
+  cat << 'EOF' > /tmp/nginx.conf
+events {}
+http {
+    server {
+        listen 9120;
+        location / {
+            proxy_pass http://127.0.0.1:9119;
+            proxy_set_header Host 127.0.0.1;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+}
+EOF
+  nginx -c /tmp/nginx.conf
   exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
 else
   echo "Starting Huginn Gateway..."
