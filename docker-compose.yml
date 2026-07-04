@@ -175,6 +175,7 @@ services:
       - CAMOFOX_URL=http://camofox:9377
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
+      - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
@@ -234,6 +235,7 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
+      - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
       - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
