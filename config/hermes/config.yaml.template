@@ -36,6 +36,7 @@ model:
 auxiliary:
   compression:
     context_length: ${HERMES_CONTEXT_LENGTH}
+    model: "deepseek-v4-flash"
 
 # =============================================================================
 # Safety & Approvals
@@ -111,6 +112,8 @@ compression:
   
   # Number of most-recent messages to always preserve (default: 20)
   protect_last_n: 20
+  # Deterministic no-LLM prune of old tool results when the prompt exceeds this many tokens (0 = off). Fires after the 32K summarize pass.
+  proactive_prune_tokens: 48000
 
 # =============================================================================
 # Memory Configuration
