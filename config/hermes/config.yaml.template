@@ -103,6 +103,8 @@ compression:
   
   # Trigger compression at this % of model's context limit (default: 0.50 = 50%)
   threshold: 0.50
+  # Absolute token cap: fires at the lower of this and the ratio threshold (overrides the 0.75 raise-only floor for sub-512K windows). 32768 = ~32K input.
+  threshold_tokens: 32768
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
