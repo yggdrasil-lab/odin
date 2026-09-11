@@ -18,18 +18,6 @@ model_list:
       model: deepseek/deepseek-v4-pro
       timeout: 600
 
-  # Intelligent Router Model (Complexity-based routing)
-  - model_name: deepseek-v4-intelligent
-    litellm_params:
-      model: auto_router/complexity_router
-      complexity_router_config:
-        tiers:
-          SIMPLE: deepseek-v4-flash
-          MEDIUM: deepseek-v4-flash
-          COMPLEX: deepseek-v4-pro
-          REASONING: deepseek-v4-pro
-      complexity_router_default_model: deepseek-v4-flash
-
   # Google Gemini Models (API key read from GEMINI_API_KEY environment variable)
   - model_name: gemini-2.5-flash
     litellm_params:
