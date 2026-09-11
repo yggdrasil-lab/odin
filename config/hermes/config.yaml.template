@@ -113,16 +113,16 @@ compression:
   
   # Trigger compression at this % of model's context limit (default: 0.50 = 50%)
   threshold: 0.50
-  # Absolute token cap: fires at the lower of this and the ratio threshold (overrides the 0.75 raise-only floor for sub-512K windows). 32768 = ~32K input.
-  threshold_tokens: 32768
+  # Absolute token cap: fires at the lower of this and the ratio threshold (overrides the 0.75 raise-only floor for sub-512K windows). 65536 = ~64K input.
+  threshold_tokens: 65536
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
   
   # Number of most-recent messages to always preserve (default: 20)
   protect_last_n: 20
-  # Deterministic no-LLM prune of old tool results when the prompt exceeds this many tokens (0 = off). Fires after the 32K summarize pass.
-  proactive_prune_tokens: 48000
+  # Deterministic no-LLM prune of old tool results when the prompt exceeds this many tokens (0 = off). Fires after the 64K summarize pass.
+  proactive_prune_tokens: 96000
 
 # =============================================================================
 # Memory Configuration
