@@ -128,6 +128,16 @@ compression:
 # Memory Configuration
 # =============================================================================
 memory:
+  # Native file-based memory (MEMORY.md / USER.md) is DISABLED.
+  # Mnemosyne is the single agent-facing memory store.
+  #
+  # Consequence: the ~2,200-char always-injected block (old "Layer 2") no longer
+  # exists. Always-on facts now live in the Mnemosyne persona tier (Layer 1).
+  # Mnemosyne tools are injected independently of these flags, so the provider
+  # below keeps working. SOUL.md is an identity slot and is NOT affected.
+  memory_enabled: false
+  user_profile_enabled: false
+
   # Active external memory provider.
   # Mnemosyne is local-first, zero-dependency, and SQLite-backed.
   provider: "mnemosyne"
