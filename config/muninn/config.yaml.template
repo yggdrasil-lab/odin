@@ -7,30 +7,61 @@ model_list:
       timeout: 1800
       stream_timeout: 1800
 
-  # DeepSeek API Models (Requires DEEPSEEK_API_KEY env var)
-  - model_name: deepseek-v4-flash
+  # Role-named DeepSeek aliases (Requires DEEPSEEK_API_KEY env var).
+  # Consumers name a ROLE, never an upstream model, so the model behind a role
+  # can be swapped here without touching any consumer. The &flash and &pro
+  # anchors below are the only places an upstream DeepSeek slug appears.
+  # The complexity_router tiers name ALIASES, not upstream slugs: an alias
+  # expands to the slug at parse time, which is not a registered model.
+  #
+  # Why `deepseek/deepseek-v4-flash` and not DeepSeek's canonical `deepseek-flash`:
+  # LiteLLM's price map has no `deepseek-flash` key, so that slug loses pricing and
+  # max_input_tokens metadata in /v1/model/info and the spend logs. DeepSeek still
+  # serves V4.1-Flash under the legacy name, so keeping it costs nothing today.
+  #
+  # agent-loop      fast tier      - Hermes main agent loop (AGENT_MODEL)
+  # agent-delegate  reasoning tier - delegation / coding subagents
+  # memory-extract  fast tier      - Mnemosyne memory consolidation
+  # compress        fast tier      - Hermes context compression summarizer
+  # agent-auto      complexity router (dormant)
+
+  # Fast tier - Hermes main agent loop.
+  - model_name: agent-loop
     litellm_params:
-      model: deepseek/deepseek-v4-flash
+      model: &flash deepseek/deepseek-v4-flash
       timeout: 600
 
-  - model_name: deepseek-v4-pro
+  # Reasoning tier - delegation / coding subagents.
+  - model_name: agent-delegate
     litellm_params:
-      model: deepseek/deepseek-v4-pro
+      model: &pro deepseek/deepseek-v4-pro
+      timeout: 600
+
+  # Fast tier - Mnemosyne memory consolidation.
+  - model_name: memory-extract
+    litellm_params:
+      model: *flash
+      timeout: 600
+
+  # Fast tier - Hermes context compression summarizer.
+  - model_name: compress
+    litellm_params:
+      model: *flash
       timeout: 600
 
   # Intelligent Router Model (Complexity-based routing) - dormant option.
   # Not wired to AGENT_MODEL; kept so the complexity router can be re-enabled
-  # later by pointing AGENT_MODEL at deepseek-v4-intelligent.
-  - model_name: deepseek-v4-intelligent
+  # later by pointing AGENT_MODEL at agent-auto.
+  - model_name: agent-auto
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
         tiers:
-          SIMPLE: deepseek-v4-flash
-          MEDIUM: deepseek-v4-flash
-          COMPLEX: deepseek-v4-pro
-          REASONING: deepseek-v4-pro
-      complexity_router_default_model: deepseek-v4-flash
+          SIMPLE: agent-loop
+          MEDIUM: agent-loop
+          COMPLEX: agent-delegate
+          REASONING: agent-delegate
+      complexity_router_default_model: agent-loop
 
   # Google Gemini Models (API key read from GEMINI_API_KEY environment variable)
   - model_name: gemini-2.5-flash
