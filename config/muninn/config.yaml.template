@@ -18,7 +18,9 @@ model_list:
       model: deepseek/deepseek-v4-pro
       timeout: 600
 
-  # Intelligent Router Model (Complexity-based routing)
+  # Intelligent Router Model (Complexity-based routing) - dormant option.
+  # Not wired to AGENT_MODEL; kept so the complexity router can be re-enabled
+  # later by pointing AGENT_MODEL at deepseek-v4-intelligent.
   - model_name: deepseek-v4-intelligent
     litellm_params:
       model: auto_router/complexity_router

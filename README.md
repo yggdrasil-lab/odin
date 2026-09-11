@@ -84,7 +84,7 @@ Ollama is installed for local inference but the Gaia host is CPU-only — Qwen 2
 Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
 ```
 
-Current models: `deepseek-v4-intelligent` (complexity router: flash for simple/medium tasks, pro for complex/reasoning), `deepseek-v4-flash` (memory consolidation), `local-model:latest` (Open WebUI default, lightweight local).
+Current models: `deepseek-v4-flash` (Hermes agent default), `deepseek-v4-pro` (delegation/coding subagents), `local-model:latest` (Open WebUI default, lightweight local). `deepseek-v4-intelligent` (complexity router: flash for simple/medium, pro for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
 
 Live model switching via `/model` command in any chat interface.
 

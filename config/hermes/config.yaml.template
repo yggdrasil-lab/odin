@@ -39,6 +39,15 @@ auxiliary:
     model: "deepseek-v4-flash"
 
 # =============================================================================
+# Delegation Configuration (coding/subagent model)
+# =============================================================================
+delegation:
+  model: "deepseek-v4-pro"
+  provider: "custom"
+  base_url: "http://muninn:4000/v1"
+  api_key: "${MUNINN_MASTER_KEY}"
+
+# =============================================================================
 # Safety & Approvals
 # =============================================================================
 approvals:
