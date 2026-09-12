@@ -14,10 +14,13 @@ model_list:
   # The complexity_router tiers name ALIASES, not upstream slugs: an alias
   # expands to the slug at parse time, which is not a registered model.
   #
-  # Why `deepseek/deepseek-v4-flash` and not DeepSeek's canonical `deepseek-flash`:
-  # LiteLLM's price map has no `deepseek-flash` key, so that slug loses pricing and
-  # max_input_tokens metadata in /v1/model/info and the spend logs. DeepSeek still
-  # serves V4.1-Flash under the legacy name, so keeping it costs nothing today.
+  # Why `deepseek/deepseek-v4-flash` and not a shorter name:
+  # `deepseek-v4-flash` is DeepSeek's current documented first-party API ID
+  # (version DeepSeek-V4-Flash-0731) and LiteLLM's price map has a key for it,
+  # so /v1/model/info keeps pricing + max_input_tokens and spend logs work.
+  # A shorthand like `deepseek-flash` exists in neither catalog. Re-check both
+  # before repointing: api-docs.deepseek.com/quick_start/pricing and
+  # BerriAI/litellm model_prices_and_context_window.json.
   #
   # agent-loop      fast tier      - Hermes main agent loop (AGENT_MODEL)
   # agent-delegate  reasoning tier - delegation / coding subagents
