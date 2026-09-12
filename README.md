@@ -84,7 +84,7 @@ Ollama is installed for local inference but the Gaia host is CPU-only — Qwen 2
 Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
 ```
 
-Current models: `deepseek-v4-flash` (Hermes agent default), `deepseek-v4-pro` (delegation/coding subagents), `local-model:latest` (Open WebUI default, lightweight local). `deepseek-v4-intelligent` (complexity router: flash for simple/medium, pro for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
+Current models: `agent-loop` (Hermes agent default, fast tier), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
 
 Live model switching via `/model` command in any chat interface.
 
