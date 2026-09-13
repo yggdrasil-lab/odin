@@ -41,6 +41,22 @@ else
     chmod 600 "$HOME/.ssh/id_rsa"
     ssh-keyscan github.com > "$HOME/.ssh/known_hosts" 2>/dev/null
     chmod 600 "$HOME/.ssh/known_hosts"
+
+    # OpenSSH expands `~` in IdentityFile using the passwd home of the user it
+    # runs as (/opt/data for the hermes user), NOT $HOME. The key ssh actually
+    # reads is therefore the passwd-home copy, which nothing here maintains: it
+    # drifts to a group/world-readable mode over time and ssh then refuses it
+    # ("UNPROTECTED PRIVATE KEY FILE"), which breaks every git push over SSH.
+    # Mirror both files onto the passwd home and pin the modes.
+    PW_HOME="$(getent passwd "${HERMES_UID:-1000}" | cut -d: -f6)"
+    if [ -n "$PW_HOME" ] && [ "$PW_HOME/.ssh" != "$HOME/.ssh" ]; then
+      mkdir -p "$PW_HOME/.ssh"
+      chmod 700 "$PW_HOME/.ssh"
+      install -m 600 "$HOME/.ssh/id_rsa" "$PW_HOME/.ssh/id_rsa"
+      if [ -f "$HOME/.ssh/known_hosts" ]; then
+        install -m 600 "$HOME/.ssh/known_hosts" "$PW_HOME/.ssh/known_hosts"
+      fi
+    fi
   fi
 
   # 2. Configure GitHub CLI (gh) credentials
