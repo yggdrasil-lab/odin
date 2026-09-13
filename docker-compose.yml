@@ -171,6 +171,11 @@ services:
       - HERMES_STREAM_STALE_TIMEOUT=1800
       - HERMES_UID=1000
       - HERMES_GID=1000
+      # write_file/patch are confined to HERMES_WRITE_SAFE_ROOT, which the base
+      # image pins to /opt/data. Without /app/vault in the list, every edit to the
+      # vault bind mount is denied and has to be routed around via the terminal.
+      # The credential denylist is evaluated separately and stays in force.
+      - HERMES_WRITE_SAFE_ROOT=/opt/data:/app/vault
       - SEARXNG_URL=http://searxng:8080
       - CAMOFOX_URL=http://camofox:9377
       - TAVILY_API_KEY=${TAVILY_API_KEY}
