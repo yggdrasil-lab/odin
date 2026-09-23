@@ -17,6 +17,7 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 | mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer |
 | huginn-backup | alpine + sqlite | Nightly SQLite backups, 30-day retention |
 | odin-git-backup | custom (git-backup/Dockerfile) | Nightly git backup of /opt/odin (IaC) |
+| docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only) — Swarm service, task and log inspection from Huginn |
 | searxng | searxng/searxng:latest | Self-hosted metasearch engine — Hermes web_search backend |
 | camofox | ghcr.io/redf0x1/camofox-browser | Anti-detection browser — Hermes stealth browser (Firefox + C++ fingerprint spoofing) |
 
@@ -51,6 +52,11 @@ graph TD
         NginxCamofox[Nginx Camofox Proxy]
     end
 
+    subgraph SocketNet ["docker-socket (isolated overlay)"]
+        DockerProxy[Docker Socket Proxy]
+        DockerSock[("docker.sock")]
+    end
+
     Browser -->|HTTPS| Traefik
     Traefik -->|odin.DOMAIN| OpenWebUI
     Traefik -->|agent.DOMAIN| Gateway
@@ -70,9 +76,11 @@ graph TD
     Gateway -->|write| MnemosyneDB
     Dashboard -.->|read| MnemosyneDB
     Gateway -->|backup| Backup
+    Gateway -->|read-only API| DockerProxy
+    DockerProxy -->|ro mount| DockerSock
 ```
 
-Two networks: `aether-net` (external, shared with Traefik) and `internal` (isolated overlay).
+Three networks: `aether-net` (external, shared with Traefik), `internal` (isolated overlay), and `docker-socket` (isolated overlay whose only members are `huginn-gateway` and `docker-socket-proxy`).
 
 ---
 
