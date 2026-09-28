@@ -189,12 +189,19 @@ services:
       - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL}
       - GH_SETUP_TOKEN=${GH_TOKEN:-}
       - GH_CONFIG_DIR=/opt/data/.config/gh
+      # Read-only Docker API for investigating Swarm services, tasks and logs
+      # from inside this container. The socket is NOT mounted here -- only into
+      # docker-socket-proxy, which enforces GET/HEAD-only at the API level.
+      # Mutations (stack deploy, service update, exec) stay on the PR +
+      # `gh workflow run deploy` path, which is the point of the split.
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
     secrets:
       - source: hermes_ssh_key
         target: hermes_ssh_key
     networks:
       - internal
       - aether-net
+      - docker-socket
     labels:
       - "com.docker.compose.project=${STACK_NAME}"
     deploy:
@@ -433,6 +440,64 @@ services:
       restart_policy:
         condition: on-failure
 
+  # Read-only Docker API for Huginn. Answers the "which task actually
+  # restarted, and what did it log before it died?" class of question without
+  # a shell on Gaia.
+  #
+  # Read-only is enforced by the proxy, not by the mount. POST=0 is the whole
+  # boundary: the API only accepts GET/HEAD, so writes, exec, pulls and stack
+  # deploys are refused with 403 whoever asks. Worth being explicit about,
+  # because `:ro` on a socket bind mount does NOT do this -- read-only there
+  # protects the socket file, while the API behind it stays fully writable.
+  #
+  # Deliberately NOT on `internal`: that network also carries third-party
+  # images (searxng, camofox), and a socket proxy is readable by anything that
+  # can reach it. `docker inspect` of any container returns that container's
+  # environment, which is where several secrets live in this stack. Dedicated
+  # non-attachable overlay with exactly two members instead.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # GET/HEAD only. Also implicitly denies every ALLOW_START/STOP/... knob.
+      - POST=0
+      # Granted read surface (image default is deny).
+      - CONTAINERS=1
+      - SERVICES=1
+      - TASKS=1
+      - NODES=1
+      - INFO=1
+      - IMAGES=1
+      - VOLUMES=1
+      - NETWORKS=1
+      - SWARM=1
+      - EVENTS=1
+      - PING=1
+      - VERSION=1
+      # Redundant with POST=0, stated anyway so nobody flips POST later without
+      # noticing what else it would unlock.
+      - EXEC=0
+      - SECRETS=0
+      - CONFIGS=0
+    networks:
+      - docker-socket
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
 volumes:
   ollama_data:
   open-webui_data:
@@ -446,6 +511,11 @@ networks:
   internal:
     driver: overlay
     attachable: true
+  # Dedicated overlay for the read-only Docker API. Not attachable, no external
+  # connectivity: the only members are huginn-gateway and docker-socket-proxy.
+  docker-socket:
+    driver: overlay
+    internal: true
 
 configs:
   huginn_backup_script:
