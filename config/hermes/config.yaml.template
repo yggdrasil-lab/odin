@@ -42,10 +42,20 @@ auxiliary:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  model: "agent-delegate"
-  provider: "custom"
-  base_url: "http://muninn:4000/v1"
-  api_key: "${MUNINN_MASTER_KEY}"
+  # Delegated subagents run on the Antigravity (Google AI Pro) subscription via
+  # the agy CLI, then fall back to DeepSeek through muninn when the subscription
+  # usage limit is reached. Hermes classifies agy's "usage_limit_reached" /
+  # "gousagelimit" as a non-retryable rate_limit/billing verdict and rotates the
+  # chain eagerly. See plugin: antigravity-subscription-directsdk.
+  provider: "antigravity-subscription-directsdk"
+  model: "gemini-3.8-flash"
+  # A pinned delegation block never inherits the parent's fallback chain, so the
+  # DeepSeek leg must be declared here. agent-delegate = DeepSeek V4-Pro on muninn.
+  fallback_providers:
+    - provider: "custom"
+      model: "agent-delegate"
+      base_url: "http://muninn:4000/v1"
+      key_env: "MUNINN_MASTER_KEY"
 
 # =============================================================================
 # Safety & Approvals
@@ -164,6 +174,7 @@ web:
 plugins:
   enabled:
     - "mnemosyne"
+    - "antigravity-subscription-directsdk"
 
 # =============================================================================
 # MCP Servers

@@ -96,6 +96,24 @@ Current models: `agent-loop` (Hermes agent default, fast tier), `agent-delegate`
 
 Live model switching via `/model` command in any chat interface.
 
+### Delegation and fallback (`delegation:`)
+
+Delegated subagents (`delegate_task` children) run on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and fall back to **DeepSeek through Muninn** when the subscription usage limit is hit.
+
+```
+delegated subagent → Antigravity subscription (agy CLI, gemini-3.8-flash)
+                   ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Pro (agent-delegate)
+```
+
+This is a native Hermes fallback chain (`delegation.fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly. A pinned `delegation` block never inherits the parent's fallback chain, so the DeepSeek leg is declared inline.
+
+Two prerequisites, both wired in this repo and easy to break:
+
+- **`agy` binary + plugin.** The Antigravity CLI is installed into the image at `/opt/agy` (symlinked to `/usr/local/bin/agy`), and the model-provider plugin `antigravity-subscription-directsdk` is cloned at the catalog-pinned commit into the **bundled image layer** at `/opt/hermes/plugins/model-providers/`. Installing it under `$HERMES_HOME/plugins` instead would be shadowed by the `/opt/odin/hermes:/opt/data` volume mount and the provider would silently not exist.
+- **Subscription login.** `agy` authenticates with an OAuth token, not an API key. Run `agy` once inside the container to sign in; the token persists at `$HOME/.gemini/antigravity-cli/` — and `entrypoint.sh` sets `HOME=/opt/data/home`, on the persistent volume, so the login survives restarts. Without this the Antigravity leg fails and every delegation falls straight through to DeepSeek.
+
+The fallback leg resolves its credential by variable **name**: the chain uses `key_env: MUNINN_MASTER_KEY`, so `MUNINN_MASTER_KEY` must be present in the gateway container's environment (not merely aliased to `OPENAI_API_KEY`).
+
 ---
 
 ## Accessing Huginn
