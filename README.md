@@ -101,17 +101,19 @@ Live model switching via `/model` command in any chat interface.
 The **main agent conversation loop** — every turn, not just delegated work — runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
 
 ```
-main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash)
+main agent loop → Antigravity subscription (agy CLI, gemini-3.1-pro)
                 ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Pro (agent-delegate)
 ```
 
-`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash`, `gemini-3.1-pro`, `claude-opus-4-6-thinking`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.1-pro`, `claude-opus-4-6-thinking`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
 This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly.
 
 Compression is deliberately pinned **off** the subscription (`auxiliary.compression.provider: custom` → muninn `compress`). An auxiliary task whose provider is unset inherits the MAIN provider, so leaving it unset would burn subscription quota on every history compaction.
 
-Delegated subagents are routed to the same subscription with the same DeepSeek leg (`delegation.fallback_providers`); a pinned `delegation` block never inherits the parent's chain, so the DeepSeek leg is declared inline there too.
+Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-3.1-pro`), but their fallback leg is the **Gemini API pro** model (`gemini-2.5-pro` via Muninn), not the subscription's own `gemini-3.1-pro`: the subscription meters Flash and Pro from a single "Gemini Models" quota group, so an in-subscription hop cannot carry traffic once that group is exhausted. A pinned `delegation` block never inherits the parent's chain, so this leg is declared inline there too.
+
+Deliberately absent from every chain: the Gemini API **flash** model. Its quota burns far too fast to be worth a chain slot.
 
 Two prerequisites, both wired in this repo and easy to break:
 

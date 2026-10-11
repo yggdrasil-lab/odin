@@ -15,10 +15,12 @@ jobs:
       HERMES_CONTEXT_LENGTH: 131072
       # Main agent loop runs on the Antigravity subscription first (fixed monthly
       # fee), rotating to DeepSeek via muninn when the usage limit is reached.
-      # This must name a model the agy plugin exposes (gemini-3.8-flash,
-      # gemini-3.1-pro, claude-opus-4-6-thinking, ...), NOT a muninn alias like
-      # `agent-loop` -- the model block now resolves through the agy plugin.
-      AGENT_MODEL: gemini-3.8-flash
+      # This must name a model the agy plugin exposes (gemini-3.1-pro,
+      # claude-opus-4-6-thinking, ...), NOT a muninn alias like `agent-loop` --
+      # the model block now resolves through the agy plugin.
+      # Deliberately NOT gemini-3.8-flash: the subscription meters Flash and Pro
+      # from one quota group, so Flash buys no extra headroom over Pro.
+      AGENT_MODEL: gemini-3.1-pro
       CHAT_MODEL: local-model:latest
     
     steps:

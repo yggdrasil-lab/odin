@@ -8,9 +8,9 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-3.8-flash, gemini-3.1-pro, claude-opus-4-6-thinking) rather
-  # than a muninn alias: the main agent loop runs on the subscription first,
-  # because it is a fixed monthly fee that would otherwise go unused.
+  # (e.g. gemini-3.1-pro, claude-opus-4-6-thinking) rather than a muninn alias:
+  # the main agent loop runs on the subscription first, because it is a fixed
+  # monthly fee that would otherwise go unused.
   default: "${AGENT_MODEL}"
 
   # Inference provider selection: the bundled Antigravity plugin, which shells
@@ -68,17 +68,29 @@ fallback_providers:
 # =============================================================================
 delegation:
   # Delegated subagents run on the Antigravity (Google AI Pro) subscription via
-  # the agy CLI, then fall back to DeepSeek through muninn when the subscription
-  # usage limit is reached. Hermes classifies agy's "usage_limit_reached" /
-  # "gousagelimit" as a non-retryable rate_limit/billing verdict and rotates the
-  # chain eagerly. See plugin: antigravity-subscription-directsdk.
+  # the agy CLI — a fixed monthly fee that would otherwise go unused — and fall
+  # back to Gemini Pro through muninn when the subscription usage limit is hit.
+  # Deliberately no flash leg anywhere: the subscription meters Flash and Pro
+  # from a single quota group, and the metered API flash model burns its quota
+  # far too fast to be worth a chain slot.
   provider: "antigravity-subscription-directsdk"
-  model: "gemini-3.8-flash"
-  # A pinned delegation block never inherits the parent's fallback chain, so the
-  # DeepSeek leg must be declared here. agent-delegate = DeepSeek V4-Pro on muninn.
+  model: "gemini-3.1-pro"
+  # A pinned delegation block never inherits the parent's fallback chain, so this
+  # leg must be declared here.
+  #
+  # The fallback is the Gemini *API* pro model (muninn alias "gemini-2.5-pro"),
+  # deliberately NOT the subscription's own gemini-3.1-pro: the subscription
+  # meters Flash and Pro from a single "Gemini Models" quota group (the usage
+  # payload puts "Models within this group: Gemini Flash, Gemini Pro" on that
+  # group), so an in-subscription flash -> pro hop cannot carry traffic once the
+  # group is exhausted. The API pro leg is metered and is only touched when the
+  # subscription wall is actually hit.
+  #
+  # Deliberately absent everywhere: the Gemini API *flash* model, whose quota
+  # burns far too fast to be worth a chain slot.
   fallback_providers:
     - provider: "custom"
-      model: "agent-delegate"
+      model: "gemini-2.5-pro"
       base_url: "http://muninn:4000/v1"
       key_env: "MUNINN_MASTER_KEY"
 
