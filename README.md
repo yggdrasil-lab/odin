@@ -118,7 +118,43 @@ Deliberately absent from every chain: the Gemini API **flash** model. Its quota 
 Two prerequisites, both wired in this repo and easy to break:
 
 - **`agy` binary + plugin.** The Antigravity CLI is installed into the image at `/opt/agy` (symlinked to `/usr/local/bin/agy`), and the model-provider plugin `antigravity-subscription-directsdk` is cloned at the catalog-pinned commit into the **bundled image layer** at `/opt/hermes/plugins/model-providers/`. Installing it under `$HERMES_HOME/plugins` instead would be shadowed by the `/opt/odin/hermes:/opt/data` volume mount and the provider would silently not exist.
-- **Subscription login.** `agy` authenticates with an OAuth token, not an API key. Run `agy` once inside the container to sign in; the token persists at `$HOME/.gemini/antigravity-cli/` — and `entrypoint.sh` sets `HOME=/opt/data/home`, on the persistent volume, so the login survives restarts. Without this the Antigravity leg fails and every turn falls straight through to DeepSeek.
+- **Subscription login.** `agy` authenticates with an OAuth token, **not** a Gemini API key, and the token is read from a **file** at `$HOME/.gemini/antigravity-cli/` (the plugin looks for `jetski-standalone-oauth-token`, then `antigravity-oauth-token`). This image has no D-Bus session and no `secret-tool`, so the OS-keyring path is unavailable by design and the token file is the only route. `entrypoint.sh` exports `HOME=/opt/data/home`, on the persistent volume, so a token written there survives container recreates and redeploys. Without this the Antigravity leg fails and every turn falls straight through to DeepSeek.
+
+  The login is a one-time interactive step and cannot be scripted — it ends with an authorization code you paste back. Run it **on the gaia host**, aimed at the shared data directory (`/opt/odin/hermes/home`, which the gateway mounts as `/opt/data/home`), from a real TTY:
+
+  ```bash
+  cd ~                                    # a real TTY, not a piped shell
+  curl -fsSL https://antigravity.google/cli/install.sh \
+    | bash -s -- --dir /opt/odin/hermes/home/.local/bin
+  HOME=/opt/odin/hermes/home /opt/odin/hermes/home/.local/bin/agy
+  ```
+
+  `agy` opens an interactive menu → **1. Google OAuth** (Enter). It then prints
+  a Google authorization URL. Open that URL in a browser on your laptop, sign
+  in with the account holding the Antigravity subscription, and paste the
+  returned authorization code back into the waiting prompt. Interactive mode
+  waits for you — the tight window only applies to `-p`/print mode, so do the
+  login interactively.
+
+  The token lands on the volume; verify before bringing the stack up:
+
+  ```bash
+  ls -la /opt/odin/hermes/home/.gemini/antigravity-cli/
+  # expect jetski-standalone-oauth-token (or antigravity-oauth-token), mode 0600
+  ```
+
+  **`HOME=/opt/odin/hermes/home` is not optional.** Run `agy` without it and
+  the token is written to *your* shell's `~/.gemini/antigravity-cli`, which the
+  container never reads — auth silently fails and every turn falls through to
+  DeepSeek. `entrypoint.sh` exports `HOME=/opt/data/home` inside the container,
+  which is the same host directory.
+
+  `docker exec` is **not** a way to run this login: the socket proxy refuses
+  `exec` (403), and `exec` skips `entrypoint.sh` so it would inherit the image
+  default `HOME=/root` anyway. Auth would appear to work until the next
+  recreate, then silently rot.
+
+  The token is a bearer credential for the signed-in Google account. Keep it `0600` and host-local; it does not belong in the vault, in git, or in a GitHub Secret.
 
 The fallback leg resolves its credential by variable **name**: the chain uses `key_env: MUNINN_MASTER_KEY`, so `MUNINN_MASTER_KEY` must be present in the gateway container's environment (not merely aliased to `OPENAI_API_KEY`).
 
