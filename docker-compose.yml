@@ -179,6 +179,11 @@ services:
       - SEARXNG_URL=http://searxng:8080
       - CAMOFOX_URL=http://camofox:9377
       - TAVILY_API_KEY=${TAVILY_API_KEY}
+      # Bearer token for the Kratos MCP endpoint. Sourced from the same GitHub
+      # secret that provisions the server side (KRATOS_MCP_TOKEN); the value is
+      # never rendered to disk -- config.yaml carries ${env:MCP_KRATOS_API_KEY}
+      # and the agent resolves it from this process env at MCP-config load.
+      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY:-}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
