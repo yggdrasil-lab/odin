@@ -167,4 +167,26 @@ plugins:
   enabled:
     - "mnemosyne"
 
+# =============================================================================
+# MCP Servers
+# =============================================================================
+# The Kratos workout API is reached over its own MCP endpoint. That endpoint
+# carries a bearer token independent of the app's OIDC login, because an MCP
+# server cannot mint tokens for itself; the client presents a shared secret.
+#
+# The placeholder is deliberately the Cursor-style ${env:VAR} form rather than
+# ${VAR}. The deploy step renders this template with os.path.expandvars(), which
+# expands ${VAR} but leaves ${env:VAR} untouched: with ${VAR} the token would be
+# baked into /opt/data/config.yaml as plaintext at deploy time. With ${env:...}
+# the literal placeholder survives to the agent, which resolves it from the
+# container environment when it loads the MCP config (tools/mcp_tool_config.py,
+# _interpolate_env_vars). An unset variable resolves to the literal placeholder,
+# which fails closed as a 401 rather than sending an empty credential.
+mcp_servers:
+  kratos:
+    enabled: true
+    url: https://kratos.tienzo.net/mcp
+    headers:
+      Authorization: Bearer ${env:MCP_KRATOS_API_KEY}
+
 
