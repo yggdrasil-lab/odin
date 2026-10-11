@@ -13,7 +13,12 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       HERMES_CONTEXT_LENGTH: 131072
-      AGENT_MODEL: agent-loop
+      # Main agent loop runs on the Antigravity subscription first (fixed monthly
+      # fee), rotating to DeepSeek via muninn when the usage limit is reached.
+      # This must name a model the agy plugin exposes (gemini-3.8-flash,
+      # gemini-3.1-pro, claude-opus-4-6-thinking, ...), NOT a muninn alias like
+      # `agent-loop` -- the model block now resolves through the agy plugin.
+      AGENT_MODEL: gemini-3.8-flash
       CHAT_MODEL: local-model:latest
     
     steps:

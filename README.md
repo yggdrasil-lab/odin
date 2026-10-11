@@ -92,25 +92,31 @@ Ollama is installed for local inference but the Gaia host is CPU-only — Qwen 2
 Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
 ```
 
-Current models: `agent-loop` (Hermes agent default, fast tier), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
+Current models: `agent-loop` (fast tier, now the **fallback** for the main agent loop — see below), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
 
 Live model switching via `/model` command in any chat interface.
 
-### Delegation and fallback (`delegation:`)
+### Primary model and fallback (`model:` + `fallback_providers:`)
 
-Delegated subagents (`delegate_task` children) run on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and fall back to **DeepSeek through Muninn** when the subscription usage limit is hit.
+The **main agent conversation loop** — every turn, not just delegated work — runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
 
 ```
-delegated subagent → Antigravity subscription (agy CLI, gemini-3.8-flash)
-                   ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Pro (agent-delegate)
+main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash)
+                ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Pro (agent-delegate)
 ```
 
-This is a native Hermes fallback chain (`delegation.fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly. A pinned `delegation` block never inherits the parent's fallback chain, so the DeepSeek leg is declared inline.
+`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash`, `gemini-3.1-pro`, `claude-opus-4-6-thinking`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+
+This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly.
+
+Compression is deliberately pinned **off** the subscription (`auxiliary.compression.provider: custom` → muninn `compress`). An auxiliary task whose provider is unset inherits the MAIN provider, so leaving it unset would burn subscription quota on every history compaction.
+
+Delegated subagents are routed to the same subscription with the same DeepSeek leg (`delegation.fallback_providers`); a pinned `delegation` block never inherits the parent's chain, so the DeepSeek leg is declared inline there too.
 
 Two prerequisites, both wired in this repo and easy to break:
 
 - **`agy` binary + plugin.** The Antigravity CLI is installed into the image at `/opt/agy` (symlinked to `/usr/local/bin/agy`), and the model-provider plugin `antigravity-subscription-directsdk` is cloned at the catalog-pinned commit into the **bundled image layer** at `/opt/hermes/plugins/model-providers/`. Installing it under `$HERMES_HOME/plugins` instead would be shadowed by the `/opt/odin/hermes:/opt/data` volume mount and the provider would silently not exist.
-- **Subscription login.** `agy` authenticates with an OAuth token, not an API key. Run `agy` once inside the container to sign in; the token persists at `$HOME/.gemini/antigravity-cli/` — and `entrypoint.sh` sets `HOME=/opt/data/home`, on the persistent volume, so the login survives restarts. Without this the Antigravity leg fails and every delegation falls straight through to DeepSeek.
+- **Subscription login.** `agy` authenticates with an OAuth token, not an API key. Run `agy` once inside the container to sign in; the token persists at `$HOME/.gemini/antigravity-cli/` — and `entrypoint.sh` sets `HOME=/opt/data/home`, on the persistent volume, so the login survives restarts. Without this the Antigravity leg fails and every turn falls straight through to DeepSeek.
 
 The fallback leg resolves its credential by variable **name**: the chain uses `key_env: MUNINN_MASTER_KEY`, so `MUNINN_MASTER_KEY` must be present in the gateway container's environment (not merely aliased to `OPENAI_API_KEY`).
 
