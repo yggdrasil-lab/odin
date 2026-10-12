@@ -5,7 +5,19 @@ MODE=${1:-gateway}
 
 if [ "$MODE" = "dashboard" ]; then
   echo "Starting Huginn Dashboard..."
-  /opt/hermes/.venv/bin/python -m mnemosyne.install
+
+  TARGET_UID=${HERMES_UID:-1000}
+  TARGET_GID=${HERMES_GID:-1000}
+
+  # Remap hermes user and ensure /opt/data ownership if running as root so
+  # dashboard and mnemosyne do not write root-owned files (e.g. install locks,
+  # caches, db files) into the shared persistent volume.
+  if [ "$(id -u)" = "0" ]; then
+    groupmod -o -g "$TARGET_GID" hermes 2>/dev/null || true
+    usermod -o -u "$TARGET_UID" -g "$TARGET_GID" hermes 2>/dev/null || true
+    chown -R "$TARGET_UID:$TARGET_GID" /opt/data 2>/dev/null || true
+  fi
+
   # Configure Nginx to rewrite the Host header to 127.0.0.1 and proxy to dashboard
   cat << 'EOF' > /tmp/nginx.conf
 events {}
@@ -23,7 +35,17 @@ http {
 }
 EOF
   nginx -c /tmp/nginx.conf
-  exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
+
+  if [ "$(id -u)" = "0" ]; then
+    if [ -x /command/s6-setuidgid ]; then
+      exec /command/s6-setuidgid hermes /bin/bash -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+    else
+      exec su -s /bin/bash hermes -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+    fi
+  else
+    /opt/hermes/.venv/bin/python -m mnemosyne.install
+    exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
+  fi
 else
   echo "Starting Huginn Gateway..."
 
