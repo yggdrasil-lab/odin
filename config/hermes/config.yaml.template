@@ -128,10 +128,6 @@ compression:
 # Memory Configuration
 # =============================================================================
 memory:
-  # Active external memory provider.
-  # Mnemosyne is local-first, zero-dependency, and SQLite-backed.
-  # Note: Keep provider at the top of memory block so mnemosyne.install
-  # detects it and does not inject a duplicate entry.
   provider: "mnemosyne"
 
   # Native file-based memory (MEMORY.md / USER.md) is DISABLED.
