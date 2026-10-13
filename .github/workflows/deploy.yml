@@ -90,6 +90,7 @@ jobs:
           # the server that issues the token and the client that presents it
           # cannot drift apart.
           MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
+          HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
