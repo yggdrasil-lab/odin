@@ -101,19 +101,19 @@ Live model switching via `/model` command in any chat interface.
 The **main agent conversation loop** — every turn, not just delegated work — runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
 
 ```
-main agent loop → Antigravity subscription (agy CLI, gemini-3.1-pro)
-                ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Pro (agent-delegate)
+main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash-high)
+                ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.1-pro`, `claude-opus-4-6-thinking`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash-high`, `claude-opus-5-5`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
 This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly.
 
 Compression is deliberately pinned **off** the subscription (`auxiliary.compression.provider: custom` → muninn `compress`). An auxiliary task whose provider is unset inherits the MAIN provider, so leaving it unset would burn subscription quota on every history compaction.
 
-Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-3.1-pro`), and also fall back to **DeepSeek V4-Pro** (`agent-delegate` via Muninn) when the subscription usage limit is hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
+Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-3.8-flash-high`), and also fall back to **DeepSeek V4-Flash** (`agent-loop` via Muninn) when the subscription usage limit is hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
 
-Deliberately absent from every chain: the Gemini API **flash** model. Its quota burns far too fast to be worth a chain slot.
+Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's own Gemini 3.8 Flash is a fixed-fee model and is the primary here; the metered Gemini API flash is the one whose quota burned out too fast to be worth a chain slot.
 
 Two prerequisites, both wired in this repo and easy to break:
 

@@ -158,7 +158,7 @@ services:
       - TZ=Pacific/Auckland
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
-      # The delegation fallback leg (DeepSeek via muninn, model agent-delegate)
+      # The delegation fallback leg (DeepSeek via muninn, model agent-loop)
       # resolves its credential by variable NAME at runtime (key_env:
       # MUNINN_MASTER_KEY), so the name itself must exist in this container.
       # Aliasing it to OPENAI_API_KEY alone is not enough.

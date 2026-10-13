@@ -8,7 +8,7 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-3.1-pro, claude-opus-4-6-thinking) rather than a muninn alias:
+  # (e.g. gemini-3.8-flash-high, claude-opus-5-5, gpt-oss-120b-medium) rather than a muninn alias:
   # the main agent loop runs on the subscription first, because it is a fixed
   # monthly fee that would otherwise go unused.
   default: "${AGENT_MODEL}"
@@ -51,15 +51,15 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The main conversation loop runs on the Antigravity (Google AI Pro)
-# subscription first — a fixed monthly fee that would otherwise go unused — and
-# rotates to DeepSeek V4-Pro on muninn when the subscription usage limit is
-# reached. Hermes classifies agy's "usage_limit_reached" / "gousagelimit" wall
-# as a non-retryable rate_limit/billing verdict and rotates the chain eagerly,
-# so no custom code is involved. DeepSeek V4-Pro alias on muninn: agent-delegate.
+# The main conversation loop runs on the Antigravity subscription first — a
+# fixed monthly fee that would otherwise go unused — and rotates to DeepSeek
+# V4-Flash on muninn when the subscription usage limit is reached. Hermes
+# classifies agy's "usage_limit_reached" / "gousagelimit" wall as a
+# non-retryable rate_limit/billing verdict and rotates the chain eagerly, so no
+# custom code is involved. DeepSeek V4-Flash alias on muninn: agent-loop.
 fallback_providers:
   - provider: "custom"
-    model: "agent-delegate"
+    model: "agent-loop"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
 
@@ -67,19 +67,20 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run on the Antigravity (Google AI Pro) subscription via
-  # the agy CLI — a fixed monthly fee that would otherwise go unused — and fall
-  # back to DeepSeek V4-Pro through muninn when the subscription usage limit is hit.
+  # Delegated subagents run on the Antigravity subscription via the agy CLI — a
+  # fixed monthly fee that would otherwise go unused — and fall back to DeepSeek
+  # V4-Flash through muninn when the subscription usage limit is hit. The -high
+  # suffix selects the subscription's high-reasoning-effort Gemini 3.8 Flash.
   provider: "antigravity-subscription-directsdk"
-  model: "gemini-3.1-pro"
+  model: "gemini-3.8-flash-high"
   # A pinned delegation block never inherits the parent's fallback chain, so this
   # leg must be declared here.
   #
-  # The fallback is DeepSeek V4-Pro (muninn alias "agent-delegate"), completely
+  # The fallback is DeepSeek V4-Flash (muninn alias "agent-loop"), completely
   # free of any GEMINI_API_KEY dependency.
   fallback_providers:
     - provider: "custom"
-      model: "agent-delegate"
+      model: "agent-loop"
       base_url: "http://muninn:4000/v1"
       key_env: "MUNINN_MASTER_KEY"
 
