@@ -163,6 +163,15 @@ services:
       # MUNINN_MASTER_KEY), so the name itself must exist in this container.
       # Aliasing it to OPENAI_API_KEY alone is not enough.
       - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
+      # The gateway process ends up with HOME=/opt/data (its passwd home, set
+      # by s6/setuidgid), NOT the /opt/data/home the entrypoint exports. The
+      # agy token is mounted at /opt/data/home/.gemini/antigravity-cli, so the
+      # plugin's default lookup (Path.home()/.gemini/antigravity-cli) points at
+      # the empty /opt/data/.gemini/antigravity-cli and reports "not
+      # authenticated", silently failing over to DeepSeek. Point the plugin's
+      # documented override at the mount and it resolves the token regardless
+      # of HOME.
+      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
       - AGENT_MODEL=${AGENT_MODEL}
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
@@ -252,6 +261,10 @@ services:
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
       - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
+      # Same HOME mismatch as the gateway: the dashboard's hermes processes run
+      # with passwd HOME=/opt/data while the agy token is mounted at
+      # /opt/data/home/.gemini/antigravity-cli. Point the override at the mount.
+      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - HERMES_API_TIMEOUT=1800
