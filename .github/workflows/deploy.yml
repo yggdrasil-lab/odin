@@ -13,7 +13,14 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       HERMES_CONTEXT_LENGTH: 131072
-      AGENT_MODEL: agent-loop
+      # Main agent loop runs on the Antigravity subscription first (fixed monthly
+      # fee), rotating to DeepSeek via muninn when the usage limit is reached.
+      # This must name a model the agy plugin exposes (gemini-3.1-pro,
+      # claude-opus-4-6-thinking, ...), NOT a muninn alias like `agent-loop` --
+      # the model block now resolves through the agy plugin.
+      # Deliberately NOT gemini-3.8-flash: the subscription meters Flash and Pro
+      # from one quota group, so Flash buys no extra headroom over Pro.
+      AGENT_MODEL: gemini-3.1-pro
       CHAT_MODEL: local-model:latest
     
     steps:
@@ -83,6 +90,7 @@ jobs:
           # the server that issues the token and the client that presents it
           # cannot drift apart.
           MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
+          HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"

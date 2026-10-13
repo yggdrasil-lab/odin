@@ -152,11 +152,17 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
+      - ${HOST_AGY_CONFIG_DIR:-/home/raymund/.gemini/antigravity-cli}:/opt/data/home/.gemini/antigravity-cli
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
       - TZ=Pacific/Auckland
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
+      # The delegation fallback leg (DeepSeek via muninn, model agent-delegate)
+      # resolves its credential by variable NAME at runtime (key_env:
+      # MUNINN_MASTER_KEY), so the name itself must exist in this container.
+      # Aliasing it to OPENAI_API_KEY alone is not enough.
+      - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
       - AGENT_MODEL=${AGENT_MODEL}
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
@@ -238,12 +244,14 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
+      - ${HOST_AGY_CONFIG_DIR:-/home/raymund/.gemini/antigravity-cli}:/opt/data/home/.gemini/antigravity-cli
     environment:
       - TZ=Pacific/Auckland
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
       - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
       - OPENAI_BASE_URL=http://muninn:4000/v1
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
+      - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONTEXT_LENGTH=${HERMES_CONTEXT_LENGTH}
       - HERMES_API_TIMEOUT=1800

@@ -35,6 +35,32 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
     fi && \
     /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[embeddings,mcp] sqlite-vec
 
+# Install the Antigravity CLI (agy) used by the delegated-subagent route.
+# The vendor installer is non-interactive and takes its target directory via
+# --dir; it does NOT read AGY_INSTALL_DIR. `bash -s --` is required to pass the
+# flag through the curl pipe.
+RUN mkdir -p /opt/agy \
+    && curl -fsSL --retry 3 https://antigravity.google/cli/install.sh \
+      | bash -s -- --dir /opt/agy \
+    && ln -sf /opt/agy/agy /usr/local/bin/agy \
+    && chmod -R a+rX /opt/agy \
+    && agy --version
+
+# Install the Antigravity subscription model-provider plugin into the image layer.
+# `hermes plugins install` writes to $HERMES_HOME/plugins, which is the persistent
+# volume (/opt/data) at runtime, so anything installed there is shadowed at deploy
+# time. Model-provider plugins are instead discovered unconditionally from the
+# bundled image path (<repo>/plugins/model-providers/<name>/), so pin-install the
+# plugin there. The sha is the one pinned by the official plugin catalog.
+ARG ANTIGRAVITY_PLUGIN_SHA=d6c8ea5fe45da38abf2e26f30156123a1a3caab6
+RUN git clone --quiet https://github.com/soyelmismo/hermes-antigravity-subscription /tmp/agy-plugin \
+    && git -C /tmp/agy-plugin checkout --quiet "${ANTIGRAVITY_PLUGIN_SHA}" \
+    && mkdir -p /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk \
+    && cp -R /tmp/agy-plugin/. /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/ \
+    && rm -rf /tmp/agy-plugin \
+      /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/.git \
+    && chmod -R a+rX /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk
+
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
