@@ -75,3 +75,10 @@ hermes/.gitconfig
 hermes/gateway.pid
 hermes/skills/.bundled_manifest
 hermes/skills/.usage.json
+
+# Hermes runtime state and ephemeral files
+hermes/.gemini/
+hermes/state/
+hermes/backups/
+hermes/spawn-ledger.json
+hermes/**/*.sock

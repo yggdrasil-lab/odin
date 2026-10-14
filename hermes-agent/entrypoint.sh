@@ -44,13 +44,13 @@ EOF
 
   if [ "$(id -u)" = "0" ]; then
     if [ -x /command/s6-setuidgid ]; then
-      exec /command/s6-setuidgid hermes /bin/bash -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+      exec /command/s6-setuidgid hermes /bin/bash -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
     else
-      exec su -s /bin/bash hermes -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+      exec su -s /bin/bash hermes -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
     fi
   else
     /opt/hermes/.venv/bin/python -m mnemosyne.install
-    exec /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
+    exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
   fi
 else
   echo "Starting Huginn Gateway..."
