@@ -45,6 +45,8 @@ auxiliary:
     model: "compress"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
+    context_length: 1048576
+    timeout: 60
 
 # =============================================================================
 # Fallback chain (main agent loop)
@@ -93,8 +95,8 @@ approvals:
 # =============================================================================
 providers:
   custom:
-    request_timeout_seconds: 1800
-    stale_timeout_seconds: 1800
+    request_timeout_seconds: 300
+    stale_timeout_seconds: 300
 
 # =============================================================================
 # Terminal Tool Configuration
@@ -146,11 +148,10 @@ compression:
   # Enable automatic context compression (default: true)
   enabled: true
   
-  # Trigger compression at this % of model's context limit (0.75 = 75% of context window)
-  threshold: 0.75
-  # Absolute token cap: leave unset to scale proportionally with the active model's
-  # advertised window (~786K for 1M models, ~98K for 128K models).
-  # threshold_tokens: 65536
+  # Trigger compression at this % of model's context limit (0.80 = 80% of context window)
+  threshold: 0.80
+  # Absolute token cap for 1M context: trigger only at 800k tokens
+  threshold_tokens: 800000
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
