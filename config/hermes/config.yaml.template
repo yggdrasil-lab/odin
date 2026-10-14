@@ -37,7 +37,6 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    context_length: ${HERMES_CONTEXT_LENGTH}
     # Compression must NOT ride the subscription. An auxiliary task whose
     # provider is unset inherits the MAIN provider (now the Antigravity plugin),
     # which would burn subscription quota on every history compaction. Pin it to
