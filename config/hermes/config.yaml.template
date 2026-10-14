@@ -18,7 +18,6 @@ model:
   # plugin talks to the local CLI (agy://local) and authenticates with the
   # OAuth token under the container's home dir (~/.gemini/antigravity-cli).
   provider: "antigravity-subscription-directsdk"
-  context_length: ${HERMES_CONTEXT_LENGTH}
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────
   #
