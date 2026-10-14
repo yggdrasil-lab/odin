@@ -22,6 +22,14 @@ search:
 # Explicit engine list — SearXNG replaces its defaults with what we list here.
 # No Tor engines (ahmia, torch), no radio_browser (broken cache init).
 engines:
+  - name: ahmia
+    engine: ahmia
+    disabled: true
+
+  - name: torch
+    engine: torch
+    disabled: true
+
   - name: google
     engine: google
     shortcut: g

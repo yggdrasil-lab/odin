@@ -12,7 +12,6 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      HERMES_CONTEXT_LENGTH: 131072
       # Main agent loop runs on the Antigravity subscription first (fixed monthly
       # fee), rotating to DeepSeek V4-Flash via muninn when the usage limit is
       # reached. This must name a model the agy plugin exposes (gemini-3.8-flash,
