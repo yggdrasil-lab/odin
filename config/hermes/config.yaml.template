@@ -23,9 +23,10 @@ model:
   #
   # context_length: TOTAL context window (input + output tokens combined).
   #   Controls when Hermes compresses history and validates requests.
-  #   Leave unset — Hermes auto-detects the correct value from the provider.
-  #
-  # context_length: 131072
+  #   Pinned to 200,000 tokens because the official agy CLI enforces an internal
+  #   Exceeds200kTokens boundary and silently truncates payloads when single turns
+  #   or conversation histories exceed ~200k tokens.
+  context_length: 200000
   #
   # max_tokens: OUTPUT cap — maximum tokens the model may generate per response.
   #   Leave unset to use the model's native output ceiling (recommended).
@@ -150,8 +151,8 @@ compression:
   
   # Trigger compression at this % of model's context limit (0.80 = 80% of context window)
   threshold: 0.80
-  # Absolute token cap for 1M context: trigger only at 800k tokens
-  threshold_tokens: 800000
+  # Absolute token cap for agy 200k context: trigger at 160k tokens before agy 200k ceiling
+  threshold_tokens: 160000
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
