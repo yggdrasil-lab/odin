@@ -47,10 +47,13 @@ model_list:
       timeout: 600
 
   # Fast tier - Hermes context compression summarizer.
+  # Routed to Gemini 2.5 Flash on Google API (1M context, ~2s latency) rather than
+  # DeepSeek V4-Flash which experiences 503 upstream congestion and 300s timeouts.
   - model_name: compress
     litellm_params:
-      model: *flash
-      timeout: 600
+      model: gemini/gemini-2.5-flash
+      timeout: 120
+
 
   # Intelligent Router Model (Complexity-based routing) - dormant option.
   # Not wired to AGENT_MODEL; kept so the complexity router can be re-enabled
