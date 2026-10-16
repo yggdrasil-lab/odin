@@ -191,8 +191,8 @@ services:
       # vault bind mount is denied and has to be routed around via the terminal.
       # The credential denylist is evaluated separately and stays in force.
       - HERMES_WRITE_SAFE_ROOT=/opt/data:/app/vault
-      - SEARXNG_URL=http://searxng:8080
-      - CAMOFOX_URL=http://camofox:9377
+      - SEARXNG_URL=http://poseidon_searxng:8080
+      - CAMOFOX_URL=http://poseidon_camofox:9377
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       # Bearer token for the Kratos MCP endpoint. Sourced from the same GitHub
       # secret that provisions the server side (KRATOS_MCP_TOKEN); the value is
@@ -354,59 +354,6 @@ services:
         - "homepage.href=https://mnemosyne.${DOMAIN_NAME}"
         - "homepage.description=Memory Store Visualizer & Event Inspector"
 
-  searxng:
-    image: searxng/searxng:latest
-    volumes:
-      - searxng_data:/etc/searxng
-    configs:
-      - source: searxng_settings
-        target: /etc/searxng/settings.yml
-      - source: searxng_limiter
-        target: /etc/searxng/limiter.toml
-    environment:
-      - TZ=Pacific/Auckland
-    networks:
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-
-  camofox:
-    image: ghcr.io/redf0x1/camofox-browser:latest
-    volumes:
-      - camofox_data:/root/.camofox
-    environment:
-      - TZ=Pacific/Auckland
-      - CAMOFOX_HOST=0.0.0.0
-      - CAMOFOX_PORT=9377
-      - CAMOFOX_AUTH_MODE=disabled
-      - CAMOFOX_IDLE_TIMEOUT_MS=86400000
-      - CAMOFOX_IDLE_EXIT_TIMEOUT_MS=86400000
-    networks:
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 512M
-
   huginn-backup:
     image: alpine:latest
     container_name: huginn-backup
@@ -534,8 +481,6 @@ volumes:
   ollama_data:
   open-webui_data:
   muninn-db_data:
-  searxng_data:
-  camofox_data:
 
 networks:
   aether-net:
@@ -556,10 +501,6 @@ configs:
     file: ./config/ollama-init/init.sh
   muninn_config:
     file: ./config/muninn/config.yaml
-  searxng_settings:
-    file: ./config/searxng/settings.yml
-  searxng_limiter:
-    file: ./config/searxng/limiter.toml
 secrets:
   odin_lldap_user_pass:
     external: true

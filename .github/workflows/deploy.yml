@@ -25,8 +25,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Secrets
         env:
@@ -34,20 +32,21 @@ jobs:
           HERMES_SSH_KEY: ${{ secrets.HERMES_SSH_KEY }}
           WEBUI_SECRET_KEY: ${{ secrets.WEBUI_SECRET_KEY }}
         run: |
-          chmod +x scripts/ensure_secret.sh
+          curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/ensure_secret.sh -o /tmp/ensure_secret.sh
+          chmod +x /tmp/ensure_secret.sh
           
           # Resolve the external LLDAP password secret name from Cerberus
-          echo "LLDAP_LDAP_USER_PASS_NAME=$(echo "$LLDAP_LDAP_USER_PASS" | ./scripts/ensure_secret.sh cerberus_lldap_user_pass)" >> $GITHUB_ENV
+          echo "LLDAP_LDAP_USER_PASS_NAME=$(echo "$LLDAP_LDAP_USER_PASS" | /tmp/ensure_secret.sh cerberus_lldap_user_pass)" >> $GITHUB_ENV
           
           # Resolve the external Hermes SSH key secret name if provided
           if [ -n "$HERMES_SSH_KEY" ]; then
-            echo "HERMES_SSH_KEY_NAME=$(echo "$HERMES_SSH_KEY" | ./scripts/ensure_secret.sh hermes_ssh_key)" >> $GITHUB_ENV
+            echo "HERMES_SSH_KEY_NAME=$(echo "$HERMES_SSH_KEY" | /tmp/ensure_secret.sh hermes_ssh_key)" >> $GITHUB_ENV
           else
             echo "HERMES_SSH_KEY_NAME=" >> $GITHUB_ENV
           fi
 
           # Resolve the external WEBUI_SECRET_KEY secret name
-          echo "WEBUI_SECRET_KEY_NAME=$(echo "$WEBUI_SECRET_KEY" | ./scripts/ensure_secret.sh odin_webui_secret_key)" >> $GITHUB_ENV
+          echo "WEBUI_SECRET_KEY_NAME=$(echo "$WEBUI_SECRET_KEY" | /tmp/ensure_secret.sh odin_webui_secret_key)" >> $GITHUB_ENV
 
       - name: Log in to Registry
         uses: docker/login-action@v3
@@ -81,7 +80,6 @@ jobs:
           ODIN_GIT_REPO_URL: ${{ vars.ODIN_GIT_REPO_URL }}
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
-          SEARXNG_SECRET: ${{ vars.SEARXNG_SECRET || '' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || '' }}
           # Bearer token for the Kratos MCP endpoint, injected into the agent
           # container as MCP_KRATOS_API_KEY (see docker-compose.yml). Same value
@@ -98,16 +96,10 @@ jobs:
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
-          # Generate SearXNG secret key for session signing (stable across deploys if set as GitHub var)
-          if [ -z "${SEARXNG_SECRET}" ]; then
-            export SEARXNG_SECRET=$(openssl rand -hex 32)
-            echo "SEARXNG_SECRET=${SEARXNG_SECRET}" >> $GITHUB_ENV
-          fi
-          python3 -c "import os; open('config/searxng/settings.yml', 'w').write(os.path.expandvars(open('config/searxng/settings.yml.template').read()))"
-          
           # Write config files and fix permissions on host directories (UID 1000, GID 1000)
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
           docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
-          chmod +x scripts/deploy.sh
-          ./scripts/deploy.sh "odin" docker-compose.yml
+          curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
+          chmod +x /tmp/deploy.sh
+          /tmp/deploy.sh "odin" docker-compose.yml
