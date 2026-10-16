@@ -61,6 +61,15 @@ RUN git clone --quiet https://github.com/soyelmismo/hermes-antigravity-subscript
       /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/.git \
     && chmod -R a+rX /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk
 
+# Patch Hermes so agy's "response was cut off ... exceeded the output token limit"
+# is recognised as an output-cap error instead of a context overflow. Without it
+# Hermes reports a misleading "server rejected the request as too large" notice.
+# See patches/fix_agy_output_cap_detection.py for details. Fails the build if the
+# upstream anchor moves so the fix is never silently dropped.
+COPY patches/ /tmp/odin-patches/
+RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
+    && rm -rf /tmp/odin-patches
+
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
