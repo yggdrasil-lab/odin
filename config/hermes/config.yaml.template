@@ -226,4 +226,28 @@ mcp_servers:
     headers:
       Authorization: Bearer ${env:MCP_KRATOS_API_KEY}
 
+# =============================================================================
+# Platform Toolsets
+# =============================================================================
+platform_toolsets:
+  discord:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - cronjob
+    - delegation
+    - discord
+    - file
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+
 
