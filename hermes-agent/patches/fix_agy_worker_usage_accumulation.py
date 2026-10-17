@@ -63,13 +63,13 @@ def patch_client() -> int:
         1,
     )
 
-    term_anchor = "            self._worker_history = []\n"
+    term_anchor = "    def _terminate_worker_locked(self) -> None:\n"
     if term_anchor not in src:
         print("[odin-patch] ERROR: _terminate_worker_locked anchor not found in client.py", file=sys.stderr)
         return 1
     src = src.replace(
         term_anchor,
-        term_anchor + "            self._worker_usage = {}  # odin-patch: clear worker usage on terminate\n",
+        term_anchor + "        self._worker_usage = {}  # odin-patch: clear worker usage on terminate\n",
         1,
     )
 
@@ -242,7 +242,14 @@ def patch_tests() -> int:
         self.assertEqual(usage2.prompt_tokens_details.cached_tokens, 50)
         self.assertEqual(client._worker_usage["input_tokens"], 250)
 
-        # Resetting/terminating worker clears baseline
+        # Resetting/terminating worker clears baseline and proc
+        client._worker_proc = proc2
+        client._terminate_worker()
+        self.assertEqual(client._worker_usage, {{}})
+        self.assertIsNone(client._worker_proc)
+
+        # Calling terminate again when proc is None is idempotent and clears baseline
+        client._worker_usage = {{"input_tokens": 50}}
         client._terminate_worker()
         self.assertEqual(client._worker_usage, {{}})
 """
