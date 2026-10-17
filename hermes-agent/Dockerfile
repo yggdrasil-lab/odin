@@ -69,8 +69,7 @@ RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.
 
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh \
-    && chown -R 1000:1000 /opt/hermes
+RUN chmod +x /entrypoint.sh
 
 USER 1000:1000
 
