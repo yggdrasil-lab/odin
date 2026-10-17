@@ -52,8 +52,19 @@ RUN git clone --quiet https://github.com/soyelmismo/hermes-antigravity-subscript
 # Hermes reports a misleading "server rejected the request as too large" notice.
 # See patches/fix_agy_output_cap_detection.py for details. Fails the build if the
 # upstream anchor moves so the fix is never silently dropped.
+#
+# Also patch the Antigravity plugin so worker-mode usage accounting calculates
+# request-scoped token deltas instead of accumulating raw CLI session totals,
+# which otherwise inflates prompt_tokens to >1.6M and forces an auto-reset.
+# See patches/fix_agy_worker_usage_accumulation.py for details.
+#
+# Also patch the Antigravity plugin prompt preamble to inject output budget limits,
+# tool discipline boundaries, and Auckland timezone anchoring into the system prompt.
+# See patches/enhance_agy_prompt_preamble.py for details.
 COPY patches/ /tmp/odin-patches/
 RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_worker_usage_accumulation.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
     && rm -rf /tmp/odin-patches
 
 # Copy and setup entrypoint script
