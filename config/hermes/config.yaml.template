@@ -38,16 +38,30 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression must NOT ride the subscription. An auxiliary task whose
-    # provider is unset inherits the MAIN provider (now the Antigravity plugin),
-    # which would burn subscription quota on every history compaction. Pin it to
-    # muninn explicitly (DeepSeek V4-Flash, alias "compress").
-    provider: "custom"
-    model: "compress"
-    base_url: "http://muninn:4000/v1"
-    key_env: "MUNINN_MASTER_KEY"
-    context_length: 1048576
-    timeout: 60
+    # Compression rides the Antigravity subscription first to eliminate per-token API costs,
+    # falling back to DeepSeek V4-Flash / Gemini on muninn only if subscription limits are reached.
+    provider: "antigravity-subscription-directsdk"
+    model: "gemini-3.8-flash-high"
+    context_length: 200000
+    timeout: 120
+    fallback_providers:
+      - provider: "custom"
+        model: "compress"
+        base_url: "http://muninn:4000/v1"
+        key_env: "MUNINN_MASTER_KEY"
+        context_length: 1048576
+        timeout: 60
+
+  background_review:
+    # Background skill reviews and memory consolidation ride the Antigravity subscription,
+    # falling back to DeepSeek V4-Flash on muninn only if subscription limits are reached.
+    provider: "antigravity-subscription-directsdk"
+    model: "gemini-3.8-flash-high"
+    fallback_providers:
+      - provider: "custom"
+        model: "agent-loop"
+        base_url: "http://muninn:4000/v1"
+        key_env: "MUNINN_MASTER_KEY"
 
 # =============================================================================
 # Fallback chain (main agent loop)
