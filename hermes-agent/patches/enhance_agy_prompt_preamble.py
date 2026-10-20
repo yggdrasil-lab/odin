@@ -52,18 +52,24 @@ INJECTION = (
     "    \"- Never assume or claim an action succeeded until you have received and inspected the actual tool output in the subsequent turn.\",\n"
     "    \"TIMEZONE & LOCAL TIME:\",\n"
     "    \"- The user lives in Auckland, New Zealand (Pacific/Auckland, UTC+12 / UTC+13 with DST). All relative time references ('today', 'yesterday', 'tomorrow', 'morning', 'tonight', dates) must align strictly with Auckland local time.\",\n"
+    "    \"TURN ANCHORING & ZERO REGURGITATION:\",\n"
+    "    \"- Always anchor your response strictly to the user's latest incoming message. Respond ONLY to what the user is asking right now.\",\n"
+    "    \"- After context compaction or across turns, NEVER repeat a previous response or re-deliver a past wrap-up, retrospective, or completed task summary.\",\n"
+    "    \"- If a task or wrap-up was already finished earlier, or if the user asks a follow-up question or points out a duplicate response, address their immediate question directly instead of re-summarizing previous work.\",\n"
+    "    \"- Discard stale in-flight summaries and '[STILL IN PROGRESS]' markers if newer user instructions exist or if the requested actions were already completed.\",\n"
     ")\n"
 )
 
 TEST_INJECTION = f"""
     {TEST_MARKER}
     def test_prompt_preamble_operational_rules(self):
-        \"\"\"Verify build-time preamble includes output budget, tool discipline, and Auckland timezone.\"\"\"
+        '''Verify build-time preamble includes output budget, tool discipline, Auckland timezone, and turn anchoring.'''
         from prompt import _PROMPT_PREAMBLE
         preamble_str = " ".join(_PROMPT_PREAMBLE)
         self.assertIn("OUTPUT BUDGET & BREVITY:", preamble_str)
         self.assertIn("TOOL DISCIPLINE & EXECUTION BOUNDARIES:", preamble_str)
         self.assertIn("Pacific/Auckland", preamble_str)
+        self.assertIn("TURN ANCHORING & ZERO REGURGITATION:", preamble_str)
 """
 
 

@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
-"""Build-time patch: inject automated pre-compression wrapup checkpoint hook into ContextCompressor.
+"""Build-time patch: pre-compression wrapup checkpoint hook and compaction task replay suppression in ContextCompressor.
 
 Problem
 -------
-When interacting with Hermes Agent via Discord or Open-WebUI, users cannot monitor
-real-time context token metrics. As sessions lengthen and approach the context limit,
-Hermes Agent executes automatic context compression, pruning tool results and middle turns.
-Without an automated pre-compression hook, dialogue snapshots, key decisions, and session
-learnings can be compacted away before being recorded in durable memory or the daily Obsidian
-journal (/app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md).
+1. When interacting with Hermes Agent via Discord or Open-WebUI, users cannot monitor
+   real-time context token metrics. As sessions lengthen and approach the context limit,
+   Hermes Agent executes automatic context compression, pruning tool results and middle turns.
+   Without an automated pre-compression hook, dialogue snapshots, key decisions, and session
+   learnings can be compacted away before being recorded in durable memory or the daily Obsidian
+   journal (/app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md).
+2. Hermes Agent's in-flight task replay mechanism (_find_inflight_user_task and _reappend_inflight_user_task)
+   re-appends unfinished user asks after compaction headers with '[STILL IN PROGRESS]'. When closeout/wrapup
+   tasks are executed, or when trailing background notifications arrive after a final text answer was already delivered,
+   _find_inflight_user_task treats the task as still in-flight, repeatedly re-injecting the wrap-up ask across
+   compaction boundaries and causing infinite duplicate response loops.
 
 Fix
 ---
-Inject ``_trigger_odin_pre_compress_wrapup()`` into ``ContextCompressor`` in
-``/opt/hermes/agent/context_compressor.py`` and invoke it right after summary generation,
-before the compressed message list is assembled:
-1. Resolves Auckland local time (Pacific/Auckland) with the < 06:00 NZDT sleep rollover.
-2. Identifies the active Obsidian journal at /app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md
-   (with fallback to /opt/atlas/vault).
-3. Strictly strips all em dashes (—) and en dashes (–), enforcing the zero em/en dash invariant.
-4. Formats and appends an auto-checkpoint containing context usage, user topics, and the compacted summary.
-5. Fans out an ``agent:pre_compress`` event to any external hooks located in /opt/data/hooks/.
-6. Runs in a failsafe try/except block so compression never aborts if vault writes encounter errors.
+1. Inject ``_trigger_odin_pre_compress_wrapup()`` into ``ContextCompressor`` in
+   ``/opt/hermes/agent/context_compressor.py`` and invoke it right after summary generation,
+   before the compressed message list is assembled:
+   - Resolves Auckland local time (Pacific/Auckland) with the < 06:00 NZDT sleep rollover.
+   - Identifies the active Obsidian journal at /app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md
+     (with fallback to /opt/atlas/vault).
+   - Strictly strips all em dashes (—) and en dashes (–), enforcing the zero em/en dash invariant.
+   - Formats and appends an auto-checkpoint containing context usage, user topics, and the compacted summary.
+   - Fans out an ``agent:pre_compress`` event to any external hooks located in /opt/data/hooks/.
+   - Runs in a failsafe try/except block so compression never aborts if vault writes encounter errors.
+2. Patch ``_find_inflight_user_task`` and ``_reappend_inflight_user_task`` to suppress duplicate task replays:
+   - Suppress re-injecting wrapup/closeout tasks as in-flight since session wrapup is already handled or captured.
+   - Check if an assistant message already delivered a final answer text after the user request without pending tool calls,
+     preventing trailing background/cron tool results from falsely marking finished requests as in-flight.
 """
 from __future__ import annotations
 
@@ -32,6 +41,76 @@ from pathlib import Path
 
 TARGET = Path("/opt/hermes/agent/context_compressor.py")
 MARKER = "# odin-patch: pre-compression wrapup hook"
+INFLIGHT_MARKER = "# odin-patch: prevent compaction duplicate response and wrapup replay"
+
+INFLIGHT_ANCHOR = (
+    "        if last_user_idx < 0:\n"
+    "            return None\n"
+    "\n"
+    "        for msg in reversed(messages[last_user_idx + 1:]):\n"
+    "            if not isinstance(msg, dict) or msg.get(\"role\") != \"assistant\":\n"
+    "                # Trailing tool result (or anything else): still mid-task.\n"
+    "                break\n"
+    "            if msg.get(\"tool_calls\"):\n"
+    "                break\n"
+    "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
+    "                # Final answer already delivered — replaying the ask would\n"
+    "                # hand the model finished work as a fresh instruction.\n"
+    "                return None\n"
+    "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
+    "        return messages[last_user_idx]\n"
+)
+
+INFLIGHT_INJECTION = (
+    "        if last_user_idx < 0:\n"
+    "            return None\n"
+    "\n"
+    f"        {INFLIGHT_MARKER}\n"
+    "        # Check if the user request was a wrapup/closeout task that should not be replayed\n"
+    "        user_content = _content_text_for_contains(messages[last_user_idx].get(\"content\")).lower()\n"
+    "        _wrapup_keywords = (\"wrap up\", \"wrap-up\", \"wrapup\", \"close out\", \"close-out\", \"closeout\", \"session-wrapup\", \"session wrapup\")\n"
+    "        if any(kw in user_content for kw in _wrapup_keywords):\n"
+    "            return None\n"
+    "\n"
+    "        # If any assistant message after the request already delivered non-empty text without pending tool calls,\n"
+    "        # the ask was answered — do not let trailing background/tool results re-trigger in-flight replay.\n"
+    "        subsequent = messages[last_user_idx + 1:]\n"
+    "        for msg in reversed(subsequent):\n"
+    "            if not isinstance(msg, dict) or msg.get(\"role\") != \"assistant\":\n"
+    "                has_delivered_answer = any(\n"
+    "                    isinstance(m, dict) and m.get(\"role\") == \"assistant\" and not m.get(\"tool_calls\") and bool(_content_text_for_contains(m.get(\"content\")).strip())\n"
+    "                    for m in subsequent\n"
+    "                )\n"
+    "                if has_delivered_answer:\n"
+    "                    return None\n"
+    "                break\n"
+    "            if msg.get(\"tool_calls\"):\n"
+    "                break\n"
+    "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
+    "                # Final answer already delivered — replaying the ask would\n"
+    "                # hand the model finished work as a fresh instruction.\n"
+    "                return None\n"
+    "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
+    "        return messages[last_user_idx]\n"
+)
+
+REAPPEND_ANCHOR = (
+    "        # Keep any reply pointer: the restated task still needs its disambiguation.\n"
+    "        task_text = _restated_request_text(inflight.get(\"content\"))\n"
+    "        if not task_text:\n"
+    "            return compressed\n"
+)
+
+REAPPEND_INJECTION = (
+    "        # Keep any reply pointer: the restated task still needs its disambiguation.\n"
+    "        task_text = _restated_request_text(inflight.get(\"content\"))\n"
+    "        if not task_text:\n"
+    "            return compressed\n"
+    "\n"
+    "        _wrapup_keywords = (\"wrap up\", \"wrap-up\", \"wrapup\", \"close out\", \"close-out\", \"closeout\", \"session-wrapup\", \"session wrapup\")\n"
+    "        if any(kw in task_text.lower() for kw in _wrapup_keywords):\n"
+    "            return compressed\n"
+)
 
 METHOD_ANCHOR = "    def _assemble_compressed(\n"
 
@@ -190,27 +269,49 @@ def main() -> int:
         return 1
 
     src = TARGET.read_text(encoding="utf-8")
+    modified = False
+
+    # 1. Apply pre-compression wrapup hook if not already applied
     if MARKER in src:
-        print("[odin-patch] pre-compression wrapup hook already applied; skipping")
-        return 0
+        print("[odin-patch] pre-compression wrapup hook already applied; skipping hook injection")
+    else:
+        if CALL_ANCHOR not in src:
+            print("[odin-patch] ERROR: CALL_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
 
-    if CALL_ANCHOR not in src:
-        print("[odin-patch] ERROR: CALL_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
-        return 1
+        if METHOD_ANCHOR not in src:
+            print("[odin-patch] ERROR: METHOD_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
 
-    if METHOD_ANCHOR not in src:
-        print("[odin-patch] ERROR: METHOD_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
-        return 1
+        # Inject call site
+        src = src.replace(CALL_ANCHOR, CALL_INJECTION, 1)
 
-    # Inject call site
-    src = src.replace(CALL_ANCHOR, CALL_INJECTION, 1)
+        # Inject method
+        method_idx = src.find(METHOD_ANCHOR)
+        src = src[:method_idx] + METHOD_INJECTION + "\n" + src[method_idx:]
+        modified = True
+        print(f"[odin-patch] Injected pre-compression wrapup hook into {TARGET}")
 
-    # Inject method
-    method_idx = src.find(METHOD_ANCHOR)
-    src = src[:method_idx] + METHOD_INJECTION + "\n" + src[method_idx:]
+    # 2. Apply in-flight task replay suppression if not already applied
+    if INFLIGHT_MARKER in src:
+        print("[odin-patch] in-flight task replay suppression already applied; skipping")
+    else:
+        if INFLIGHT_ANCHOR not in src:
+            print("[odin-patch] ERROR: INFLIGHT_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
 
-    TARGET.write_text(src, encoding="utf-8")
-    print(f"[odin-patch] Patched {TARGET} (injected _trigger_odin_pre_compress_wrapup)")
+        if REAPPEND_ANCHOR not in src:
+            print("[odin-patch] ERROR: REAPPEND_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
+
+        src = src.replace(INFLIGHT_ANCHOR, INFLIGHT_INJECTION, 1)
+        src = src.replace(REAPPEND_ANCHOR, REAPPEND_INJECTION, 1)
+        modified = True
+        print(f"[odin-patch] Injected in-flight task replay suppression into {TARGET}")
+
+    if modified:
+        TARGET.write_text(src, encoding="utf-8")
+        print(f"[odin-patch] Patched {TARGET}")
 
     # Verify python syntax
     try:
