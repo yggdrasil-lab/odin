@@ -101,17 +101,19 @@ Live model switching via `/model` command in any chat interface.
 The **main agent conversation loop** — every turn, not just delegated work — runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
 
 ```
-main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash-high)
+main agent loop → Antigravity subscription (agy CLI, claude-sonnet-5-5-high)
+                ↘ quota reached → agy (gemini-3.8-flash-high)
+                ↘ quota reached → agy (gemini-4-argon-high)
                 ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash-high`, `claude-opus-5-5`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`claude-sonnet-5-5-high`, `gemini-3.8-flash-high`, `gemini-4-argon-high`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
-This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly.
+This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly through each subscription pool before finally hitting Muninn.
 
-Compression is deliberately pinned **off** the subscription (`auxiliary.compression.provider: custom` → muninn `compress`). An auxiliary task whose provider is unset inherits the MAIN provider, so leaving it unset would burn subscription quota on every history compaction.
+Compression rides the subscription on `gemini-3.8-flash-high` (`auxiliary.compression.provider: antigravity-subscription-directsdk`, fallback to Muninn `compress`), preserving Claude and Argon quotas for agent conversations.
 
-Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-3.8-flash-high`), and also fall back to **DeepSeek V4-Flash** (`agent-loop` via Muninn) when the subscription usage limit is hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
+Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `claude-sonnet-5-5-high`), following the identical fallback chain (`gemini-3.8-flash-high` -> `gemini-4-argon-high` -> DeepSeek V4-Flash `agent-loop` via Muninn) when subscription quotas are hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
 
 Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's own Gemini 3.8 Flash is a fixed-fee model and is the primary here; the metered Gemini API flash is the one whose quota burned out too fast to be worth a chain slot.
 
