@@ -13,11 +13,11 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       # Main agent loop runs on the Antigravity subscription first (fixed monthly
-      # fee), starting with Claude Sonnet 5.5, rotating to Gemini 3.8 Flash, Gemini 4
+      # fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, Gemini 4
       # Argon, and finally DeepSeek V4-Flash via muninn. This must name a model
-      # the agy plugin exposes (claude-sonnet-5-5-high, gemini-3.8-flash-high, ...),
+      # the agy plugin exposes (gemini-3.8-flash-high, claude-sonnet-5-5-high, ...),
       # NOT a muninn alias like `agent-loop`.
-      AGENT_MODEL: claude-sonnet-5-5-high
+      AGENT_MODEL: gemini-3.8-flash-high
       CHAT_MODEL: local-model:latest
     
     steps:
