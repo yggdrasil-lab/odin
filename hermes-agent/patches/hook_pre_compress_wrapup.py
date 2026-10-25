@@ -328,14 +328,26 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
             return
 
         thread_id = str(thread_id).strip()
-        raw_title = (row["title"] or "Discussion").strip()
-        clean_title = raw_title.replace("\\u2014", "-").replace("\\u2013", "-")
 
         origin_json_str = row["origin_json"] or "{}"
         try:
             origin = json.loads(origin_json_str)
         except Exception:
             origin = {}
+
+        # Prefer the true Discord thread title from origin_json['chat_name']
+        # over row['title'], because Hermes's LLM auto-titler frequently mutates
+        # session['title'] based on subsequent user prompts.
+        chat_name = str(origin.get("chat_name") or "").strip()
+        if chat_name and " / " in chat_name:
+            discord_thread_title = chat_name.split(" / ")[-1].strip()
+        elif chat_name:
+            discord_thread_title = chat_name
+        else:
+            discord_thread_title = ""
+
+        raw_title = (discord_thread_title or row["title"] or "Discussion").strip()
+        clean_title = raw_title.replace("\\u2014", "-").replace("\\u2013", "-")
 
         parent_chat_id = origin.get("parent_chat_id") or row["chat_id"]
         # Fallback to #Home (1507958299428130907) if parent_chat_id is identical to the thread itself
