@@ -19,7 +19,7 @@ model:
   # OAuth token under the container's home dir (~/.gemini/antigravity-cli).
   provider: "antigravity-subscription-directsdk"
 
-  # ── Token limits — two settings, easy to confuse ──────────────────────────
+  # ── Token limits - two settings, easy to confuse ──────────────────────────
   #
   # context_length: TOTAL context window (input + output tokens combined).
   #   Controls when Hermes compresses history and validates requests.
@@ -28,7 +28,7 @@ model:
   #   or conversation histories exceed ~200k tokens.
   context_length: 200000
   #
-  # max_tokens: OUTPUT cap — maximum tokens the model may generate per response.
+  # max_tokens: OUTPUT cap: maximum tokens the model may generate per response.
   #   Leave unset to use the model's native output ceiling (recommended).
   #
   # max_tokens: 8192
@@ -66,16 +66,15 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The main conversation loop runs on the Antigravity subscription first — a
-# fixed monthly fee that would otherwise go unused — starting with Claude Sonnet 5.5,
-# rotating to Gemini 3.8 Flash, then to Gemini 4 Argon, and finally to DeepSeek
-# V4-Flash on muninn when all subscription quotas are reached. Hermes
+# The main conversation loop runs on the Antigravity subscription first (fixed monthly
+# fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then to Gemini 4 Argon,
+# and finally to DeepSeek V4-Flash on muninn when all subscription quotas are reached. Hermes
 # classifies agy's "usage_limit_reached" / "gousagelimit" wall as a
 # non-retryable rate_limit/billing verdict and rotates the chain eagerly.
 # DeepSeek V4-Flash alias on muninn: agent-loop.
 fallback_providers:
   - provider: "antigravity-subscription-directsdk"
-    model: "gemini-3.8-flash-high"
+    model: "claude-sonnet-5-5-high"
   - provider: "antigravity-subscription-directsdk"
     model: "gemini-4-argon-high"
   - provider: "custom"
@@ -87,20 +86,19 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run on the Antigravity subscription via the agy CLI — a
-  # fixed monthly fee that would otherwise go unused — starting with Claude
-  # Sonnet 5.5 for agentic coding quality, then rotating through the subscription
-  # quotas (Gemini 3.8 Flash -> Gemini 4 Argon) before falling back to DeepSeek
-  # V4-Flash through muninn.
+  # Delegated subagents run on the Antigravity subscription via the agy CLI (fixed
+  # monthly fee), starting with Gemini 4 Argon for high-reasoning agentic coding and
+  # complex task execution, then rotating through the subscription quotas (Claude
+  # Sonnet 5.5 -> Gemini 3.8 Flash) before falling back to DeepSeek V4-Flash through muninn.
   provider: "antigravity-subscription-directsdk"
-  model: "claude-sonnet-5-5-high"
+  model: "gemini-4-argon-high"
   # A pinned delegation block never inherits the parent's fallback chain, so this
   # leg must be declared here.
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
-      model: "gemini-3.8-flash-high"
+      model: "claude-sonnet-5-5-high"
     - provider: "antigravity-subscription-directsdk"
-      model: "gemini-4-argon-high"
+      model: "gemini-3.8-flash-high"
     - provider: "custom"
       model: "agent-loop"
       base_url: "http://muninn:4000/v1"

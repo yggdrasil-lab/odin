@@ -10,16 +10,16 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 |---------|-------|---------|
 | ollama | ollama/ollama:latest | Local LLM inference (CPU-only, 4 CPUs / 12GB RAM) |
 | muninn-db | postgres:16-alpine | LiteLLM database |
-| muninn | ghcr.io/berriai/litellm-database:main-latest | API proxy — routes all LLM calls with observability |
+| muninn | ghcr.io/berriai/litellm-database:main-latest | API proxy: routes all LLM calls with observability |
 | open-webui | ghcr.io/open-webui/open-webui:main | Chat UI (LLDAP auth via Cerberus) |
 | huginn-gateway | custom (hermes-agent/Dockerfile) | Hermes Agent API server |
 | huginn-dashboard | custom (same Dockerfile) | Hermes web dashboard |
 | mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer |
 | huginn-backup | alpine + sqlite | Nightly SQLite backups, 30-day retention |
 | odin-git-backup | custom (git-backup/Dockerfile) | Nightly git backup of /opt/odin (IaC) |
-| docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only) — Swarm service, task and log inspection from Huginn |
-| searxng | searxng/searxng:latest | Self-hosted metasearch engine — Hermes web_search backend |
-| camofox | ghcr.io/redf0x1/camofox-browser | Anti-detection browser — Hermes stealth browser (Firefox + C++ fingerprint spoofing) |
+| docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only): Swarm service, task and log inspection from Huginn |
+| searxng | searxng/searxng:latest | Self-hosted metasearch engine: Hermes web_search backend |
+| camofox | ghcr.io/redf0x1/camofox-browser | Anti-detection browser: Hermes stealth browser (Firefox + C++ fingerprint spoofing) |
 
 
 ## Architecture
@@ -86,34 +86,34 @@ Three networks: `aether-net` (external, shared with Traefik), `internal` (isolat
 
 ## LLM Backend
 
-Ollama is installed for local inference but the Gaia host is CPU-only — Qwen 2.5 was too slow for agent workloads. Pivoted to DeepSeek as the primary backend, routed through Muninn to preserve unified observability:
+Ollama is installed for local inference but the Gaia host is CPU-only (Qwen 2.5 was too slow for agent workloads). Pivoted to DeepSeek as the primary backend, routed through Muninn to preserve unified observability:
 
 ```
 Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
 ```
 
-Current models: `agent-loop` (fast tier, now the **fallback** for the main agent loop — see below), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant — point `AGENT_MODEL` at it to re-enable auto-routing.
+Current models: `agent-loop` (fast tier, now the **fallback** for the main agent loop; see below), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant; point `AGENT_MODEL` at it to re-enable auto-routing.
 
 Live model switching via `/model` command in any chat interface.
 
 ### Primary model and fallback (`model:` + `fallback_providers:`)
 
-The **main agent conversation loop** — every turn, not just delegated work — runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
+The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
 
 ```
-main agent loop → Antigravity subscription (agy CLI, claude-sonnet-5-5-high)
-                ↘ quota reached → agy (gemini-3.8-flash-high)
+main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash-high)
+                ↘ quota reached → agy (claude-sonnet-5-5-high)
                 ↘ quota reached → agy (gemini-4-argon-high)
                 ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`claude-sonnet-5-5-high`, `gemini-3.8-flash-high`, `gemini-4-argon-high`, …) — **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash-high`, `claude-sonnet-5-5-high`, `gemini-4-argon-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
 This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly through each subscription pool before finally hitting Muninn.
 
 Compression rides the subscription on `gemini-3.8-flash-high` (`auxiliary.compression.provider: antigravity-subscription-directsdk`, fallback to Muninn `compress`), preserving Claude and Argon quotas for agent conversations.
 
-Delegated subagents also run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `claude-sonnet-5-5-high`), following the identical fallback chain (`gemini-3.8-flash-high` -> `gemini-4-argon-high` -> DeepSeek V4-Flash `agent-loop` via Muninn) when subscription quotas are hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
+Delegated subagents run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-4-argon-high`), utilizing Gemini 4 Argon for high-reasoning coding and task execution, with fallback (`claude-sonnet-5-5-high` -> `gemini-3.8-flash-high` -> DeepSeek V4-Flash `agent-loop` via Muninn) when subscription quotas are hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
 
 Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's own Gemini 3.8 Flash is a fixed-fee model and is the primary here; the metered Gemini API flash is the one whose quota burned out too fast to be worth a chain slot.
 
@@ -155,11 +155,11 @@ The fallback leg resolves its credential by variable **name**: the chain uses `k
 
 ## Accessing Huginn
 
-- **Discord Bot** — mention the bot in allowed channels. `/new` to reset.
-- **Huginn Dashboard** — `https://huginn.DOMAIN` — chat, sessions, skills, memory.
-- **Open WebUI** — `https://odin.DOMAIN` — select `hermes-agent` model.
-- **Direct API** — `POST https://agent.DOMAIN/v1/chat/completions` (OpenAI-compatible).
-- **Mnemosyne** — `https://mnemosyne.DOMAIN` — memory constellation map and timeline.
+- **Discord Bot**: mention the bot in allowed channels. `/new` to reset.
+- **Huginn Dashboard**: `https://huginn.DOMAIN` (chat, sessions, skills, memory).
+- **Open WebUI**: `https://odin.DOMAIN` (select `hermes-agent` model).
+- **Direct API**: `POST https://agent.DOMAIN/v1/chat/completions` (OpenAI-compatible).
+- **Mnemosyne**: `https://mnemosyne.DOMAIN` (memory constellation map and timeline).
 
 ---
 
