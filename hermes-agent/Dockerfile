@@ -47,6 +47,19 @@ RUN git clone --quiet https://github.com/soyelmismo/hermes-antigravity-subscript
       /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/.git \
     && chmod -R a+rX /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk
 
+# Install the TypeSafe Jev smart-approval model-provider plugin into the image layer.
+# Registers provider 'typesafe-jev' for auxiliary.approval under approvals.mode: smart.
+# Evaluates command review with 6 typed questions in parallel at sub-$0.0001 per check.
+ARG JEV_APPROVALS_PLUGIN_SHA=530fdb006f1637f9771ccf24049bf6588485c871
+RUN git clone --quiet https://github.com/anpicasso/hermes-jev-approvals /tmp/jev-plugin \
+    && git -C /tmp/jev-plugin checkout --quiet "${JEV_APPROVALS_PLUGIN_SHA}" \
+    && mkdir -p /opt/hermes/plugins/model-providers/jev-approvals \
+    && cp -R /tmp/jev-plugin/plugin/. /opt/hermes/plugins/model-providers/jev-approvals/ \
+    && rm -rf /tmp/jev-plugin \
+      /opt/hermes/plugins/model-providers/jev-approvals/.git \
+    && chmod -R a+rX /opt/hermes/plugins/model-providers/jev-approvals
+
+
 # Patch Hermes so agy's "response was cut off ... exceeded the output token limit"
 # is recognised as an output-cap error instead of a context overflow. Without it
 # Hermes reports a misleading "server rejected the request as too large" notice.

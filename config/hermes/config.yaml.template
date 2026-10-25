@@ -63,6 +63,13 @@ auxiliary:
         base_url: "http://muninn:4000/v1"
         key_env: "MUNINN_MASTER_KEY"
 
+  approval:
+    # Fast, low-cost smart command approval using TypeSafe Jev System One decision model.
+    # Evaluates non-preapproved tool executions via typed choice/noul questions.
+    provider: "typesafe-jev"
+    model: "jev-latest"
+    timeout: 30
+
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
@@ -109,6 +116,11 @@ delegation:
 # =============================================================================
 approvals:
   mode: smart
+  smart_policy: >-
+    Killing browser processes and deleting cache or temporary directories are routine.
+    Ordinary git and gh operations on feature branches are routine.
+    Force-pushing, rewriting published history, pushing to main, production databases,
+    and shared infrastructure still require review.
 
 # =============================================================================
 # Provider Configuration
@@ -227,6 +239,7 @@ plugins:
   enabled:
     - "mnemosyne"
     - "antigravity-subscription-directsdk"
+    - "jev-approvals"
 
 # =============================================================================
 # MCP Servers
