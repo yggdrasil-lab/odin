@@ -52,8 +52,25 @@ auxiliary:
         context_length: 1048576
         timeout: 60
 
+  memory:
+    # Mnemosyne memory consolidation and structured fact extraction ride the Antigravity subscription
+    # first via the agy CLI, following the exact same fallback chain as the main agent loop.
+    provider: "antigravity-subscription-directsdk"
+    model: "gemini-3.8-flash-high"
+    timeout: 120
+    fallback_chain: &memory_fallbacks
+      - provider: "antigravity-subscription-directsdk"
+        model: "claude-sonnet-5-5-high"
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-argon-high"
+      - provider: "custom"
+        model: "agent-loop"
+        base_url: "http://muninn:4000/v1"
+        key_env: "MUNINN_MASTER_KEY"
+    fallback_providers: *memory_fallbacks
+
   background_review:
-    # Background skill reviews and memory consolidation ride the Antigravity subscription,
+    # Background skill reviews ride the Antigravity subscription,
     # falling back to DeepSeek V4-Flash on muninn only if subscription limits are reached.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"

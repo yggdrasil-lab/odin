@@ -81,6 +81,7 @@ RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/prune_agy_prompt_historical_tools.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \
     && rm -rf /tmp/odin-patches
 
 # Copy and setup entrypoint script

@@ -113,6 +113,8 @@ This is a native Hermes fallback chain (`fallback_providers`), not custom code. 
 
 Compression rides the subscription on `gemini-3.8-flash-high` (`auxiliary.compression.provider: antigravity-subscription-directsdk`, fallback to Muninn `compress`), preserving Claude and Argon quotas for agent conversations.
 
+Memory consolidation and structured fact extraction (Mnemosyne) ride the subscription on `gemini-3.8-flash-high` (`auxiliary.memory.provider: antigravity-subscription-directsdk`), following the exact same fallback chain as the main agent loop (`claude-sonnet-5-5-high` -> `gemini-4-argon-high` -> DeepSeek V4-Flash `agent-loop` via Muninn).
+
 Delegated subagents run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-4-argon-high`), utilizing Gemini 4 Argon for high-reasoning coding and task execution, with fallback (`claude-sonnet-5-5-high` -> `gemini-3.8-flash-high` -> DeepSeek V4-Flash `agent-loop` via Muninn) when subscription quotas are hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
 
 Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's own Gemini 3.8 Flash is a fixed-fee model and is the primary here; the metered Gemini API flash is the one whose quota burned out too fast to be worth a chain slot.
