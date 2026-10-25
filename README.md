@@ -153,7 +153,7 @@ The fallback leg resolves its credential by variable **name**: the chain uses `k
 
 ### Decision-Only Model Triage (TypeSafe Jev)
 
-For high-frequency, low-complexity gating tasks — such as topic-watch sweep materiality filtering, silent-tick suppression, and component price threshold validation — Hermes integrates TypeSafe AI's **Jev** (`jev-latest`) decision model. When `TYPESAFE_API_KEY` is provisioned, high-volume classification (Noul, Score, Choice) runs through Jev's calibrated confidence gate first, dropping noise and silent ticks without burning general LLM conversation tokens.
+For high-frequency, low-complexity gating tasks - such as topic-watch sweep materiality filtering, silent-tick suppression, and component price threshold validation - Hermes integrates TypeSafe AI's **Jev** (`jev-latest`) decision model. When `TYPESAFE_API_KEY` is provisioned, high-volume classification (Noul, Score, Choice) runs through Jev's calibrated confidence gate first, dropping noise and silent ticks without burning general LLM conversation tokens.
 
 ---
 
