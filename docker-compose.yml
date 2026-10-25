@@ -90,7 +90,29 @@ services:
         - "homepage.href=https://muninn.${DOMAIN_NAME}/ui"
         - "homepage.description=Ollama Prompt & Response Observability"
 
+  jev-shim:
+    image: ${REGISTRY_PREFIX}jev-shim:${STACK_NAME:-latest}
+    build:
+      context: ./jev-shim
+      dockerfile: Dockerfile
+    environment:
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - PORT=8000
+    networks:
+      - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
   open-webui:
+
     image: ghcr.io/open-webui/open-webui:main
     volumes:
       - open-webui_data:/app/backend/data

@@ -70,6 +70,15 @@ auxiliary:
     model: "jev-latest"
     timeout: 30
 
+  monitor:
+    # High-volume background check and inbox urgency scoring (0-10) using TypeSafe Jev via Muninn
+    provider: "custom"
+    model: "agent-monitor"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
+    timeout: 30
+
+
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================

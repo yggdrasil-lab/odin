@@ -54,6 +54,23 @@ model_list:
       model: gemini/gemini-2.5-flash
       timeout: 120
 
+  # Fast tier - TypeSafe Jev System One decision and background monitor scorer.
+  # Routed through local jev-shim service exposing OpenAI-compatible /v1/chat/completions.
+  - model_name: agent-monitor
+    litellm_params:
+      model: openai/agent-monitor
+      api_base: http://jev-shim:8000/v1
+      api_key: "dummy"
+      timeout: 30
+
+  - model_name: jev-decision
+    litellm_params:
+      model: openai/jev-decision
+      api_base: http://jev-shim:8000/v1
+      api_key: "dummy"
+      timeout: 30
+
+
 
   # Intelligent Router Model (Complexity-based routing) - dormant option.
   # Not wired to AGENT_MODEL; kept so the complexity router can be re-enabled

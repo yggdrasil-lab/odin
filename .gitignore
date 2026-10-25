@@ -82,3 +82,7 @@ hermes/state/
 hermes/backups/
 hermes/spawn-ledger.json
 hermes/**/*.sock
+
+# Python bytecode cache
+__pycache__/
+*.pyc
