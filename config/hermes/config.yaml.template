@@ -223,7 +223,7 @@ compression:
 # Memory Configuration
 # =============================================================================
 memory:
-  provider: "mnemosyne"
+  provider: mnemosyne
 
   # Native file-based memory (MEMORY.md / USER.md) is DISABLED.
   # Mnemosyne is the single agent-facing memory store.
