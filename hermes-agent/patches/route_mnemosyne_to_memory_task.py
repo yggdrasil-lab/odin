@@ -23,6 +23,8 @@ Fix
 2. Patch mnemosyne.core.local_llm._try_host_llm to lazily call register_hermes_host_llm()
    if get_host_llm_backend() is None, ensuring standalone CLI and MCP tool executions
    automatically connect to the Hermes host LLM when MNEMOSYNE_HOST_LLM_ENABLED=true.
+3. Patch mnemosyne.install._configure_hermes to recognize quoted provider settings
+   and anchor the memory regex to ^memory: so nested auxiliary.memory is never corrupted.
 """
 from __future__ import annotations
 
@@ -31,6 +33,7 @@ from pathlib import Path
 
 MARKER_ADAPTER = "# odin-patch: route host LLM to auxiliary.memory task"
 MARKER_LOCAL_LLM = "# odin-patch: lazy register hermes host LLM backend"
+MARKER_INSTALL = "# odin-patch: harden mnemosyne install config detection and anchor regex"
 
 
 def patch_adapter() -> bool:
@@ -103,8 +106,63 @@ def patch_local_llm() -> bool:
     return True
 
 
+def patch_mnemosyne_install() -> bool:
+    try:
+        import mnemosyne.install as install_mod
+        target = Path(install_mod.__file__)
+    except Exception:
+        candidate = Path("/opt/hermes/.venv/lib/python3.14/site-packages/mnemosyne/install.py")
+        if candidate.is_file():
+            target = candidate
+        else:
+            print("[odin-patch] ERROR: mnemosyne/install.py not found", file=sys.stderr)
+            return False
+
+    src = target.read_text(encoding="utf-8")
+    if MARKER_INSTALL in src:
+        print("[odin-patch] mnemosyne.install already patched; skipping")
+        return True
+
+    old_check = '    if "provider: mnemosyne" in config_text:\n'
+    new_check = (
+        f"    {MARKER_INSTALL}\n"
+        '    if "provider: mnemosyne" in config_text or \'provider: "mnemosyne"\' in config_text or "provider: \'mnemosyne\'" in config_text:\n'
+    )
+    if old_check not in src:
+        print("[odin-patch] ERROR: check 'provider: mnemosyne' not found in mnemosyne/install.py", file=sys.stderr)
+        return False
+
+    src = src.replace(old_check, new_check, 1)
+
+    old_sub = (
+        "        new_config = re.sub(\n"
+        "            r'(memory:\\s*)\\n(\\s*provider:\\s*\\S+)?',\n"
+        "            r'\\1\\n  provider: mnemosyne\\n',\n"
+        "            config_text,\n"
+        "            count=1,\n"
+        "        )\n"
+    )
+    new_sub = (
+        "        new_config = re.sub(\n"
+        "            r'(^memory:\\s*)\\n(\\s*provider:\\s*\\S+)?',\n"
+        "            r'\\1\\n  provider: mnemosyne\\n',\n"
+        "            config_text,\n"
+        "            count=1,\n"
+        "            flags=re.MULTILINE,\n"
+        "        )\n"
+    )
+    if old_sub not in src:
+        print("[odin-patch] ERROR: re.sub pattern not found in mnemosyne/install.py", file=sys.stderr)
+        return False
+
+    src = src.replace(old_sub, new_sub, 1)
+    target.write_text(src, encoding="utf-8")
+    print(f"[odin-patch] patched {target} (hardened mnemosyne install config detection)")
+    return True
+
+
 def main() -> int:
-    ok = patch_adapter() and patch_local_llm()
+    ok = patch_adapter() and patch_local_llm() and patch_mnemosyne_install()
     return 0 if ok else 1
 
 
