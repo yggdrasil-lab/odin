@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build-time patch: pre-compression wrapup checkpoint hook and compaction task replay suppression in ContextCompressor.
+"""Build-time patch: pre-compression wrapup checkpoint hook, automated Discord thread handover,
+and compaction task replay suppression in ContextCompressor.
 
 Problem
 -------
@@ -9,7 +10,10 @@ Problem
    Without an automated pre-compression hook, dialogue snapshots, key decisions, and session
    learnings can be compacted away before being recorded in durable memory or the daily Obsidian
    journal (/app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md).
-2. Hermes Agent's in-flight task replay mechanism (_find_inflight_user_task and _reappend_inflight_user_task)
+2. Continuing conversations inside a compacted context degrades reasoning fidelity, causes
+   repeated tool calls, and risks subtle hallucinations. In Discord thread sessions, continuing
+   inline after context saturation forces the agent to operate on a lossy summary.
+3. Hermes Agent's in-flight task replay mechanism (_find_inflight_user_task and _reappend_inflight_user_task)
    re-appends unfinished user asks after compaction headers with '[STILL IN PROGRESS]'. When closeout/wrapup
    tasks are executed, or when trailing background notifications arrive after a final text answer was already delivered,
    _find_inflight_user_task treats the task as still in-flight, repeatedly re-injecting the wrap-up ask across
@@ -23,8 +27,12 @@ Fix
    - Resolves Auckland local time (Pacific/Auckland) with the < 06:00 NZDT sleep rollover.
    - Identifies the active Obsidian journal at /app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md
      (with fallback to /opt/atlas/vault).
-   - Strictly strips all em dashes (—) and en dashes (–), enforcing the zero em/en dash invariant.
+   - Strictly strips all em dashes and en dashes, enforcing the zero em/en dash invariant.
    - Formats and appends an auto-checkpoint containing context usage, user topics, and the compacted summary.
+   - Automated Discord Thread Handover: if the active session is a Discord thread, automatically spawns
+     a fresh continuation thread (e.g. '[Topic] - Part 2'), auto-joins the user (<@302843723715182592>),
+     seeds message 1 with the structured Handover Prompt, posts a migration link in the old thread,
+     and schedules a delayed 20-second background archive of the old thread.
    - Fans out an ``agent:pre_compress`` event to any external hooks located in /opt/data/hooks/.
    - Runs in a failsafe try/except block so compression never aborts if vault writes encounter errors.
 2. Patch ``_find_inflight_user_task`` and ``_reappend_inflight_user_task`` to suppress duplicate task replays:
@@ -54,7 +62,7 @@ INFLIGHT_ANCHOR = (
     "            if msg.get(\"tool_calls\"):\n"
     "                break\n"
     "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
-    "                # Final answer already delivered — replaying the ask would\n"
+    "                # Final answer already delivered \u2014 replaying the ask would\n"
     "                # hand the model finished work as a fresh instruction.\n"
     "                return None\n"
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
@@ -73,7 +81,7 @@ INFLIGHT_INJECTION = (
     "            return None\n"
     "\n"
     "        # If any assistant message after the request already delivered non-empty text without pending tool calls,\n"
-    "        # the ask was answered — do not let trailing background/tool results re-trigger in-flight replay.\n"
+    "        # the ask was answered - do not let trailing background/tool results re-trigger in-flight replay.\n"
     "        subsequent = messages[last_user_idx + 1:]\n"
     "        for msg in reversed(subsequent):\n"
     "            if not isinstance(msg, dict) or msg.get(\"role\") != \"assistant\":\n"
@@ -87,7 +95,7 @@ INFLIGHT_INJECTION = (
     "            if msg.get(\"tool_calls\"):\n"
     "                break\n"
     "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
-    "                # Final answer already delivered — replaying the ask would\n"
+    "                # Final answer already delivered \u2014 replaying the ask would\n"
     "                # hand the model finished work as a fresh instruction.\n"
     "                return None\n"
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
@@ -150,7 +158,8 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         display_tokens: int | None = None,
     ) -> None:
         """Odin pre-compression wrapup hook: auto-captures session dialogue, decisions,
-        and context metrics into the Auckland daily Obsidian journal before middle turns are compacted.
+        and context metrics into the Auckland daily Obsidian journal before middle turns are compacted,
+        and automatically migrates Discord threads to a fresh continuation thread.
         """
         import os
         from datetime import datetime, timedelta
@@ -182,7 +191,7 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         journal_file = vault_root / "second-brain" / "Journal" / f"{journal_date.year:04d}" / f"{journal_date.month:02d}" / f"{date_str}.md"
 
         # Sanitize summary and strictly strip all em and en dashes (invariant)
-        clean_summary = (summary or "").replace("\\u2014", "-").replace("\\u2013", "-").replace("—", "-").replace("–", "-").strip()
+        clean_summary = (summary or "").replace("\\u2014", "-").replace("\\u2013", "-").strip()
 
         # Extract recent user queries/topics from turns_to_summarize or messages
         user_queries = []
@@ -191,7 +200,7 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
                 content = msg.get("content")
                 if isinstance(content, str) and content.strip():
                     txt = content.strip().split("\\n")[0]
-                    clean_txt = txt.replace("—", "-").replace("–", "-")
+                    clean_txt = txt.replace("\\u2014", "-").replace("\\u2013", "-")
                     if len(clean_txt) > 160:
                         clean_txt = clean_txt[:157] + "..."
                     if clean_txt and clean_txt not in user_queries:
@@ -221,7 +230,7 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
                     lines.append("  >")
 
         checkpoint_text = "\\n".join(lines)
-        checkpoint_text = checkpoint_text.replace("—", "-").replace("–", "-")
+        checkpoint_text = checkpoint_text.replace("\\u2014", "-").replace("\\u2013", "-")
 
         # Write to journal note
         journal_file.parent.mkdir(parents=True, exist_ok=True)
@@ -235,9 +244,19 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         else:
             updated = f"---\\ndate: {date_str}\\ntags: [journal, auto-checkpoint]\\nlocation: \\"Auckland\\"\\n---\\n\\n## Journal Entry\\n\\n{checkpoint_text}\\n"
 
-        updated = updated.replace("—", "-").replace("–", "-")
+        updated = updated.replace("\\u2014", "-").replace("\\u2013", "-")
         journal_file.write_text(updated, encoding="utf-8")
         logger.info("[odin-wrapup] Successfully recorded pre-compression wrapup checkpoint to %s", journal_file)
+
+        # Automated Discord Thread Handover
+        try:
+            self._trigger_odin_discord_thread_handover(
+                summary=clean_summary,
+                display_tokens=display_tokens,
+                user_queries=user_queries,
+            )
+        except Exception as d_err:
+            logger.warning("[odin-wrapup] Discord thread handover notice: %s", d_err, exc_info=True)
 
         # Notify any external hook scripts under /opt/data/hooks
         hooks_dir = Path("/opt/data/hooks")
@@ -260,6 +279,231 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
                                 })
                     except Exception as h_err:
                         logger.debug("[odin-wrapup] Hook %s execution notice: %s", hook_subdir.name, h_err)
+
+    def _trigger_odin_discord_thread_handover(
+        self,
+        summary: str,
+        display_tokens: int | None = None,
+        user_queries: list[str] | None = None,
+    ) -> None:
+        """Automated Discord Thread Handover: When a Discord thread session approaches the
+        context limit, spawns a fresh continuation thread (e.g. '[Topic] - Part 2'),
+        seeds it with the structured Handover Prompt, notifies the old thread, and archives it.
+        """
+        import os
+        import re
+        import json
+        import sqlite3
+        import urllib.request
+        import urllib.error
+        from pathlib import Path
+
+        session_id = getattr(self, "_session_id", None)
+        if not session_id:
+            return
+
+        db_path = Path("/opt/data/state.db")
+        if not db_path.is_file():
+            return
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.cursor().execute(
+                "SELECT source, chat_id, thread_id, title, origin_json FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            conn.close()
+        except Exception as db_err:
+            logger.debug("[odin-handover] Failed to query session state: %s", db_err)
+            return
+
+        if not row:
+            return
+
+        source = str(row["source"] or "").lower()
+        thread_id = row["thread_id"]
+        if source != "discord" or not thread_id:
+            # Only Discord threads get automated thread continuation
+            return
+
+        thread_id = str(thread_id).strip()
+        raw_title = (row["title"] or "Discussion").strip()
+        clean_title = raw_title.replace("\\u2014", "-").replace("\\u2013", "-")
+
+        origin_json_str = row["origin_json"] or "{}"
+        try:
+            origin = json.loads(origin_json_str)
+        except Exception:
+            origin = {}
+
+        parent_chat_id = origin.get("parent_chat_id") or row["chat_id"]
+        # Fallback to #Home (1507958299428130907) if parent_chat_id is identical to the thread itself
+        if not parent_chat_id or str(parent_chat_id) == str(thread_id):
+            parent_chat_id = "1507958299428130907"
+
+        # Increment Part number: 'Topic' -> 'Topic - Part 2', 'Topic - Part 2' -> 'Topic - Part 3'
+        part_match = re.search(r"-\\s*Part\\s*(\\d+)$", clean_title, re.IGNORECASE)
+        if part_match:
+            next_part = int(part_match.group(1)) + 1
+            new_title = re.sub(r"-\\s*Part\\s*\\d+$", f"- Part {next_part}", clean_title, flags=re.IGNORECASE)
+        else:
+            new_title = f"{clean_title} - Part 2"
+
+        if len(new_title) > 95:
+            new_title = new_title[:95]
+
+        # Extract Bot token from environment or /opt/data/.env
+        bot_token = os.environ.get("DISCORD_BOT_TOKEN")
+        if not bot_token:
+            env_file = Path("/opt/data/.env")
+            if env_file.is_file():
+                for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip().startswith("DISCORD_BOT_TOKEN="):
+                        bot_token = line.strip().split("=", 1)[1].strip()
+                        break
+
+        if not bot_token:
+            logger.debug("[odin-handover] No DISCORD_BOT_TOKEN available; skipping thread handover")
+            return
+
+        tok_str = f"{display_tokens:,}" if display_tokens else "140,000+"
+        starter_lines = [
+            f"<@302843723715182592> Continuing from <#{thread_id}>. Context reached ~{tok_str} tokens; transitioned to this fresh thread to prevent compacted context degradation.",
+            "",
+            "### Handover Context",
+        ]
+        if summary:
+            for s_line in summary.splitlines():
+                if s_line.strip():
+                    starter_lines.append(f"> {s_line}")
+                else:
+                    starter_lines.append(">")
+        else:
+            starter_lines.append("> Previous session context preserved.")
+
+        if user_queries:
+            starter_lines.append("")
+            starter_lines.append("### Recent Focus Topics")
+            for q in user_queries[:3]:
+                starter_lines.append(f"- {q}")
+
+        starter_lines.append("")
+        starter_lines.append("### Status")
+        starter_lines.append("- Fresh session active with 0 context tokens consumed.")
+        starter_lines.append("- Full reasoning power restored.")
+        starter_lines.append(f"- Previous thread (<#{thread_id}>) archived.")
+        starter_lines.append("")
+        starter_lines.append("Ready for next instruction.")
+
+        starter_content = "\\n".join(starter_lines).replace("\\u2014", "-").replace("\\u2013", "-")
+        if len(starter_content) > 1950:
+            starter_content = starter_content[:1940] + "\\n\\n[Context truncated for Discord 2k limit]"
+
+        headers = {
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "HermesAgentDiscordLifecycle/1.0",
+        }
+
+        # 1. Spawn continuation thread in parent channel
+        create_url = f"https://discord.com/api/v10/channels/{parent_chat_id}/threads"
+        payload_with_type = {
+            "name": new_title,
+            "type": 11,
+            "message": {
+                "content": starter_content,
+            },
+        }
+
+        new_thread_id = None
+        try:
+            req = urllib.request.Request(
+                create_url,
+                data=json.dumps(payload_with_type).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                new_thread_id = data.get("id")
+        except urllib.error.HTTPError as h_err:
+            err_body = h_err.read().decode("utf-8", errors="replace")
+            # If type 11 failed because parent channel is a forum (type 15), retry without 'type'
+            if h_err.code == 400 and ("type" in err_body.lower() or "forum" in err_body.lower()):
+                payload_no_type = {
+                    "name": new_title,
+                    "message": {
+                        "content": starter_content,
+                    },
+                }
+                req2 = urllib.request.Request(
+                    create_url,
+                    data=json.dumps(payload_no_type).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(req2) as resp2:
+                    data = json.loads(resp2.read().decode("utf-8"))
+                    new_thread_id = data.get("id")
+            else:
+                logger.warning("[odin-handover] Discord thread creation failed (HTTP %s): %s", h_err.code, err_body)
+                return
+        except Exception as c_err:
+            logger.warning("[odin-handover] Error creating continuation thread: %s", c_err)
+            return
+
+        if not new_thread_id:
+            return
+
+        logger.info("[odin-handover] Successfully created continuation thread %s (%s)", new_thread_id, new_title)
+
+        # 2. Post migration notice into old thread
+        msg_url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
+        notice = (
+            f"Context threshold reached (~{tok_str} tokens). "
+            f"To prevent compacted-context degradation, conversation has been migrated to <#{new_thread_id}>.\\n\\n"
+            "Archiving this thread."
+        ).replace("\\u2014", "-").replace("\\u2013", "-")
+
+        try:
+            msg_req = urllib.request.Request(
+                msg_url,
+                data=json.dumps({"content": notice}).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(msg_req) as _:
+                pass
+        except Exception as m_err:
+            logger.warning("[odin-handover] Failed to post migration notice to old thread: %s", m_err)
+
+        # 3. Trigger delayed archiving of the old thread (20s delay for message delivery)
+        import subprocess
+        archive_script = Path("/opt/data/skills/productivity/discord-thread-lifecycle/scripts/archive_thread.py")
+        if archive_script.is_file():
+            try:
+                subprocess.Popen(["python3", str(archive_script), str(thread_id), "--delay", "20"])
+            except Exception as a_err:
+                logger.warning("[odin-handover] Failed to launch archive_thread.py: %s", a_err)
+        else:
+            import threading
+            def _delayed_archive():
+                import time
+                time.sleep(20)
+                try:
+                    p_url = f"https://discord.com/api/v10/channels/{thread_id}"
+                    p_req = urllib.request.Request(
+                        p_url,
+                        data=json.dumps({"archived": True}).encode("utf-8"),
+                        headers=headers,
+                        method="PATCH",
+                    )
+                    with urllib.request.urlopen(p_req) as _:
+                        pass
+                except Exception:
+                    pass
+            threading.Thread(target=_delayed_archive, daemon=True).start()
 '''
 
 

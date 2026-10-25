@@ -168,10 +168,10 @@ compression:
   # Enable automatic context compression (default: true)
   enabled: true
   
-  # Trigger compression at this % of model's context limit (0.80 = 80% of context window)
-  threshold: 0.80
-  # Absolute token cap for agy 200k context: trigger at 160k tokens before agy 200k ceiling
-  threshold_tokens: 160000
+  # Trigger compression at this % of model's context limit (0.70 = 70% of context window)
+  threshold: 0.70
+  # Absolute token cap for agy 200k context: trigger at 140k tokens before agy 200k ceiling
+  threshold_tokens: 140000
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
