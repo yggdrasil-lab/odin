@@ -79,6 +79,7 @@ jobs:
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || '' }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY || '' }}
           # Bearer token for the Kratos MCP endpoint, injected into the agent
           # container as MCP_KRATOS_API_KEY (see docker-compose.yml). Same value
           # as the kratos repo's KRATOS_MCP_TOKEN; kept as one named secret so
