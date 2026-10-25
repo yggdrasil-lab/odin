@@ -199,6 +199,8 @@ services:
       # never rendered to disk -- config.yaml carries ${env:MCP_KRATOS_API_KEY}
       # and the agent resolves it from this process env at MCP-config load.
       - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY:-}
+      # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
@@ -278,6 +280,7 @@ services:
       # fail closed with a 401. Sourced from the same secret as the gateway so
       # client and server cannot drift.
       - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY:-}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
       - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}

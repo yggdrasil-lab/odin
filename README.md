@@ -151,6 +151,10 @@ Two prerequisites, both wired in this repo and easy to break:
 
 The fallback leg resolves its credential by variable **name**: the chain uses `key_env: MUNINN_MASTER_KEY`, so `MUNINN_MASTER_KEY` must be present in the gateway container's environment (not merely aliased to `OPENAI_API_KEY`).
 
+### Decision-Only Model Triage (TypeSafe Jev)
+
+For high-frequency, low-complexity gating tasks — such as topic-watch sweep materiality filtering, silent-tick suppression, and component price threshold validation — Hermes integrates TypeSafe AI's **Jev** (`jev-latest`) decision model. When `TYPESAFE_API_KEY` is provisioned, high-volume classification (Noul, Score, Choice) runs through Jev's calibrated confidence gate first, dropping noise and silent ticks without burning general LLM conversation tokens.
+
 ---
 
 ## Accessing Huginn
