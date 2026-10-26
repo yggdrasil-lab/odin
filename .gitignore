@@ -83,6 +83,17 @@ hermes/backups/
 hermes/spawn-ledger.json
 hermes/**/*.sock
 
+# Kanban runtime workspaces, logs, and tip state
+hermes/kanban/
+hermes/.scratch_tip_shown
+
+# Hermes Agent profile runtime directories and state (keep SOUL.md, profile.yaml, skills)
+hermes/profiles/*/*
+!hermes/profiles/*/SOUL.md
+!hermes/profiles/*/profile.yaml
+!hermes/profiles/*/skills
+hermes/profiles/**/.*
+
 # Python bytecode cache
 __pycache__/
 *.pyc
