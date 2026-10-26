@@ -80,6 +80,11 @@ jobs:
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || '' }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY || '' }}
+          TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
+          TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
+          DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID || vars.DISCORD_ALLOWED_USERS || '' }}
+          KANBAN_DISCORD_WEBHOOK_URL: ${{ secrets.KANBAN_DISCORD_WEBHOOK_URL || '' }}
+          KANBAN_DISCORD_CHANNEL_ID: ${{ vars.KANBAN_DISCORD_CHANNEL_ID || '1564064594576547972' }}
           # Bearer token for the Kratos MCP endpoint, injected into the agent
           # container as MCP_KRATOS_API_KEY (see docker-compose.yml). Same value
           # as the kratos repo's KRATOS_MCP_TOKEN; kept as one named secret so
