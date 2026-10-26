@@ -30,7 +30,7 @@ Fix
    - Strictly strips all em dashes and en dashes, enforcing the zero em/en dash invariant.
    - Formats and appends an auto-checkpoint containing context usage, user topics, and the compacted summary.
    - Automated Discord Thread Handover: if the active session is a Discord thread, automatically spawns
-     a fresh continuation thread (e.g. '[Topic] - Part 2'), auto-joins the user (<@302843723715182592>),
+     a fresh continuation thread (e.g. '[Topic] - Part 2'), auto-joins the user (<@DISCORD_USER_ID>),
      seeds message 1 with the structured Handover Prompt, posts a migration link in the old thread,
      and schedules a delayed 20-second background archive of the old thread.
    - Fans out an ``agent:pre_compress`` event to any external hooks located in /opt/data/hooks/.
@@ -380,8 +380,10 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
             return
 
         tok_str = f"{display_tokens:,}" if display_tokens else "140,000+"
+        discord_user_id = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
+        mention = f"<@{discord_user_id}> " if discord_user_id else ""
         starter_lines = [
-            f"<@302843723715182592> Continuing from <#{thread_id}>. Context reached ~{tok_str} tokens; transitioned to this fresh thread to prevent compacted context degradation.",
+            f"{mention}Continuing from <#{thread_id}>. Context reached ~{tok_str} tokens; transitioned to this fresh thread to prevent compacted context degradation.",
             "",
             "### Handover Context",
         ]
