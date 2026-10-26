@@ -412,6 +412,17 @@ def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
 
+    cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        logger.warning("Task %s not found in kanban database", task_id)
+        conn.close()
+        return False
+    if row[0] == canonical_status:
+        logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
+        conn.close()
+        return True
+
     now = int(time.time())
     extra_clause = ""
     if canonical_status in ("running", "in_progress"):
