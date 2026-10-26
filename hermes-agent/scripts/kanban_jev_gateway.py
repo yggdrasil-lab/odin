@@ -30,7 +30,10 @@ logging.basicConfig(
 logger = logging.getLogger("kanban-gateway")
 
 # Configuration Defaults (injected via environment variables / secrets)
-KANBAN_DB_PATH = os.environ.get("KANBAN_DB_PATH", "/opt/data/kanban.db")
+KANBAN_DB_PATH = os.environ.get(
+    "KANBAN_DB_PATH",
+    "/opt/data/kanban.db" if os.path.exists("/opt/data/kanban.db") else "/opt/odin/hermes/kanban.db",
+)
 DOMAIN_NAME = os.environ.get("DOMAIN_NAME", "")
 
 
