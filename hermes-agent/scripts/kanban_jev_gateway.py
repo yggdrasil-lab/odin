@@ -79,6 +79,7 @@ STATUS_COLORS = {
     "REVIEW_REQUIRED": 15105570, # Orange
     "DONE": 3066993,          # Green
     "BLOCKED": 15158332,      # Red
+    "DEBRIEF": 10181046,      # Purple
 }
 
 STATUS_CANONICAL = {
@@ -242,6 +243,67 @@ def post_thread_lifecycle_update(thread_id: str, status: str, message: str, fiel
         return False
 
 
+def post_thread_debrief(
+    thread_id: str,
+    task_id: str,
+    summary: str,
+    frictions: Optional[str] = None,
+    chore_task_id: Optional[str] = None,
+) -> bool:
+    """Posts a structured Task Debrief embed directly into a Discord card thread."""
+    if not DISCORD_WEBHOOK_URL:
+        logger.warning("KANBAN_DISCORD_WEBHOOK_URL is not set; skipping Discord thread update.")
+        return False
+
+    url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
+    color = STATUS_COLORS.get("DEBRIEF", 10181046)
+
+    fields = [
+        {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
+    ]
+
+    has_friction = bool(frictions and frictions.strip() and frictions.strip().lower() != "none")
+    if has_friction:
+        fields.append({"name": "Frictions / Learnings", "value": frictions[:1024], "inline": False})
+    else:
+        fields.append({"name": "Execution Quality", "value": "Clean execution (zero frictions recorded)", "inline": False})
+
+    if chore_task_id:
+        fields.append({"name": "Auto-Spawned Chore", "value": f"`{chore_task_id}` (enqueued to backlog)", "inline": True})
+
+    payload = {
+        "username": "Huginn Kanban",
+        "embeds": [
+            {
+                "title": "Task Debrief & Retrospective",
+                "color": color,
+                "description": summary,
+                "fields": fields,
+                "footer": {"text": f"Thread ID: {thread_id} • Continuous Improvement"},
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        ],
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            logger.info("Posted debrief for %s to thread %s (HTTP %d)", task_id, thread_id, resp.status)
+            return True
+    except Exception as e:
+        logger.error("Failed posting debrief for %s to thread %s: %s", task_id, thread_id, e)
+        return False
+
+
 def create_kanban_task(
     title: str,
     body: str,
@@ -368,6 +430,94 @@ def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     return True
 
 
+def record_task_debrief(
+    task_id: str,
+    summary: str,
+    frictions: Optional[str] = None,
+    chore_title: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Records a task debrief / retrospective receipt and optionally spawns a follow-up chore card."""
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    cursor = conn.cursor()
+
+    now = int(time.time())
+
+    # 1. Verify task exists
+    cursor.execute("SELECT id, title FROM tasks WHERE id = ?", (task_id,))
+    task_row = cursor.fetchone()
+    if not task_row:
+        conn.close()
+        raise ValueError(f"Task {task_id} not found in kanban database")
+
+    # 2. Record debrief event
+    payload = {
+        "summary": summary,
+        "frictions": frictions or "None",
+        "timestamp": now,
+    }
+    cursor.execute(
+        """
+        INSERT INTO task_events (task_id, kind, payload, created_at)
+        VALUES (?, 'debrief', ?, ?)
+        """,
+        (task_id, json.dumps(payload), now),
+    )
+
+    # 3. If friction or chore_title is specified, auto-spawn a chore card
+    chore_id = None
+    chore_thread_id = None
+    if chore_title or (frictions and frictions.strip() and frictions.strip().lower() != "none"):
+        ctitle = chore_title or f"Address friction in {task_id}"
+        cbody = (
+            f"Auto-spawned from task debrief for {task_id}:\n\n"
+            f"**Friction Report:**\n{frictions}\n\n"
+            f"**Origin Task:** {task_row[1]} ({task_id})"
+        )
+        conn.commit()
+        conn.close()
+        chore_id, chore_thread_id = create_kanban_task(
+            title=ctitle,
+            body=cbody,
+            priority=1,
+            assignee=DEFAULT_ASSIGNEE,
+        )
+        conn = sqlite3.connect(KANBAN_DB_PATH)
+        cursor = conn.cursor()
+
+    # 4. Find Discord thread subscription for parent task
+    cursor.execute(
+        """
+        SELECT thread_id FROM kanban_notify_subs
+        WHERE task_id = ? AND platform = 'discord' LIMIT 1
+        """,
+        (task_id,),
+    )
+    sub_row = cursor.fetchone()
+    thread_id = sub_row[0] if sub_row else None
+
+    conn.commit()
+    conn.close()
+
+    # 5. Post Discord embed
+    if thread_id:
+        post_thread_debrief(
+            thread_id=thread_id,
+            task_id=task_id,
+            summary=summary,
+            frictions=frictions,
+            chore_task_id=chore_id,
+        )
+
+    return {
+        "task_id": task_id,
+        "summary": summary,
+        "frictions": frictions,
+        "chore_id": chore_id,
+        "chore_thread_id": chore_thread_id,
+        "thread_id": thread_id,
+    }
+
+
 def triage_and_intake(event_text: str, title: Optional[str] = None, context: str = "") -> Optional[Dict[str, Any]]:
     """Complete entrypoint: evaluates with Jev and provisions task if actionable."""
     logger.info("Running Jev triage on event: %s", event_text[:80])
@@ -453,6 +603,13 @@ def main():
     p_update.add_argument("--status", required=True, choices=["todo", "ready", "running", "in_progress", "review_required", "done", "blocked"])
     p_update.add_argument("--message", required=True, help="Status update or progress message")
 
+    # Debrief command
+    p_debrief = subparsers.add_parser("debrief", help="Record task debrief/retro and optionally spawn a friction chore card")
+    p_debrief.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
+    p_debrief.add_argument("--summary", required=True, help="Summary of work delivered and testing")
+    p_debrief.add_argument("--friction", default="", help="Frictions, tool errors, or failure modes encountered")
+    p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up chore card")
+
     # List command
     subparsers.add_parser("list", help="List active Kanban cards and mapped threads")
 
@@ -467,6 +624,11 @@ def main():
     elif args.command == "update":
         update_task_lifecycle(args.task_id, args.status, args.message)
         print(f"Updated task {args.task_id} to status '{args.status}'")
+    elif args.command == "debrief":
+        res = record_task_debrief(args.task_id, args.summary, frictions=args.friction, chore_title=args.chore_title)
+        print(f"Recorded debrief for {args.task_id}")
+        if res.get("chore_id"):
+            print(f"Auto-spawned friction chore card: {res['chore_id']}")
     elif args.command == "list":
         list_active_tasks()
     else:
