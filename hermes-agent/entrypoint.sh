@@ -104,5 +104,12 @@ else
 
   # 5. Initialize Mnemosyne and run the Hermes Agent gateway
   /opt/hermes/.venv/bin/python -m mnemosyne.install
+
+  # 6. Start the Kanban Gateway HTTP API server in background
+  if [ -x /usr/local/bin/kanban-gateway ]; then
+    echo "Starting Kanban Gateway HTTP API on port 8643..."
+    /usr/local/bin/kanban-gateway serve --host 0.0.0.0 --port 8643 &
+  fi
+
   exec /opt/hermes/.venv/bin/hermes gateway run
 fi
