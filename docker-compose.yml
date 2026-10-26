@@ -12,8 +12,8 @@ services:
       - OLLAMA_KV_CACHE_TYPE=q4_0
       - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
       - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME}
-      - HERMES_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
-      - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS:-}
+      - HERMES_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH}
+      - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS}
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_QUEUE=512
     entrypoint: ["/bin/sh", "/init.sh"]
@@ -60,8 +60,8 @@ services:
       - LITELLM_MASTER_KEY=${MUNINN_MASTER_KEY}
       - DATABASE_URL=postgresql://muninn_user:muninn_password_secret_db_pass@muninn-db:5432/muninn_db
       - LITELLM_SALT_KEY=muninn_salt_secret_key_hash
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
     command: ["--config", "/app/config.yaml"]
     networks:
       - internal
@@ -91,14 +91,14 @@ services:
         - "homepage.description=Ollama Prompt & Response Observability"
 
   jev-shim:
-    image: ${REGISTRY_PREFIX}jev-shim:${STACK_NAME:-latest}
+    image: ${REGISTRY_PREFIX}jev-shim:${STACK_NAME}
     build:
       context: ./jev-shim
       dockerfile: Dockerfile
     environment:
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
-      - TYPESAFE_ENDPOINT=${TYPESAFE_ENDPOINT:-https://api.typesafe.ai/v1/systemone}
-      - TYPESAFE_DEFAULT_MODEL=${TYPESAFE_DEFAULT_MODEL:-jev-latest}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
+      - TYPESAFE_ENDPOINT=${TYPESAFE_ENDPOINT}
+      - TYPESAFE_DEFAULT_MODEL=${TYPESAFE_DEFAULT_MODEL}
       - PORT=8000
     networks:
       - internal
@@ -133,7 +133,7 @@ services:
       - ENABLE_FOLLOW_UP_GENERATION=False
       - DEFAULT_MODELS=${CHAT_MODEL}
       - OPENAI_API_BASE_URLS=http://muninn:4000/v1;http://huginn-gateway:8642/v1
-      - OPENAI_API_KEYS=${MUNINN_MASTER_KEY};${API_SERVER_KEY:-insecure_default_key_change_me}
+      - OPENAI_API_KEYS=${MUNINN_MASTER_KEY};${API_SERVER_KEY}
       - WEBUI_SECRET_KEY_FILE=/run/secrets/odin_webui_secret_key
       - AIOHTTP_CLIENT_TIMEOUT=900
       - AIOHTTP_CLIENT_STREAM_IDLE_TIMEOUT=900
@@ -169,7 +169,7 @@ services:
         - "homepage.description=Local LLM Chat Interface"
 
   huginn-gateway:
-    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME:-latest}
+    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
     build:
       context: ./hermes-agent
       dockerfile: Dockerfile
@@ -178,7 +178,7 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
-      - ${HOST_AGY_CONFIG_DIR:-/home/raymund/.gemini/antigravity-cli}:/opt/data/home/.gemini/antigravity-cli
+      - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
       - TZ=Pacific/Auckland
@@ -201,13 +201,13 @@ services:
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
       - API_SERVER_PORT=8642
-      - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
+      - API_SERVER_KEY=${API_SERVER_KEY}
       - GATEWAY_ALLOW_ALL_USERS=true
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS}
-      - DISCORD_USER_ID=${DISCORD_USER_ID:-}
-      - KANBAN_DISCORD_WEBHOOK_URL=${KANBAN_DISCORD_WEBHOOK_URL:-}
-      - KANBAN_DISCORD_CHANNEL_ID=${KANBAN_DISCORD_CHANNEL_ID:-}
+      - DISCORD_USER_ID=${DISCORD_USER_ID}
+      - KANBAN_DISCORD_WEBHOOK_URL=${KANBAN_DISCORD_WEBHOOK_URL}
+      - KANBAN_DISCORD_CHANNEL_ID=${KANBAN_DISCORD_CHANNEL_ID}
       - HERMES_API_TIMEOUT=1800
       - HERMES_STREAM_READ_TIMEOUT=1800
       - HERMES_STREAM_STALE_TIMEOUT=1800
@@ -225,21 +225,21 @@ services:
       # secret that provisions the server side (KRATOS_MCP_TOKEN); the value is
       # never rendered to disk -- config.yaml carries ${env:MCP_KRATOS_API_KEY}
       # and the agent resolves it from this process env at MCP-config load.
-      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY:-}
+      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY}
       # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
       - MNEMOSYNE_HOST_LLM_ENABLED=true
       - MNEMOSYNE_HOST_LLM_TIMEOUT=120
-      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
-      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
+      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED}
+      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
-      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-memory-extract}
+      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL}
       - MNEMOSYNE_SKIP_CONTEXTS=flush,subagent,background,skill_loop
       - GIT_USER_NAME=${HERMES_GIT_USER_NAME}
       - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL}
-      - GH_SETUP_TOKEN=${GH_TOKEN:-}
+      - GH_SETUP_TOKEN=${GH_TOKEN}
       - GH_CONFIG_DIR=/opt/data/.config/gh
       # Read-only Docker API for investigating Swarm services, tasks and logs
       # from inside this container. The socket is NOT mounted here -- only into
@@ -276,7 +276,7 @@ services:
         - "traefik.docker.network=aether-net"
 
   huginn-dashboard:
-    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME:-latest}
+    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
     build:
       context: ./hermes-agent
       dockerfile: Dockerfile
@@ -285,11 +285,11 @@ services:
     volumes:
       - /opt/odin/hermes:/opt/data
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
-      - ${HOST_AGY_CONFIG_DIR:-/home/raymund/.gemini/antigravity-cli}:/opt/data/home/.gemini/antigravity-cli
+      - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
     environment:
       - TZ=Pacific/Auckland
       - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
-      - API_SERVER_KEY=${API_SERVER_KEY:-insecure_default_key_change_me}
+      - API_SERVER_KEY=${API_SERVER_KEY}
       - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
       - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
       # Same HOME mismatch as the gateway: the dashboard's hermes processes run
@@ -308,16 +308,16 @@ services:
       # ${env:MCP_KRATOS_API_KEY} placeholder is left literal and Kratos tools
       # fail closed with a 401. Sourced from the same secret as the gateway so
       # client and server cannot drift.
-      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY:-}
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY}
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
       - MNEMOSYNE_HOST_LLM_ENABLED=true
       - MNEMOSYNE_HOST_LLM_TIMEOUT=120
-      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED:-true}
-      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL:-http://muninn:4000/v1}
+      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED}
+      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL}
       - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
-      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL:-memory-extract}
+      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL}
       - MNEMOSYNE_SKIP_CONTEXTS=flush,subagent,background,skill_loop
     networks:
       - aether-net
@@ -352,7 +352,7 @@ services:
         - "homepage.description=Hermes Agent Web UI"
 
   mnemosyne-dashboard:
-    image: ${REGISTRY_PREFIX}mnemosyne-dashboard:${STACK_NAME:-latest}
+    image: ${REGISTRY_PREFIX}mnemosyne-dashboard:${STACK_NAME}
     build:
       context: ./mnemosyne-dashboard
       dockerfile: Dockerfile
@@ -419,7 +419,7 @@ services:
           - node.role == manager
 
   odin-git-backup:
-    image: ${REGISTRY_PREFIX}odin-git-backup:${STACK_NAME:-latest}
+    image: ${REGISTRY_PREFIX}odin-git-backup:${STACK_NAME}
     build:
       context: ./git-backup
       dockerfile: Dockerfile

@@ -55,8 +55,9 @@ jobs:
 
       - name: Deploy Stack
         env:
+          STACK_NAME: odin
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
-          OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH }}
+          OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH || '/opt/atlas/vault' }}
           LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
           LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
           HERMES_SSH_KEY_NAME: ${{ env.HERMES_SSH_KEY_NAME }}
@@ -65,21 +66,26 @@ jobs:
           HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
+          DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID || vars.DISCORD_ALLOWED_USERS || '' }}
+          KANBAN_DISCORD_WEBHOOK_URL: ${{ secrets.KANBAN_DISCORD_WEBHOOK_URL || '' }}
+          KANBAN_DISCORD_CHANNEL_ID: ${{ secrets.KANBAN_DISCORD_CHANNEL_ID || vars.KANBAN_DISCORD_CHANNEL_ID || '' }}
           MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY || 'sk-muninn-insecure-master-key' }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
-          REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX }}
-          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED }}
-          MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL }}
-          MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || '' }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY || '' }}
+          API_SERVER_KEY: ${{ secrets.API_SERVER_KEY || 'insecure_default_key_change_me' }}
+          REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX || '' }}
+          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'true' }}
+          MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL || 'http://muninn:4000/v1' }}
+          MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL || 'memory-extract' }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || '' }}
           # Odin git backup
           ODIN_GIT_REPO_URL: ${{ vars.ODIN_GIT_REPO_URL }}
           ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || '' }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY || '' }}
+          TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
+          TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
           # Bearer token for the Kratos MCP endpoint, injected into the agent
           # container as MCP_KRATOS_API_KEY (see docker-compose.yml). Same value
           # as the kratos repo's KRATOS_MCP_TOKEN; kept as one named secret so
@@ -87,6 +93,8 @@ jobs:
           # cannot drift apart.
           MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
           HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
+          OLLAMA_NUM_THREADS: ${{ vars.OLLAMA_NUM_THREADS || '' }}
+          OLLAMA_CONTEXT_LENGTH: ${{ vars.OLLAMA_CONTEXT_LENGTH || env.OLLAMA_CONTEXT_LENGTH || '16384' }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
