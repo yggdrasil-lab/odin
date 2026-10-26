@@ -75,9 +75,22 @@ STATUS_COLORS = {
     "READY": 3447003,         # Blue
     "IN_PROGRESS": 15844351,  # Amber
     "RUNNING": 15844351,      # Amber
+    "REVIEW": 15105570,       # Orange
     "REVIEW_REQUIRED": 15105570, # Orange
     "DONE": 3066993,          # Green
     "BLOCKED": 15158332,      # Red
+}
+
+STATUS_CANONICAL = {
+    "todo": "todo",
+    "ready": "ready",
+    "running": "running",
+    "in_progress": "running",
+    "review": "review",
+    "review_required": "review",
+    "done": "done",
+    "completed": "done",
+    "blocked": "blocked",
 }
 
 
@@ -308,18 +321,19 @@ def create_kanban_task(
 
 def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     """Updates task status in kanban.db and notifies its assigned Discord thread."""
+    canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
 
     now = int(time.time())
     extra_clause = ""
-    if new_status.lower() == "in_progress":
+    if canonical_status == "running":
         extra_clause = ", started_at = ?"
-    elif new_status.lower() in ("done", "completed"):
+    elif canonical_status == "done":
         extra_clause = ", completed_at = ?"
 
     query = f"UPDATE tasks SET status = ?{extra_clause} WHERE id = ?"
-    params = [new_status, now, task_id] if extra_clause else [new_status, task_id]
+    params = [canonical_status, now, task_id] if extra_clause else [canonical_status, task_id]
     cursor.execute(query, params)
 
     cursor.execute(
