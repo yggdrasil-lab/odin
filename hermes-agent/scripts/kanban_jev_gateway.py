@@ -63,6 +63,7 @@ JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 DISCORD_WEBHOOK_URL = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
 DISCORD_CHANNEL_ID = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
 DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID", "")
+DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
 USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
 
 # Severity / Status colors for Discord embeds
@@ -227,7 +228,7 @@ def create_kanban_task(
     title: str,
     body: str,
     priority: int = 1,
-    assignee: str = "agent",
+    assignee: Optional[str] = None,
     workspace_kind: str = "scratch",
     notify_discord: bool = True,
 ) -> Tuple[str, Optional[str]]:
@@ -236,6 +237,7 @@ def create_kanban_task(
     Returns:
         (task_id, discord_thread_id)
     """
+    resolved_assignee = assignee or DEFAULT_ASSIGNEE
     short_id = uuid.uuid4().hex[:8]
     task_id = f"kb-{short_id}"
     full_title = f"[KB-{short_id}] {title}"
@@ -252,7 +254,7 @@ def create_kanban_task(
             created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences
         ) VALUES (?, ?, ?, ?, 'todo', ?, 'jev-gateway', ?, ?, 0, 0, 0)
         """,
-        (task_id, full_title, body, assignee, priority, now, workspace_kind),
+        (task_id, full_title, body, resolved_assignee, priority, now, workspace_kind),
     )
 
     # 2. Record created event
@@ -270,7 +272,7 @@ def create_kanban_task(
             fields = [
                 {"name": "Status", "value": "`TODO`", "inline": True},
                 {"name": "Priority", "value": f"`P{priority}`", "inline": True},
-                {"name": "Assignee", "value": f"`{assignee}`", "inline": True},
+                {"name": "Assignee", "value": f"`{resolved_assignee}`", "inline": True},
             ]
             thread_id = post_discord_thread(
                 title=full_title,
@@ -373,7 +375,7 @@ def triage_and_intake(event_text: str, title: Optional[str] = None, context: str
         title=title,
         body=event_text,
         priority=1,
-        assignee="agent",
+        assignee=DEFAULT_ASSIGNEE,
     )
 
     return {
@@ -424,7 +426,7 @@ def main():
     p_create.add_argument("--title", required=True, help="Task title")
     p_create.add_argument("--body", required=True, help="Task description")
     p_create.add_argument("--priority", type=int, default=1, help="Task priority (0-3)")
-    p_create.add_argument("--assignee", default="agent", help="Assignee profile")
+    p_create.add_argument("--assignee", default=DEFAULT_ASSIGNEE, help="Assignee profile")
 
     # Update command
     p_update = subparsers.add_parser("update", help="Update task lifecycle status and notify thread")
