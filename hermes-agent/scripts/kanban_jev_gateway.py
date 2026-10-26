@@ -5,7 +5,7 @@ Wires TypeSafe Jev System One decision gating through Muninn LiteLLM proxy
 to evaluate incoming alerts, triage items, and operational events. If deemed
 actionable, provisions a task in Hermes kanban.db and spins up an isolated
 thread in the Discord forum channel (one thread per card). Subsequent
-lifecycle events (in_progress, review_required, done) post directly into that thread.
+lifecycle events (in_progress, in_review, done) post directly into that thread.
 """
 
 from __future__ import annotations
@@ -61,12 +61,17 @@ def resolve_muninn_endpoint() -> str:
 
 
 MUNINN_API_URL = resolve_muninn_endpoint()
-MUNINN_API_KEY = os.environ.get("MUNINN_API_KEY") or os.environ.get("LITELLM_MASTER_KEY", "")
+MUNINN_API_KEY = (
+    os.environ.get("MUNINN_API_KEY")
+    or os.environ.get("MUNINN_MASTER_KEY")
+    or os.environ.get("OPENAI_API_KEY")
+    or os.environ.get("LITELLM_MASTER_KEY", "")
+)
 JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 
 DISCORD_WEBHOOK_URL = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
 DISCORD_CHANNEL_ID = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
-DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID", "")
+DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
 DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
 USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
 
@@ -76,8 +81,7 @@ STATUS_COLORS = {
     "READY": 3447003,         # Blue
     "IN_PROGRESS": 15844351,  # Amber
     "RUNNING": 15844351,      # Amber
-    "REVIEW": 15105570,       # Orange
-    "REVIEW_REQUIRED": 15105570, # Orange
+    "IN_REVIEW": 15105570,    # Orange
     "DONE": 3066993,          # Green
     "BLOCKED": 15158332,      # Red
     "DEBRIEF": 10181046,      # Purple
@@ -86,10 +90,9 @@ STATUS_COLORS = {
 STATUS_CANONICAL = {
     "todo": "todo",
     "ready": "ready",
-    "running": "running",
-    "in_progress": "running",
-    "review": "review",
-    "review_required": "review",
+    "running": "in_progress",
+    "in_progress": "in_progress",
+    "in_review": "in_review",
     "done": "done",
     "completed": "done",
     "blocked": "blocked",
@@ -211,6 +214,9 @@ def post_thread_lifecycle_update(thread_id: str, status: str, message: str, fiel
     color = STATUS_COLORS.get(status.upper(), 3447003)
 
     embed_fields = fields or []
+    canonical = STATUS_CANONICAL.get(status.lower(), status.lower())
+    mention = f"<@{DISCORD_USER_ID}> 🔔 Review Required" if (canonical == "in_review" and DISCORD_USER_ID) else ""
+
     payload = {
         "username": "Huginn Kanban",
         "embeds": [
@@ -224,6 +230,8 @@ def post_thread_lifecycle_update(thread_id: str, status: str, message: str, fiel
             }
         ],
     }
+    if mention:
+        payload["content"] = mention
 
     req = urllib.request.Request(
         url,
@@ -250,6 +258,7 @@ def post_thread_debrief(
     summary: str,
     frictions: Optional[str] = None,
     chore_task_id: Optional[str] = None,
+    pr_url: Optional[str] = None,
 ) -> bool:
     """Posts a structured Task Debrief embed directly into a Discord card thread."""
     if not DISCORD_WEBHOOK_URL:
@@ -259,9 +268,22 @@ def post_thread_debrief(
     url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
     color = STATUS_COLORS.get("DEBRIEF", 10181046)
 
+    # Auto-extract PR URL from summary if not explicitly provided
+    extracted_pr = pr_url
+    if not extracted_pr and ("github.com/" in summary and "/pull/" in summary):
+        import re
+        m = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
+        if m:
+            extracted_pr = m.group(0)
+
+    mention = f"<@{DISCORD_USER_ID}> 🔔 Pull Request Review Required: {extracted_pr}" if (extracted_pr and DISCORD_USER_ID) else ""
+
     fields = [
         {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
     ]
+
+    if extracted_pr:
+        fields.append({"name": "Pull Request", "value": f"[View on GitHub]({extracted_pr})", "inline": True})
 
     has_friction = bool(frictions and frictions.strip() and frictions.strip().lower() != "none")
     if has_friction:
@@ -285,6 +307,8 @@ def post_thread_debrief(
             }
         ],
     }
+    if mention:
+        payload["content"] = mention
 
     req = urllib.request.Request(
         url,
@@ -388,9 +412,20 @@ def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
 
+    cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        logger.warning("Task %s not found in kanban database", task_id)
+        conn.close()
+        return False
+    if row[0] == canonical_status:
+        logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
+        conn.close()
+        return True
+
     now = int(time.time())
     extra_clause = ""
-    if canonical_status == "running":
+    if canonical_status in ("running", "in_progress"):
         extra_clause = ", started_at = ?"
     elif canonical_status == "done":
         extra_clause = ", completed_at = ?"
@@ -436,6 +471,7 @@ def record_task_debrief(
     summary: str,
     frictions: Optional[str] = None,
     chore_title: Optional[str] = None,
+    pr_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Records a task debrief / retrospective receipt and optionally spawns a follow-up chore card."""
     conn = sqlite3.connect(KANBAN_DB_PATH)
@@ -450,10 +486,19 @@ def record_task_debrief(
         conn.close()
         raise ValueError(f"Task {task_id} not found in kanban database")
 
+    # Auto-extract PR URL from summary if not explicitly passed
+    extracted_pr = pr_url
+    if not extracted_pr and ("github.com/" in summary and "/pull/" in summary):
+        import re
+        m = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
+        if m:
+            extracted_pr = m.group(0)
+
     # 2. Record debrief event
     payload = {
         "summary": summary,
         "frictions": frictions or "None",
+        "pr_url": extracted_pr,
         "timestamp": now,
     }
     cursor.execute(
@@ -464,7 +509,12 @@ def record_task_debrief(
         (task_id, json.dumps(payload), now),
     )
 
-    # 3. If friction or chore_title is specified, auto-spawn a chore card
+    # 3. If a PR URL was produced, automatically transition task status to in_review
+    if extracted_pr:
+        cursor.execute("UPDATE tasks SET status = 'in_review' WHERE id = ?", (task_id,))
+        logger.info("Transitioned task %s to 'in_review' due to PR: %s", task_id, extracted_pr)
+
+    # 4. If friction or chore_title is specified, auto-spawn a chore card
     chore_id = None
     chore_thread_id = None
     if chore_title or (frictions and frictions.strip() and frictions.strip().lower() != "none"):
@@ -485,7 +535,7 @@ def record_task_debrief(
         conn = sqlite3.connect(KANBAN_DB_PATH)
         cursor = conn.cursor()
 
-    # 4. Find Discord thread subscription for parent task
+    # 5. Find Discord thread subscription for parent task
     cursor.execute(
         """
         SELECT thread_id FROM kanban_notify_subs
@@ -499,7 +549,7 @@ def record_task_debrief(
     conn.commit()
     conn.close()
 
-    # 5. Post Discord embed
+    # 6. Post Discord embed
     if thread_id:
         post_thread_debrief(
             thread_id=thread_id,
@@ -507,6 +557,7 @@ def record_task_debrief(
             summary=summary,
             frictions=frictions,
             chore_task_id=chore_id,
+            pr_url=extracted_pr,
         )
 
     return {
@@ -516,6 +567,7 @@ def record_task_debrief(
         "chore_id": chore_id,
         "chore_thread_id": chore_thread_id,
         "thread_id": thread_id,
+        "pr_url": extracted_pr,
     }
 
 
@@ -636,10 +688,11 @@ class KanbanGatewayHTTPHandler(BaseHTTPRequestHandler):
             summary = payload.get("summary", "")
             friction = payload.get("friction", "")
             chore_title = payload.get("chore_title", "")
+            pr_url = payload.get("pr_url", "")
             if not task_id or not summary:
                 self._send_json(400, {"error": "Missing task_id or summary"})
                 return
-            res = record_task_debrief(task_id, summary, frictions=friction, chore_title=chore_title)
+            res = record_task_debrief(task_id, summary, frictions=friction, chore_title=chore_title, pr_url=pr_url)
             self._send_json(200, res)
 
         elif self.path == "/update":
@@ -687,7 +740,7 @@ def main():
     # Update command
     p_update = subparsers.add_parser("update", help="Update task lifecycle status and notify thread")
     p_update.add_argument("--task-id", required=True, help="Task ID (e.g. kb-a1b2c3d4)")
-    p_update.add_argument("--status", required=True, choices=["todo", "ready", "running", "in_progress", "review_required", "done", "blocked"])
+    p_update.add_argument("--status", required=True, choices=["todo", "ready", "in_progress", "in_review", "done", "blocked"])
     p_update.add_argument("--message", required=True, help="Status update or progress message")
 
     # Debrief command
@@ -696,6 +749,7 @@ def main():
     p_debrief.add_argument("--summary", required=True, help="Summary of work delivered and testing")
     p_debrief.add_argument("--friction", default="", help="Frictions, tool errors, or failure modes encountered")
     p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up chore card")
+    p_debrief.add_argument("--pr-url", default="", help="Optional GitHub PR URL requiring review")
 
     # Serve command (HTTP API)
     p_serve = subparsers.add_parser("serve", help="Run HTTP API server for remote alert ingestion")
@@ -703,7 +757,7 @@ def main():
     p_serve.add_argument("--port", type=int, default=8643, help="HTTP server listen port (default: 8643)")
 
     # List command
-    subparsers.add_parser("list", help="List active Kanban cards and mapped threads")
+    subparsers.add_parser("list", aliases=["ls"], help="List active Kanban cards and mapped threads")
 
     args = parser.parse_args()
 
@@ -717,13 +771,13 @@ def main():
         update_task_lifecycle(args.task_id, args.status, args.message)
         print(f"Updated task {args.task_id} to status '{args.status}'")
     elif args.command == "debrief":
-        res = record_task_debrief(args.task_id, args.summary, frictions=args.friction, chore_title=args.chore_title)
+        res = record_task_debrief(args.task_id, args.summary, frictions=args.friction, chore_title=args.chore_title, pr_url=args.pr_url)
         print(f"Recorded debrief for {args.task_id}")
         if res.get("chore_id"):
             print(f"Auto-spawned friction chore card: {res['chore_id']}")
     elif args.command == "serve":
         run_http_server(host=args.host, port=args.port)
-    elif args.command == "list":
+    elif args.command in ("list", "ls"):
         list_active_tasks()
     else:
         parser.print_help()
