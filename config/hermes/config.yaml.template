@@ -285,7 +285,7 @@ plugins:
 mcp_servers:
   kratos:
     enabled: true
-    url: https://kratos.tienzo.net/mcp
+    url: https://kratos.${DOMAIN_NAME}/mcp
     headers:
       Authorization: Bearer ${env:MCP_KRATOS_API_KEY}
 
