@@ -35,8 +35,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jev-shim")
 
-TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
-DEFAULT_MODEL = "jev-latest"
+TYPESAFE_ENDPOINT = os.environ.get("TYPESAFE_ENDPOINT", "https://api.typesafe.ai/v1/systemone")
+DEFAULT_MODEL = os.environ.get("TYPESAFE_DEFAULT_MODEL", "jev-latest")
 
 
 def call_typesafe_systemone(
@@ -279,8 +279,10 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description="TypeSafe Jev OpenAI Translation Shim")
-    parser.add_argument("--host", default="0.0.0.0", help="Binding host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
+    default_host = os.environ.get("HOST", "0.0.0.0")
+    default_port = int(os.environ.get("PORT", "8000"))
+    parser.add_argument("--host", default=default_host, help=f"Binding host (default: {default_host})")
+    parser.add_argument("--port", type=int, default=default_port, help=f"Port to listen on (default: {default_port})")
     args = parser.parse_args()
 
     api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
