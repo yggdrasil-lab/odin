@@ -104,7 +104,7 @@ jobs:
           
           # Write config files and fix permissions on host directories (UID 1000, GID 1000)
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
-          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && for p in /opt/data/profiles/*; do [ -d \"\$p\" ] && cp /opt/data/config.yaml \"\$p/config.yaml\"; done && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
           
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
           chmod +x /tmp/deploy.sh
