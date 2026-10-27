@@ -69,9 +69,42 @@ MUNINN_API_KEY = (
 )
 JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 
-DISCORD_WEBHOOK_URL = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
-DISCORD_CHANNEL_ID = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
-DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
+def resolve_discord_env() -> Tuple[str, str, str]:
+    """Resolves Discord webhook credentials from process env or odin_huginn-gateway container."""
+    webhook = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
+    channel = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
+    uid = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
+    if webhook and channel and uid:
+        return webhook, channel, uid
+    try:
+        import subprocess
+        res = subprocess.run(
+            [
+                "docker",
+                "service",
+                "inspect",
+                "--format",
+                "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
+                "odin_huginn-gateway",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                if line.startswith("KANBAN_DISCORD_WEBHOOK_URL=") and not webhook:
+                    webhook = line.split("=", 1)[1]
+                elif line.startswith("KANBAN_DISCORD_CHANNEL_ID=") and not channel:
+                    channel = line.split("=", 1)[1]
+                elif line.startswith("DISCORD_USER_ID=") and not uid:
+                    uid = line.split("=", 1)[1]
+    except Exception:
+        pass
+    return webhook, channel, uid
+
+
+DISCORD_WEBHOOK_URL, DISCORD_CHANNEL_ID, DISCORD_USER_ID = resolve_discord_env()
 DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
 USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
 
