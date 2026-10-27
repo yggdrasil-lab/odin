@@ -87,11 +87,9 @@ jobs:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY || '' }}
           TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
           TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
-          # Bearer token for the Kratos MCP endpoint, injected into the agent
-          # container as MCP_KRATOS_API_KEY (see docker-compose.yml). Same value
-          # as the kratos repo's KRATOS_MCP_TOKEN; kept as one named secret so
-          # the server that issues the token and the client that presents it
-          # cannot drift apart.
+          # Bearer token for the Kratos MCP endpoint, injected from organization
+          # secret KRATOS_MCP_TOKEN.
+          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
           MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
           HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
           OLLAMA_NUM_THREADS: ${{ vars.OLLAMA_NUM_THREADS || '' }}

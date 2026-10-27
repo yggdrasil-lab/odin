@@ -287,7 +287,7 @@ mcp_servers:
     enabled: true
     url: https://kratos.${DOMAIN_NAME}/mcp
     headers:
-      Authorization: Bearer ${env:MCP_KRATOS_API_KEY}
+      Authorization: Bearer ${KRATOS_MCP_TOKEN}
   playwright:
     enabled: true
     url: http://poseidon_playwright:8931/sse
