@@ -222,11 +222,10 @@ services:
       - SEARXNG_URL=http://poseidon_searxng:8080
       - CAMOFOX_URL=http://poseidon_camofox:9377
       - TAVILY_API_KEY=${TAVILY_API_KEY}
-      # Bearer token for the Kratos MCP endpoint. Sourced from the same GitHub
-      # secret that provisions the server side (KRATOS_MCP_TOKEN); the value is
-      # never rendered to disk -- config.yaml carries ${env:MCP_KRATOS_API_KEY}
-      # and the agent resolves it from this process env at MCP-config load.
-      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY}
+      # Bearer token for the Kratos MCP endpoint. Sourced from the organization
+      # secret KRATOS_MCP_TOKEN.
+      - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
+      - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
       # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
       - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
@@ -304,12 +303,9 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       # Bearer token for the Kratos MCP endpoint, same value the gateway
-      # presents. The dashboard chat spawns `hermes --tui`, which loads the
-      # shared /opt/data/config.yaml mcp_servers block; without this env var the
-      # ${env:MCP_KRATOS_API_KEY} placeholder is left literal and Kratos tools
-      # fail closed with a 401. Sourced from the same secret as the gateway so
-      # client and server cannot drift.
-      - MCP_KRATOS_API_KEY=${MCP_KRATOS_API_KEY}
+      # presents. Sourced from the organization secret KRATOS_MCP_TOKEN.
+      - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
+      - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
       - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
       - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
       - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
