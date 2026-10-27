@@ -439,19 +439,114 @@ def create_kanban_task(
     return task_id, thread_id
 
 
+def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optional[str] = None) -> Optional[str]:
+    """Auto-spawns an autonomous session wrap-up chore when a dev or engineering task transitions to done."""
+    clean_title = orig_title.lower()
+    # Recursion guard: do not trigger wrap-up for wrap-up chores, friction chores, or triage tasks
+    if (
+        clean_title.startswith("wrap-up")
+        or clean_title.startswith("auto-sync")
+        or "address friction" in clean_title
+        or "session wrap-up" in clean_title
+    ):
+        logger.info("Skipping wrap-up trigger for maintenance/wrap-up task %s", task_id)
+        return None
+
+    # Retrieve debrief event payload (summary, frictions, pr_url) if present
+    pr_url = None
+    summary = ""
+    frictions = "None"
+    try:
+        conn = sqlite3.connect(KANBAN_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'debrief' ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            payload = json.loads(row[0])
+            pr_url = payload.get("pr_url")
+            summary = payload.get("summary", "")
+            frictions = payload.get("frictions", "None")
+        conn.close()
+    except Exception as e:
+        logger.warning("Failed to fetch debrief details for wrap-up trigger on %s: %s", task_id, e)
+
+    # Detect target stack if mentioned in title or PR URL
+    stack_name = ""
+    for known in ("poseidon", "odin", "kratos", "charon", "argus", "apollo", "mimir", "olympus", "hephaestus", "comics", "cerberus", "palworld"):
+        if known in clean_title or (pr_url and known in pr_url.lower()):
+            stack_name = known.capitalize()
+            break
+
+    stack_instruction = ""
+    if stack_name:
+        stack_instruction = (
+            f"- [ ] **Gate 2B (Canonical Domain Notes)**: Open and update `second-brain/Areas/90-Infrastructure/{stack_name}/{stack_name} Stack.md`:\n"
+            f"  - Add newly deployed services, ports, and volumes to the Services and Volumes tables.\n"
+            f"  - Update the Mermaid architecture diagram edges if communication flows changed.\n"
+            f"  - Add an entry under Historical Timeline (PR {pr_url or 'merged'}).\n"
+        )
+    else:
+        stack_instruction = (
+            "- [ ] **Gate 2B (Canonical Domain Notes)**: Inspect affected stack/repo and update its canonical domain note under `second-brain/Areas/90-Infrastructure/` if applicable.\n"
+        )
+
+    chore_title = f"Wrap-up: Session wrap-up and docs sync for {orig_title}"
+    chore_body = (
+        f"Automated post-completion session wrap-up for task `{task_id}`:\n\n"
+        f"**Origin PR:** {pr_url or 'N/A'}\n"
+        f"**Origin Summary:** {summary or orig_title}\n"
+        f"**Reported Frictions:** {frictions}\n\n"
+        f"Execute the full canonical wrap-up protocol (`.agents/skills/session-wrapup/SKILL.md`):\n\n"
+        f"### Protocol Execution Checklist:\n"
+        f"- [ ] **Gate 1 & Gate 2A (Auto Self-Improvement)**: Audit the reported frictions and execution trace. If any friction occurred, formulate a concrete hardening action and patch the corresponding skill under `/opt/odin/hermes/skills/` or rule under `.agents/rules/` to prevent recurrence.\n"
+        f"{stack_instruction}"
+        f"- [ ] **Gate 2C (Active Effort Audit)**: Check and update matching note in `second-brain/Efforts/` if linked to an active project.\n"
+        f"- [ ] **Gate 2D (Mnemosyne Memory)**: Query and record durable architectural facts via Mnemosyne tools or host CLI.\n"
+        f"- [ ] **Step 3 (Obsidian Daily Journal)**: Append a complete engineering session block into `second-brain/Journal/YYYY/MM/YYYY-MM-DD.md` (respecting the 06:00 Auckland sleep boundary). Include Dashboard, Narrative, Retrospective table (Friction / Root Cause / Hardening Action), and Next Session Handoff.\n"
+        f"- [ ] **Step 4 (Readiness Probe & Cleanup)**: Run `python3 /opt/odin/hermes/skills/productivity/session-wrapup/scripts/check_wrapup_readiness.py` to verify formatting, structure, and zero em/en dashes.\n"
+        f"- [ ] **Completion**: Run `kanban-gateway debrief <THIS_TASK_ID> --summary \"Session wrap-up complete for {task_id}\"` and call `kanban_complete`.\n"
+    )
+
+    try:
+        chore_id, chore_thread_id = create_kanban_task(
+            title=chore_title,
+            body=chore_body,
+            priority=1,
+            assignee=DEFAULT_ASSIGNEE,
+        )
+        logger.info("Auto-spawned session wrap-up chore %s for completed task %s", chore_id, task_id)
+
+        if thread_id:
+            post_thread_lifecycle_update(
+                thread_id=thread_id,
+                status="wrapup_triggered",
+                message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`swarm-worker`) to sync infrastructure notes, journal, and self-improvement hardening.",
+            )
+        return chore_id
+    except Exception as e:
+        logger.error("Failed to auto-spawn session wrap-up chore for %s: %s", task_id, e)
+        return None
+
+
 def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     """Updates task status in kanban.db and notifies its assigned Discord thread."""
     canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+    cursor.execute("SELECT status, title FROM tasks WHERE id = ?", (task_id,))
     row = cursor.fetchone()
     if not row:
         logger.warning("Task %s not found in kanban database", task_id)
         conn.close()
         return False
-    if row[0] == canonical_status:
+    current_status = row[0]
+    task_title = row[1] if len(row) > 1 and row[1] else ""
+
+    if current_status == canonical_status:
         logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
         conn.close()
         return True
@@ -495,6 +590,10 @@ def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
             {"name": "New Status", "value": f"`{new_status.upper()}`", "inline": True},
         ]
         post_thread_lifecycle_update(thread_id, new_status, message, fields=fields)
+
+    # Auto-trigger full autonomous session wrap-up when a task transitions to done
+    if canonical_status == "done":
+        trigger_session_wrapup_chore(task_id, task_title, thread_id)
 
     return True
 
