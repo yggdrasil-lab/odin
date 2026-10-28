@@ -12,11 +12,9 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      # Main agent loop runs on the Antigravity subscription first (fixed monthly
-      # fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, Gemini 4
-      # Argon, and finally DeepSeek V4-Flash via muninn. This must name a model
-      # the agy plugin exposes (gemini-3.8-flash-high, claude-sonnet-5-5-high, ...),
-      # NOT a muninn alias like `agent-loop`.
+      # Main agent loop runs on the Antigravity subscription (fixed monthly
+      # fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, and
+      # then Gemini 4 Argon. Paid DeepSeek models are excluded.
       AGENT_MODEL: gemini-3.8-flash-high
       CHAT_MODEL: local-model:latest
     
@@ -75,7 +73,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY || '' }}
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY || 'insecure_default_key_change_me' }}
           REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX || '' }}
-          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'true' }}
+          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'false' }}
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL || 'http://muninn:4000/v1' }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL || 'memory-extract' }}
           GH_TOKEN: ${{ secrets.GH_TOKEN || '' }}
@@ -102,9 +100,9 @@ jobs:
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
-          # Write config files and fix permissions on host directories (UID 1000, GID 1000)
+          # Write config files and preserve strict private-node permissions on control sockets/locks/SSH keys
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
-          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && for p in /opt/data/profiles/*; do [ -d \"\$p\" ] && cp /opt/data/config.yaml \"\$p/config.yaml\"; done && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chmod 644 /opt/data/config.yaml && for p in /opt/data/profiles/*; do [ -d \"\$p\" ] && cp /opt/data/config.yaml \"\$p/config.yaml\" && chmod 644 \"\$p/config.yaml\" && chmod 755 \"\$p\"; done && chown -R 1000:1000 /opt/data && chmod 755 /opt/data /opt/data/profiles 2>/dev/null || true && chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true" < config/hermes/config.yaml
           
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
           chmod +x /tmp/deploy.sh

@@ -49,6 +49,12 @@ def create_kanban_task(
     if complexity["tier"] == "human_pairing" and not assignee:
         resolved_assignee = "raymund"
 
+    model_override = None
+    provider_override = None
+    if complexity["tier"] in ("frontier_deep", "flash_fast"):
+        model_override = complexity["recommended_model"]
+        provider_override = "antigravity-subscription-directsdk"
+
     short_id = uuid.uuid4().hex[:8]
     task_id = f"kb-{short_id}"
     full_title = f"[KB-{short_id}] {title}"
@@ -62,10 +68,21 @@ def create_kanban_task(
         """
         INSERT INTO tasks (
             id, title, body, assignee, status, priority, created_by,
-            created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences
-        ) VALUES (?, ?, ?, ?, 'ready', ?, 'jev-gateway', ?, ?, 0, 0, 0)
+            created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences,
+            model_override, provider_override
+        ) VALUES (?, ?, ?, ?, 'ready', ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)
         """,
-        (task_id, full_title, body, resolved_assignee, priority, now, workspace_kind),
+        (
+            task_id,
+            full_title,
+            body,
+            resolved_assignee,
+            priority,
+            now,
+            workspace_kind,
+            model_override,
+            provider_override,
+        ),
     )
 
     # 2. Record created event
