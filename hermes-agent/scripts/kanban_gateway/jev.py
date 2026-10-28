@@ -88,8 +88,8 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
         '      "type": "choice",\n'
         '      "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",\n'
         '      "criteria": {\n'
-        '        "flash_fast": "Routine chores, documentation updates, typo fixes, script parameter tweaks, lint errors, minor path adjustments. Suitable for fast, cheap models (DeepSeek Flash / Gemini Flash).",\n'
-        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, multi-step refactoring, or critical reliability fixes. Requires frontier reasoning models (Claude 3.7 / Gemini 2.5 Pro).",\n'
+        '        "flash_fast": "Routine chores, documentation updates, typo fixes, script parameter tweaks, lint errors, minor path adjustments. Suitable for fast subscription models (gemini-3.8-flash-high).",\n'
+        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, multi-step refactoring, or critical reliability fixes. Requires frontier reasoning models (gemini-4-argon-high).",\n'
         '        "human_pairing": "Architectural forks, destructive deletions, subjective product decisions, or fundamental infrastructure trade-offs requiring pairing with Raymund."\n'
         "      }\n"
         "    }\n"
@@ -100,16 +100,16 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
     content, elapsed = call_jev_raw(system_prompt, f"Task Title: {title}\n\nTask Description:\n{body}")
     content_lower = content.lower()
     tier = "flash_fast"
-    recommended_model = "deepseek-v4-flash"
+    recommended_model = "gemini-3.8-flash-high"
     if "human_pairing" in content_lower:
         tier = "human_pairing"
         recommended_model = "human/raymund"
     elif "frontier_deep" in content_lower:
         tier = "frontier_deep"
-        recommended_model = "deepseek-v4-pro"
+        recommended_model = "gemini-4-argon-high"
     elif "flash_fast" in content_lower:
         tier = "flash_fast"
-        recommended_model = "deepseek-v4-flash"
+        recommended_model = "gemini-3.8-flash-high"
 
     logger.info("Jev System One task complexity in %.2fs -> Tier: %s (%s)", elapsed, tier, recommended_model)
     return {

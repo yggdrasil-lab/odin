@@ -12,11 +12,10 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      # Main agent loop runs on the Antigravity subscription first (fixed monthly
-      # fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, Gemini 4
-      # Argon, and finally DeepSeek V4-Flash via muninn. This must name a model
-      # the agy plugin exposes (gemini-3.8-flash-high, claude-sonnet-5-5-high, ...),
-      # NOT a muninn alias like `agent-loop`.
+      # Main agent loop runs on the flat-rate Antigravity subscription first,
+      # starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then
+      # Gemini 4 Argon, and falling back to DeepSeek via muninn only when all
+      # three flat-rate subscription pools are exhausted.
       AGENT_MODEL: gemini-3.8-flash-high
       CHAT_MODEL: local-model:latest
     
@@ -102,9 +101,9 @@ jobs:
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           
-          # Write config files and fix permissions on host directories (UID 1000, GID 1000)
+          # Write config files and preserve strict private-node permissions on control sockets/locks/SSH keys
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
-          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && for p in /opt/data/profiles/*; do [ -d \"\$p\" ] && cp /opt/data/config.yaml \"\$p/config.yaml\"; done && chown -R 1000:1000 /opt/data && chmod -R 775 /opt/data && chmod 664 /opt/data/config.yaml" < config/hermes/config.yaml
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data && cat > /opt/data/config.yaml && chmod 644 /opt/data/config.yaml && for p in /opt/data/profiles/*; do [ -d \"\$p\" ] && cp /opt/data/config.yaml \"\$p/config.yaml\" && chmod 644 \"\$p/config.yaml\" && chmod 755 \"\$p\"; done && chown -R 1000:1000 /opt/data && chmod 755 /opt/data /opt/data/profiles 2>/dev/null || true && chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true" < config/hermes/config.yaml
           
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
           chmod +x /tmp/deploy.sh

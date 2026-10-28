@@ -111,5 +111,9 @@ else
     /usr/local/bin/kanban-gateway serve --host 0.0.0.0 --port 8643 &
   fi
 
+  # 7. Ensure profile directories and control files satisfy Hermes private-node checks
+  chmod 755 /opt/data /opt/data/profiles /opt/data/profiles/* 2>/dev/null || true
+  chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true
+
   exec /opt/hermes/.venv/bin/hermes gateway run
 fi

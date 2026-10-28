@@ -38,13 +38,22 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression rides the Antigravity subscription first to eliminate per-token API costs,
-    # falling back to DeepSeek V4-Flash / Gemini on muninn only if subscription limits are reached.
+    # Compression rides all three flat-rate Antigravity subscription pools first
+    # (Gemini 3.8 Flash -> Claude Sonnet 5.5 -> Gemini 4 Argon), falling back to
+    # Muninn (compress) only if all subscription pools are exhausted.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"
     context_length: 200000
     timeout: 120
     fallback_providers:
+      - provider: "antigravity-subscription-directsdk"
+        model: "claude-sonnet-5-5-high"
+        context_length: 200000
+        timeout: 120
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-argon-high"
+        context_length: 200000
+        timeout: 120
       - provider: "custom"
         model: "compress"
         base_url: "http://muninn:4000/v1"
@@ -53,8 +62,8 @@ auxiliary:
         timeout: 60
 
   memory:
-    # Mnemosyne memory consolidation and structured fact extraction ride the Antigravity subscription
-    # first via the agy CLI, following the exact same fallback chain as the main agent loop.
+    # Mnemosyne memory consolidation and structured fact extraction ride all three flat-rate
+    # Antigravity subscription pools first, falling back to Muninn only on full quota exhaustion.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"
     timeout: 120
@@ -70,11 +79,15 @@ auxiliary:
     fallback_providers: *memory_fallbacks
 
   background_review:
-    # Background skill reviews ride the Antigravity subscription,
-    # falling back to DeepSeek V4-Flash on muninn only if subscription limits are reached.
+    # Background skill reviews rotate through all three flat-rate Antigravity subscription
+    # pools first, falling back to DeepSeek V4-Flash on muninn only if all subscription pools are exhausted.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"
     fallback_providers:
+      - provider: "antigravity-subscription-directsdk"
+        model: "claude-sonnet-5-5-high"
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-argon-high"
       - provider: "custom"
         model: "agent-loop"
         base_url: "http://muninn:4000/v1"
@@ -99,12 +112,9 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The main conversation loop runs on the Antigravity subscription first (fixed monthly
-# fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then to Gemini 4 Argon,
-# and finally to DeepSeek V4-Flash on muninn when all subscription quotas are reached. Hermes
-# classifies agy's "usage_limit_reached" / "gousagelimit" wall as a
-# non-retryable rate_limit/billing verdict and rotates the chain eagerly.
-# DeepSeek V4-Flash alias on muninn: agent-loop.
+# The main conversation loop runs on the flat-rate Antigravity subscription first,
+# starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then to Gemini 4 Argon,
+# and finally to DeepSeek V4-Flash on muninn only when all three subscription quotas are exhausted.
 fallback_providers:
   - provider: "antigravity-subscription-directsdk"
     model: "claude-sonnet-5-5-high"
@@ -119,14 +129,12 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run on the Antigravity subscription via the agy CLI (fixed
-  # monthly fee), starting with Gemini 4 Argon for high-reasoning agentic coding and
-  # complex task execution, then rotating through the subscription quotas (Claude
-  # Sonnet 5.5 -> Gemini 3.8 Flash) before falling back to DeepSeek V4-Flash through muninn.
+  # Delegated subagents and complex tasks run on the flat-rate Antigravity subscription
+  # via the agy CLI, starting with Gemini 4 Argon for high-reasoning agentic coding,
+  # then rotating through Claude Sonnet 5.5 and Gemini 3.8 Flash before falling back to
+  # DeepSeek on muninn only when all three flat-rate pools are exhausted.
   provider: "antigravity-subscription-directsdk"
   model: "gemini-4-argon-high"
-  # A pinned delegation block never inherits the parent's fallback chain, so this
-  # leg must be declared here.
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
       model: "claude-sonnet-5-5-high"
