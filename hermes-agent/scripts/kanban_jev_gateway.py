@@ -1,855 +1,53 @@
 #!/usr/bin/env python3
-"""kanban_jev_gateway.py - Jev Decision Gating & Discord Threaded Kanban Gateway.
+"""kanban_jev_gateway.py - CLI Entrypoint for Jev Decision Gating & Discord Threaded Kanban Gateway.
 
-Wires TypeSafe Jev System One decision gating through Muninn LiteLLM proxy
-to evaluate incoming alerts, triage items, and operational events. If deemed
-actionable, provisions a task in Hermes kanban.db and spins up an isolated
-thread in the Discord forum channel (one thread per card). Subsequent
-lifecycle events (in_progress, in_review, done) post directly into that thread.
+Thin orchestrator for the modular `kanban_gateway` package.
+Provides backward-compatible CLI commands and re-exports public API symbols.
 """
 
 from __future__ import annotations
 
 import argparse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import logging
 import os
-import sqlite3
 import sys
-import time
-import urllib.error
-import urllib.request
-import uuid
-from typing import Any, Dict, Optional, Tuple
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] [kanban-gateway] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+# Ensure kanban_gateway package directory is importable regardless of CWD or invocation path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from kanban_gateway import (
+    DEFAULT_ASSIGNEE,
+    DISCORD_CHANNEL_ID,
+    DISCORD_USER_ID,
+    DISCORD_WEBHOOK_URL,
+    JEV_MODEL,
+    KANBAN_DB_PATH,
+    MUNINN_API_KEY,
+    MUNINN_API_URL,
+    STATUS_CANONICAL,
+    STATUS_COLORS,
+    USER_AGENT,
+    KanbanGatewayHTTPHandler,
+    call_jev_raw,
+    create_kanban_task,
+    evaluate_auto_merge_safety,
+    evaluate_debrief_acceptance,
+    evaluate_friction_actionability,
+    evaluate_jev_actionability,
+    evaluate_task_complexity,
+    list_active_tasks,
+    logger,
+    post_discord_thread,
+    post_thread_debrief,
+    post_thread_lifecycle_update,
+    record_task_debrief,
+    resolve_discord_env,
+    resolve_muninn_endpoint,
+    run_http_server,
+    triage_and_intake,
+    trigger_session_wrapup_chore,
+    update_task_lifecycle,
 )
-logger = logging.getLogger("kanban-gateway")
-
-# Configuration Defaults (injected via environment variables / secrets)
-KANBAN_DB_PATH = os.environ.get(
-    "KANBAN_DB_PATH",
-    "/opt/data/kanban.db" if os.path.exists("/opt/data/kanban.db") else "/opt/odin/hermes/kanban.db",
-)
-DOMAIN_NAME = os.environ.get("DOMAIN_NAME", "")
-
-
-def resolve_muninn_endpoint() -> str:
-    """Prioritizes internal Docker Swarm overlay network (zero public exposure).
-
-    In-container (Hermes, workers, cron): resolves 'muninn' via Docker embedded DNS -> http://muninn:4000/v1.
-    Host execution (Antigravity/CLI): falls back to DOMAIN_NAME if internal DNS is unavailable.
-    """
-    if os.environ.get("MUNINN_API_URL"):
-        return os.environ["MUNINN_API_URL"]
-
-    try:
-        import socket
-        socket.gethostbyname("muninn")
-        return "http://muninn:4000/v1/chat/completions"
-    except Exception:
-        pass
-
-    if DOMAIN_NAME:
-        return f"https://muninn.{DOMAIN_NAME}/v1/chat/completions"
-
-    return "http://muninn:4000/v1/chat/completions"
-
-
-MUNINN_API_URL = resolve_muninn_endpoint()
-MUNINN_API_KEY = (
-    os.environ.get("MUNINN_API_KEY")
-    or os.environ.get("MUNINN_MASTER_KEY")
-    or os.environ.get("OPENAI_API_KEY")
-    or os.environ.get("LITELLM_MASTER_KEY", "")
-)
-JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
-
-def resolve_discord_env() -> Tuple[str, str, str]:
-    """Resolves Discord webhook credentials from process env or odin_huginn-gateway container."""
-    webhook = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
-    channel = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
-    uid = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
-    if webhook and channel and uid:
-        return webhook, channel, uid
-    try:
-        import subprocess
-        res = subprocess.run(
-            [
-                "docker",
-                "service",
-                "inspect",
-                "--format",
-                "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
-                "odin_huginn-gateway",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                if line.startswith("KANBAN_DISCORD_WEBHOOK_URL=") and not webhook:
-                    webhook = line.split("=", 1)[1]
-                elif line.startswith("KANBAN_DISCORD_CHANNEL_ID=") and not channel:
-                    channel = line.split("=", 1)[1]
-                elif line.startswith("DISCORD_USER_ID=") and not uid:
-                    uid = line.split("=", 1)[1]
-    except Exception:
-        pass
-    return webhook, channel, uid
-
-
-DISCORD_WEBHOOK_URL, DISCORD_CHANNEL_ID, DISCORD_USER_ID = resolve_discord_env()
-DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
-USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
-
-# Severity / Status colors for Discord embeds
-STATUS_COLORS = {
-    "TODO": 3447003,          # Blue
-    "READY": 3447003,         # Blue
-    "IN_PROGRESS": 15844351,  # Amber
-    "RUNNING": 15844351,      # Amber
-    "IN_REVIEW": 15105570,    # Orange
-    "DONE": 3066993,          # Green
-    "BLOCKED": 15158332,      # Red
-    "DEBRIEF": 10181046,      # Purple
-}
-
-STATUS_CANONICAL = {
-    "todo": "todo",
-    "ready": "ready",
-    "running": "in_progress",
-    "in_progress": "in_progress",
-    "in_review": "in_review",
-    "done": "done",
-    "completed": "done",
-    "blocked": "blocked",
-}
-
-
-def evaluate_jev_actionability(event_text: str, context: str = "") -> Tuple[bool, float, str]:
-    """Evaluates whether an event requires multi-step engineering follow-up via Muninn Jev.
-
-    Returns:
-        (is_actionable, latency_seconds, raw_verdict)
-    """
-    system_prompt = (
-        "Evaluate whether the following operational event, incident, or triage item "
-        "represents an actionable engineering task requiring Kanban tracking and asynchronous "
-        "worker execution. Answer 'true' if it is an actionable multi-step task, bugfix, "
-        "infrastructure repair, or maintenance job. Answer 'false' if it is routine telemetry, "
-        "a transient health ping, a one-off query, or non-actionable noise."
-    )
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-    ]
-    if context:
-        messages.append({"role": "user", "content": f"Context:\n{context}"})
-    messages.append({"role": "user", "content": f"Event to evaluate:\n{event_text}"})
-
-    payload = {
-        "model": JEV_MODEL,
-        "messages": messages,
-        "temperature": 0.0,
-    }
-
-    if not MUNINN_API_KEY:
-        logger.error("MUNINN_API_KEY (or LITELLM_MASTER_KEY) is not set in environment.")
-        return True, 0.0, "fallback_error: missing_muninn_api_key"
-
-    req = urllib.request.Request(
-        MUNINN_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {MUNINN_API_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
-
-    start = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            elapsed = time.time() - start
-            body = json.loads(resp.read().decode("utf-8"))
-            content = body["choices"][0]["message"]["content"].strip().lower()
-            is_actionable = "true" in content
-            logger.info(
-                "Jev System One evaluated event in %.2fs -> Actionable: %s (Raw: '%s')",
-                elapsed,
-                is_actionable,
-                content,
-            )
-            return is_actionable, elapsed, content
-    except Exception as e:
-        elapsed = time.time() - start
-        logger.error("Jev evaluation failed through Muninn (%s): %s", MUNINN_API_URL, e)
-        # Safe fallback: if Jev is unreachable, do not silently lose potentially critical alerts
-        return True, elapsed, f"fallback_error: {e}"
-
-
-def post_discord_thread(title: str, thread_name: str, description: str, fields: Optional[list] = None) -> str:
-    """Creates a new topic thread in the Discord forum channel via webhook."""
-    if not DISCORD_WEBHOOK_URL:
-        raise ValueError("KANBAN_DISCORD_WEBHOOK_URL is not set in environment.")
-
-    url = f"{DISCORD_WEBHOOK_URL}?wait=true"
-
-    embed_fields = fields or []
-    mention = f"<@{DISCORD_USER_ID}>" if DISCORD_USER_ID else ""
-    payload = {
-        "username": "Huginn Kanban",
-        "thread_name": thread_name,
-        "content": mention,
-        "embeds": [
-            {
-                "title": f"📋 {title}",
-                "color": STATUS_COLORS["TODO"],
-                "description": description,
-                "fields": embed_fields,
-                "footer": {"text": "Yggdrasil Kanban · One Thread Per Card"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
-    }
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
-
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        res = json.loads(resp.read().decode("utf-8"))
-        thread_id = str(res.get("channel_id") or res.get("id"))
-        logger.info("Created Discord forum thread '%s' (ID: %s)", thread_name, thread_id)
-        return thread_id
-
-
-def post_thread_lifecycle_update(thread_id: str, status: str, message: str, fields: Optional[list] = None) -> bool:
-    """Posts a status or progress update directly into an existing Discord card thread."""
-    if not DISCORD_WEBHOOK_URL:
-        logger.warning("KANBAN_DISCORD_WEBHOOK_URL is not set; skipping Discord thread update.")
-        return False
-
-    url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
-    color = STATUS_COLORS.get(status.upper(), 3447003)
-
-    embed_fields = fields or []
-    canonical = STATUS_CANONICAL.get(status.lower(), status.lower())
-    mention = f"<@{DISCORD_USER_ID}> 🔔 Review Required" if (canonical == "in_review" and DISCORD_USER_ID) else ""
-
-    payload = {
-        "username": "Huginn Kanban",
-        "embeds": [
-            {
-                "title": f"🔄 Task Lifecycle: {status.upper()}",
-                "color": color,
-                "description": message,
-                "fields": embed_fields,
-                "footer": {"text": f"Thread ID: {thread_id}"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
-    }
-    if mention:
-        payload["content"] = mention
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            logger.info("Posted update '%s' to thread %s (HTTP %d)", status, thread_id, resp.status)
-            return True
-    except Exception as e:
-        logger.error("Failed posting update to thread %s: %s", thread_id, e)
-        return False
-
-
-def post_thread_debrief(
-    thread_id: str,
-    task_id: str,
-    summary: str,
-    frictions: Optional[str] = None,
-    chore_task_id: Optional[str] = None,
-    pr_url: Optional[str] = None,
-) -> bool:
-    """Posts a structured Task Debrief embed directly into a Discord card thread."""
-    if not DISCORD_WEBHOOK_URL:
-        logger.warning("KANBAN_DISCORD_WEBHOOK_URL is not set; skipping Discord thread update.")
-        return False
-
-    url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
-    color = STATUS_COLORS.get("DEBRIEF", 10181046)
-
-    # Auto-extract PR URL from summary if not explicitly provided
-    extracted_pr = pr_url
-    if not extracted_pr and ("github.com/" in summary and "/pull/" in summary):
-        import re
-        m = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
-        if m:
-            extracted_pr = m.group(0)
-
-    mention = f"<@{DISCORD_USER_ID}> 🔔 Pull Request Review Required: {extracted_pr}" if (extracted_pr and DISCORD_USER_ID) else ""
-
-    fields = [
-        {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
-    ]
-
-    if extracted_pr:
-        fields.append({"name": "Pull Request", "value": f"[View on GitHub]({extracted_pr})", "inline": True})
-
-    has_friction = bool(frictions and frictions.strip() and frictions.strip().lower() != "none")
-    if has_friction:
-        fields.append({"name": "Frictions / Learnings", "value": frictions[:1024], "inline": False})
-    else:
-        fields.append({"name": "Execution Quality", "value": "Clean execution (zero frictions recorded)", "inline": False})
-
-    if chore_task_id:
-        fields.append({"name": "Auto-Spawned Chore", "value": f"`{chore_task_id}` (enqueued to backlog)", "inline": True})
-
-    payload = {
-        "username": "Huginn Kanban",
-        "embeds": [
-            {
-                "title": "Task Debrief & Retrospective",
-                "color": color,
-                "description": summary,
-                "fields": fields,
-                "footer": {"text": f"Thread ID: {thread_id} • Continuous Improvement"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
-    }
-    if mention:
-        payload["content"] = mention
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            logger.info("Posted debrief for %s to thread %s (HTTP %d)", task_id, thread_id, resp.status)
-            return True
-    except Exception as e:
-        logger.error("Failed posting debrief for %s to thread %s: %s", task_id, thread_id, e)
-        return False
-
-
-def create_kanban_task(
-    title: str,
-    body: str,
-    priority: int = 1,
-    assignee: Optional[str] = None,
-    workspace_kind: str = "scratch",
-    notify_discord: bool = True,
-) -> Tuple[str, Optional[str]]:
-    """Inserts a new task into kanban.db and provisions its Discord thread subscription.
-
-    Returns:
-        (task_id, discord_thread_id)
-    """
-    resolved_assignee = assignee or DEFAULT_ASSIGNEE
-    short_id = uuid.uuid4().hex[:8]
-    task_id = f"kb-{short_id}"
-    full_title = f"[KB-{short_id}] {title}"
-    now = int(time.time())
-
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    # 1. Insert into tasks
-    cursor.execute(
-        """
-        INSERT INTO tasks (
-            id, title, body, assignee, status, priority, created_by,
-            created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences
-        ) VALUES (?, ?, ?, ?, 'ready', ?, 'jev-gateway', ?, ?, 0, 0, 0)
-        """,
-        (task_id, full_title, body, resolved_assignee, priority, now, workspace_kind),
-    )
-
-    # 2. Record created event
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'created', ?, ?)
-        """,
-        (task_id, json.dumps({"source": "jev-gateway", "title": full_title}), now),
-    )
-
-    thread_id = None
-    if notify_discord and DISCORD_WEBHOOK_URL:
-        try:
-            fields = [
-                {"name": "Status", "value": "`READY`", "inline": True},
-                {"name": "Priority", "value": f"`P{priority}`", "inline": True},
-                {"name": "Assignee", "value": f"`{resolved_assignee}`", "inline": True},
-            ]
-            thread_id = post_discord_thread(
-                title=full_title,
-                thread_name=full_title,
-                description=body,
-                fields=fields,
-            )
-
-            # 3. Store notification subscription in kanban_notify_subs
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO kanban_notify_subs (
-                    task_id, platform, chat_id, thread_id, user_id, notifier_profile,
-                    created_at, last_event_id, delivery_mode
-                ) VALUES (?, 'discord', ?, ?, ?, 'kanban-gateway', ?, 0, 'notify')
-                """,
-                (task_id, DISCORD_CHANNEL_ID, thread_id, DISCORD_USER_ID, now),
-            )
-        except Exception as e:
-            logger.error("Failed to provision Discord thread for %s: %s", task_id, e)
-
-    conn.commit()
-    conn.close()
-
-    logger.info("Created Kanban task %s (Discord Thread: %s)", task_id, thread_id)
-    return task_id, thread_id
-
-
-def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optional[str] = None) -> Optional[str]:
-    """Auto-spawns an autonomous session wrap-up chore when a dev or engineering task transitions to done."""
-    clean_title = orig_title.lower()
-    # Recursion guard: do not trigger wrap-up for wrap-up chores, friction chores, or triage tasks
-    if (
-        clean_title.startswith("wrap-up")
-        or clean_title.startswith("auto-sync")
-        or "address friction" in clean_title
-        or "session wrap-up" in clean_title
-    ):
-        logger.info("Skipping wrap-up trigger for maintenance/wrap-up task %s", task_id)
-        return None
-
-    # Retrieve debrief event payload (summary, frictions, pr_url) if present
-    pr_url = None
-    summary = ""
-    frictions = "None"
-    try:
-        conn = sqlite3.connect(KANBAN_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'debrief' ORDER BY id DESC LIMIT 1",
-            (task_id,),
-        )
-        row = cursor.fetchone()
-        if row and row[0]:
-            payload = json.loads(row[0])
-            pr_url = payload.get("pr_url")
-            summary = payload.get("summary", "")
-            frictions = payload.get("frictions", "None")
-        conn.close()
-    except Exception as e:
-        logger.warning("Failed to fetch debrief details for wrap-up trigger on %s: %s", task_id, e)
-
-    # Detect target stack if mentioned in title or PR URL
-    stack_name = ""
-    for known in ("poseidon", "odin", "kratos", "charon", "argus", "apollo", "mimir", "olympus", "hephaestus", "comics", "cerberus", "palworld"):
-        if known in clean_title or (pr_url and known in pr_url.lower()):
-            stack_name = known.capitalize()
-            break
-
-    stack_instruction = ""
-    if stack_name:
-        stack_instruction = (
-            f"- [ ] **Gate 2B (Canonical Domain Notes)**: Open and update `second-brain/Areas/90-Infrastructure/{stack_name}/{stack_name} Stack.md`:\n"
-            f"  - Add newly deployed services, ports, and volumes to the Services and Volumes tables.\n"
-            f"  - Update the Mermaid architecture diagram edges if communication flows changed.\n"
-            f"  - Add an entry under Historical Timeline (PR {pr_url or 'merged'}).\n"
-        )
-    else:
-        stack_instruction = (
-            "- [ ] **Gate 2B (Canonical Domain Notes)**: Inspect affected stack/repo and update its canonical domain note under `second-brain/Areas/90-Infrastructure/` if applicable.\n"
-        )
-
-    chore_title = f"Wrap-up: Session wrap-up and docs sync for {orig_title}"
-    chore_body = (
-        f"Automated post-completion session wrap-up for task `{task_id}`:\n\n"
-        f"**Origin PR:** {pr_url or 'N/A'}\n"
-        f"**Origin Summary:** {summary or orig_title}\n"
-        f"**Reported Frictions:** {frictions}\n\n"
-        f"Execute the full canonical wrap-up protocol (`.agents/skills/session-wrapup/SKILL.md`):\n\n"
-        f"### Protocol Execution Checklist:\n"
-        f"- [ ] **Gate 1 & Gate 2A (Auto Self-Improvement)**: Audit the reported frictions and execution trace. If any friction occurred, formulate a concrete hardening action and patch the corresponding skill under `/opt/odin/hermes/skills/` or rule under `.agents/rules/` to prevent recurrence.\n"
-        f"{stack_instruction}"
-        f"- [ ] **Gate 2C (Active Effort Audit)**: Check and update matching note in `second-brain/Efforts/` if linked to an active project.\n"
-        f"- [ ] **Gate 2D (Mnemosyne Memory)**: Query and record durable architectural facts via Mnemosyne tools or host CLI.\n"
-        f"- [ ] **Step 3 (Obsidian Daily Journal)**: Append a complete engineering session block into `second-brain/Journal/YYYY/MM/YYYY-MM-DD.md` (respecting the 06:00 Auckland sleep boundary). Include Dashboard, Narrative, Retrospective table (Friction / Root Cause / Hardening Action), and Next Session Handoff.\n"
-        f"- [ ] **Step 4 (Readiness Probe & Cleanup)**: Run `python3 /opt/odin/hermes/skills/productivity/session-wrapup/scripts/check_wrapup_readiness.py` to verify formatting, structure, and zero em/en dashes.\n"
-        f"- [ ] **Completion**: Run `kanban-gateway debrief <THIS_TASK_ID> --summary \"Session wrap-up complete for {task_id}\"` and call `kanban_complete`.\n"
-    )
-
-    try:
-        chore_id, chore_thread_id = create_kanban_task(
-            title=chore_title,
-            body=chore_body,
-            priority=1,
-            assignee=DEFAULT_ASSIGNEE,
-        )
-        logger.info("Auto-spawned session wrap-up chore %s for completed task %s", chore_id, task_id)
-
-        if thread_id:
-            post_thread_lifecycle_update(
-                thread_id=thread_id,
-                status="wrapup_triggered",
-                message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`swarm-worker`) to sync infrastructure notes, journal, and self-improvement hardening.",
-            )
-        return chore_id
-    except Exception as e:
-        logger.error("Failed to auto-spawn session wrap-up chore for %s: %s", task_id, e)
-        return None
-
-
-def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
-    """Updates task status in kanban.db and notifies its assigned Discord thread."""
-    canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT status, title FROM tasks WHERE id = ?", (task_id,))
-    row = cursor.fetchone()
-    if not row:
-        logger.warning("Task %s not found in kanban database", task_id)
-        conn.close()
-        return False
-    current_status = row[0]
-    task_title = row[1] if len(row) > 1 and row[1] else ""
-
-    if current_status == canonical_status:
-        logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
-        conn.close()
-        return True
-
-    now = int(time.time())
-    extra_clause = ""
-    if canonical_status in ("running", "in_progress"):
-        extra_clause = ", started_at = ?"
-    elif canonical_status == "done":
-        extra_clause = ", completed_at = ?"
-
-    query = f"UPDATE tasks SET status = ?{extra_clause} WHERE id = ?"
-    params = [canonical_status, now, task_id] if extra_clause else [canonical_status, task_id]
-    cursor.execute(query, params)
-
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'status_changed', ?, ?)
-        """,
-        (task_id, json.dumps({"status": new_status, "message": message}), now),
-    )
-
-    # Find registered thread subscription
-    cursor.execute(
-        """
-        SELECT thread_id FROM kanban_notify_subs
-        WHERE task_id = ? AND platform = 'discord' LIMIT 1
-        """,
-        (task_id,),
-    )
-    row = cursor.fetchone()
-    thread_id = row[0] if row else None
-
-    conn.commit()
-    conn.close()
-
-    if thread_id:
-        fields = [
-            {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
-            {"name": "New Status", "value": f"`{new_status.upper()}`", "inline": True},
-        ]
-        post_thread_lifecycle_update(thread_id, new_status, message, fields=fields)
-
-    # Auto-trigger full autonomous session wrap-up when a task transitions to done
-    if canonical_status == "done":
-        trigger_session_wrapup_chore(task_id, task_title, thread_id)
-
-    return True
-
-
-def record_task_debrief(
-    task_id: str,
-    summary: str,
-    frictions: Optional[str] = None,
-    chore_title: Optional[str] = None,
-    pr_url: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Records a task debrief / retrospective receipt and optionally spawns a follow-up chore card."""
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    now = int(time.time())
-
-    # 1. Verify task exists
-    cursor.execute("SELECT id, title FROM tasks WHERE id = ?", (task_id,))
-    task_row = cursor.fetchone()
-    if not task_row:
-        conn.close()
-        raise ValueError(f"Task {task_id} not found in kanban database")
-
-    # Auto-extract PR URL from summary if not explicitly passed
-    extracted_pr = pr_url
-    if not extracted_pr and ("github.com/" in summary and "/pull/" in summary):
-        import re
-        m = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
-        if m:
-            extracted_pr = m.group(0)
-
-    # 2. Record debrief event
-    payload = {
-        "summary": summary,
-        "frictions": frictions or "None",
-        "pr_url": extracted_pr,
-        "timestamp": now,
-    }
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'debrief', ?, ?)
-        """,
-        (task_id, json.dumps(payload), now),
-    )
-
-    # 3. If a PR URL was produced, automatically transition task status to in_review
-    if extracted_pr:
-        cursor.execute("UPDATE tasks SET status = 'in_review' WHERE id = ?", (task_id,))
-        logger.info("Transitioned task %s to 'in_review' due to PR: %s", task_id, extracted_pr)
-
-    # 4. If friction or chore_title is specified, auto-spawn a chore card
-    chore_id = None
-    chore_thread_id = None
-    if chore_title or (frictions and frictions.strip() and frictions.strip().lower() != "none"):
-        ctitle = chore_title or f"Address friction in {task_id}"
-        cbody = (
-            f"Auto-spawned from task debrief for {task_id}:\n\n"
-            f"**Friction Report:**\n{frictions}\n\n"
-            f"**Origin Task:** {task_row[1]} ({task_id})"
-        )
-        conn.commit()
-        conn.close()
-        chore_id, chore_thread_id = create_kanban_task(
-            title=ctitle,
-            body=cbody,
-            priority=1,
-            assignee=DEFAULT_ASSIGNEE,
-        )
-        conn = sqlite3.connect(KANBAN_DB_PATH)
-        cursor = conn.cursor()
-
-    # 5. Find Discord thread subscription for parent task
-    cursor.execute(
-        """
-        SELECT thread_id FROM kanban_notify_subs
-        WHERE task_id = ? AND platform = 'discord' LIMIT 1
-        """,
-        (task_id,),
-    )
-    sub_row = cursor.fetchone()
-    thread_id = sub_row[0] if sub_row else None
-
-    conn.commit()
-    conn.close()
-
-    # 6. Post Discord embed
-    if thread_id:
-        post_thread_debrief(
-            thread_id=thread_id,
-            task_id=task_id,
-            summary=summary,
-            frictions=frictions,
-            chore_task_id=chore_id,
-            pr_url=extracted_pr,
-        )
-
-    return {
-        "task_id": task_id,
-        "summary": summary,
-        "frictions": frictions,
-        "chore_id": chore_id,
-        "chore_thread_id": chore_thread_id,
-        "thread_id": thread_id,
-        "pr_url": extracted_pr,
-    }
-
-
-def triage_and_intake(event_text: str, title: Optional[str] = None, context: str = "") -> Optional[Dict[str, Any]]:
-    """Complete entrypoint: evaluates with Jev and provisions task if actionable."""
-    logger.info("Running Jev triage on event: %s", event_text[:80])
-    is_actionable, elapsed, verdict = evaluate_jev_actionability(event_text, context=context)
-
-    if not is_actionable:
-        logger.info("Event classified as NON-ACTIONABLE by Jev (suppressed from Kanban).")
-        return {
-            "actionable": False,
-            "verdict": verdict,
-            "elapsed_seconds": elapsed,
-            "task_id": None,
-            "thread_id": None,
-        }
-
-    # Extract short title if not provided
-    if not title:
-        first_line = event_text.strip().split("\n")[0]
-        title = first_line[:60].strip()
-        if len(first_line) > 60:
-            title += "..."
-
-    task_id, thread_id = create_kanban_task(
-        title=title,
-        body=event_text,
-        priority=1,
-        assignee=DEFAULT_ASSIGNEE,
-    )
-
-    return {
-        "actionable": True,
-        "verdict": verdict,
-        "elapsed_seconds": elapsed,
-        "task_id": task_id,
-        "thread_id": thread_id,
-    }
-
-
-def list_active_tasks() -> None:
-    """Prints active tasks and their mapped Discord thread IDs."""
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT t.id, t.title, t.status, t.priority, s.thread_id
-        FROM tasks t
-        LEFT JOIN kanban_notify_subs s ON t.id = s.task_id
-        ORDER BY t.created_at DESC LIMIT 20
-        """
-    )
-    rows = cursor.fetchall()
-    conn.close()
-
-    print(f"\n{'TASK ID':14} {'STATUS':12} {'DISCORD THREAD':20} {'TITLE'}")
-    print("-" * 75)
-    for row in rows:
-        tid, title, status, prio, thread = row
-        thread_display = thread or "none"
-        print(f"{tid:14} {status:12} {thread_display:20} {title}")
-    print()
-
-
-class KanbanGatewayHTTPHandler(BaseHTTPRequestHandler):
-    """Lightweight HTTP API handler for remote triage, task creation, and debrief."""
-
-    def log_message(self, format: str, *args: Any) -> None:
-        logger.info("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
-
-    def _send_json(self, status_code: int, data: Dict[str, Any]) -> None:
-        body = json.dumps(data).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            self._send_json(200, {"status": "ok", "service": "kanban-gateway"})
-        else:
-            self._send_json(404, {"error": "Not found"})
-
-    def do_POST(self) -> None:
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_body = self.rfile.read(content_length)
-        try:
-            payload = json.loads(post_body.decode("utf-8")) if post_body else {}
-        except Exception as e:
-            self._send_json(400, {"error": f"Invalid JSON payload: {e}"})
-            return
-
-        if self.path == "/triage":
-            text = payload.get("text", "")
-            title = payload.get("title")
-            context = payload.get("context", "")
-            if not text:
-                self._send_json(400, {"error": "Missing required field: text"})
-                return
-            res = triage_and_intake(text, title=title, context=context)
-            self._send_json(200, res or {})
-
-        elif self.path == "/create":
-            title = payload.get("title", "")
-            body = payload.get("body", "")
-            priority = payload.get("priority", 1)
-            assignee = payload.get("assignee", DEFAULT_ASSIGNEE)
-            if not title or not body:
-                self._send_json(400, {"error": "Missing title or body"})
-                return
-            task_id, thread_id = create_kanban_task(title, body, priority=priority, assignee=assignee)
-            self._send_json(200, {"task_id": task_id, "thread_id": thread_id})
-
-        elif self.path == "/debrief":
-            task_id = payload.get("task_id", "")
-            summary = payload.get("summary", "")
-            friction = payload.get("friction", "")
-            chore_title = payload.get("chore_title", "")
-            pr_url = payload.get("pr_url", "")
-            if not task_id or not summary:
-                self._send_json(400, {"error": "Missing task_id or summary"})
-                return
-            res = record_task_debrief(task_id, summary, frictions=friction, chore_title=chore_title, pr_url=pr_url)
-            self._send_json(200, res)
-
-        elif self.path == "/update":
-            task_id = payload.get("task_id", "")
-            status = payload.get("status", "")
-            message = payload.get("message", "")
-            if not task_id or not status:
-                self._send_json(400, {"error": "Missing task_id or status"})
-                return
-            update_task_lifecycle(task_id, status, message)
-            self._send_json(200, {"status": "updated", "task_id": task_id, "new_status": status})
-
-        else:
-            self._send_json(404, {"error": f"Endpoint {self.path} not found"})
-
-
-def run_http_server(host: str = "0.0.0.0", port: int = 8643) -> None:
-    """Runs the ThreadingHTTPServer for remote Kanban gateway intake."""
-    server = ThreadingHTTPServer((host, port), KanbanGatewayHTTPHandler)
-    logger.info("Serving Kanban Gateway HTTP API on http://%s:%d", host, port)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("Shutting down Kanban Gateway HTTP API...")
-        server.server_close()
 
 
 def main():
@@ -888,6 +86,27 @@ def main():
     p_serve.add_argument("--host", default="0.0.0.0", help="HTTP server listen host (default: 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8643, help="HTTP server listen port (default: 8643)")
 
+    # Complexity routing command
+    p_complexity = subparsers.add_parser("complexity", help="Evaluate task complexity and model routing tier")
+    p_complexity.add_argument("--title", required=True, help="Task title")
+    p_complexity.add_argument("--body", default="", help="Task body")
+
+    # Acceptance gate command
+    p_agate = subparsers.add_parser("acceptance-gate", help="Evaluate debrief contract acceptance")
+    p_agate.add_argument("--title", required=True, help="Task title")
+    p_agate.add_argument("--contract", required=True, help="Task acceptance contract / body")
+    p_agate.add_argument("--summary", required=True, help="Worker debrief summary")
+
+    # Auto-merge gate command
+    p_mgate = subparsers.add_parser("auto-merge-gate", help="Evaluate PR auto-merge safety")
+    p_mgate.add_argument("--title", required=True, help="Task title")
+    p_mgate.add_argument("--summary", required=True, help="Debrief summary")
+    p_mgate.add_argument("--pr-url", required=True, help="PR URL")
+
+    # Friction gate command
+    p_fgate = subparsers.add_parser("friction-gate", help="Classify friction actionability")
+    p_fgate.add_argument("--text", required=True, help="Friction text")
+
     # List command
     subparsers.add_parser("list", aliases=["ls"], help="List active Kanban cards and mapped threads")
 
@@ -907,6 +126,18 @@ def main():
         print(f"Recorded debrief for {args.task_id}")
         if res.get("chore_id"):
             print(f"Auto-spawned friction chore card: {res['chore_id']}")
+    elif args.command == "complexity":
+        res = evaluate_task_complexity(args.title, args.body)
+        print(json.dumps(res, indent=2))
+    elif args.command == "acceptance-gate":
+        res = evaluate_debrief_acceptance(args.title, args.contract, args.summary)
+        print(json.dumps(res, indent=2))
+    elif args.command == "auto-merge-gate":
+        res = evaluate_auto_merge_safety(args.title, args.summary, args.pr_url)
+        print(json.dumps(res, indent=2))
+    elif args.command == "friction-gate":
+        res = evaluate_friction_actionability(args.text)
+        print(json.dumps(res, indent=2))
     elif args.command == "serve":
         run_http_server(host=args.host, port=args.port)
     elif args.command in ("list", "ls"):
