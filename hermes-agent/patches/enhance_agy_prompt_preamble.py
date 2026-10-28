@@ -20,6 +20,7 @@ Bake explicit operational rules into ``_PROMPT_PREAMBLE`` in ``prompt.py``:
 2. Tool discipline & boundaries: Emit only tool calls and stop immediately; focus on one tool/file
    per step; never claim success without inspecting verified tool output.
 3. Timezone: Align all relative temporal references with Pacific/Auckland (UTC+12/UTC+13 DST).
+4. Fail-loud architecture & zero silent fallbacks: Raise explicit exceptions and exit non-zero immediately on errors instead of speculative fallbacks.
 """
 from __future__ import annotations
 
@@ -57,19 +58,23 @@ INJECTION = (
     "    \"- After context compaction or across turns, NEVER repeat a previous response or re-deliver a past wrap-up, retrospective, or completed task summary.\",\n"
     "    \"- If a task or wrap-up was already finished earlier, or if the user asks a follow-up question or points out a duplicate response, address their immediate question directly instead of re-summarizing previous work.\",\n"
     "    \"- Discard stale in-flight summaries and '[STILL IN PROGRESS]' markers if newer user instructions exist or if the requested actions were already completed.\",\n"
+    "    \"FAIL-LOUD ARCHITECTURE & ZERO SILENT FALLBACKS:\",\n"
+    "    \"- Anything that can fail must fail loudly and immediately. NEVER implement silent fallbacks, speculative secondary endpoints, catch-all default values, or broad exception suppression to mask errors.\",\n"
+    "    \"- If required environment variables, credentials, network dependencies, or configuration keys are missing or invalid, raise an explicit exception or exit non-zero immediately so the root cause is resolved at the source.\",\n"
     ")\n"
 )
 
 TEST_INJECTION = f"""
     {TEST_MARKER}
     def test_prompt_preamble_operational_rules(self):
-        '''Verify build-time preamble includes output budget, tool discipline, Auckland timezone, and turn anchoring.'''
+        '''Verify build-time preamble includes output budget, tool discipline, Auckland timezone, turn anchoring, and fail-loud invariant.'''
         from prompt import _PROMPT_PREAMBLE
         preamble_str = " ".join(_PROMPT_PREAMBLE)
         self.assertIn("OUTPUT BUDGET & BREVITY:", preamble_str)
         self.assertIn("TOOL DISCIPLINE & EXECUTION BOUNDARIES:", preamble_str)
         self.assertIn("Pacific/Auckland", preamble_str)
         self.assertIn("TURN ANCHORING & ZERO REGURGITATION:", preamble_str)
+        self.assertIn("FAIL-LOUD ARCHITECTURE & ZERO SILENT FALLBACKS:", preamble_str)
 """
 
 
