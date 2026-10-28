@@ -12,9 +12,10 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      # Main agent loop runs on the Antigravity subscription (fixed monthly
-      # fee), starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, and
-      # then Gemini 4 Argon. Paid DeepSeek models are excluded.
+      # Main agent loop runs on the flat-rate Antigravity subscription first,
+      # starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then
+      # Gemini 4 Argon, and falling back to DeepSeek via muninn only when all
+      # three flat-rate subscription pools are exhausted.
       AGENT_MODEL: gemini-3.8-flash-high
       CHAT_MODEL: local-model:latest
     
@@ -73,7 +74,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY || '' }}
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY || 'insecure_default_key_change_me' }}
           REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX || '' }}
-          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'false' }}
+          MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'true' }}
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL || 'http://muninn:4000/v1' }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL || 'memory-extract' }}
           GH_TOKEN: ${{ secrets.GH_TOKEN || '' }}
