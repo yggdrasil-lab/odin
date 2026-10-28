@@ -91,11 +91,20 @@ def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, D
     full_prompt = f"{system_text}\n{state_body}".strip()
 
     # Check for embedded custom schema hints
-    custom_hint_match = re.search(r"```(?:json)?\s*\{\s*\"questions\"\s*:\s*(\{.*?\})\s*\}\s*```", full_prompt, re.DOTALL)
+    custom_hint_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", full_prompt)
     if custom_hint_match:
         try:
-            questions = json.loads("{" + custom_hint_match.group(1) + "}")
-            return state_body, questions
+            parsed = json.loads(custom_hint_match.group(1))
+            questions = None
+            if isinstance(parsed, dict):
+                if "questions" in parsed and isinstance(parsed["questions"], dict):
+                    questions = parsed["questions"]
+                elif any("type" in v for v in parsed.values() if isinstance(v, dict)):
+                    questions = parsed
+            if questions:
+                clean_full = full_prompt[:custom_hint_match.start()].strip() + "\n" + full_prompt[custom_hint_match.end():].strip()
+                state = state_body or clean_full
+                return state.strip(), questions
         except Exception:
             pass
 
@@ -114,6 +123,34 @@ def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, D
         }
         state = f"Context:\n{state_body}\n\nTask:\n{system_text or 'Score operational urgency.'}"
         return state, questions
+
+    # Pattern 1.5: Choice classification (e.g. bracketed list of categories) -> Choice
+    choice_match = re.search(
+        r"(?:classify|categorize|route|select).*?(?:tier|category|bucket|option|into|one of)[:\s]+(\[.*?\])",
+        full_prompt,
+        re.IGNORECASE,
+    )
+    if choice_match:
+        try:
+            raw_options = choice_match.group(1)
+            options_cleaned = [
+                opt.strip(" '\"`")
+                for opt in raw_options.strip("[]").split(",")
+                if opt.strip(" '\"`")
+            ]
+            if options_cleaned:
+                criteria = {opt: f"Matches category '{opt}'" for opt in options_cleaned}
+                questions = {
+                    "choice": {
+                        "type": "choice",
+                        "instructions": system_text.strip() or "Classify into exactly one category.",
+                        "criteria": criteria,
+                    }
+                }
+                state = f"State to evaluate:\n{state_body or full_prompt}"
+                return state, questions
+        except Exception:
+            pass
 
     # Pattern 2: Binary classification (true/false, yes/no, should/is) -> Noul
     if re.search(r"(?:true|false|boolean|yes/no|should|is_material|is_actionable|has_fact)", full_prompt, re.IGNORECASE):
@@ -144,8 +181,12 @@ def format_openai_completion(
 ) -> Dict[str, Any]:
     """Converts Jev answers dictionary into an OpenAI completion envelope."""
     content = ""
-    # Look for Score
     for key, val in answers.items():
+        if not isinstance(val, dict):
+            continue
+        if "choice" in val:
+            content = str(val.get("choice", ""))
+            break
         if "score" in val:
             raw_score = val.get("score", 0.0)
             scaled = int(round(1 + (raw_score / 3.0) * 9))
@@ -154,9 +195,6 @@ def format_openai_completion(
         if "noul" in val:
             prob = val.get("noul", 0.0)
             content = "true" if prob >= 0.5 else "false"
-            break
-        if "choice" in val:
-            content = str(val.get("choice", ""))
             break
 
     if not content:
