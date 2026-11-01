@@ -44,12 +44,12 @@ EOF
 
   if [ "$(id -u)" = "0" ]; then
     if [ -x /command/s6-setuidgid ]; then
-      exec /command/s6-setuidgid hermes /bin/bash -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+      exec /command/s6-setuidgid hermes /bin/bash -c "(/opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force) && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
     else
-      exec su -s /bin/bash hermes -c "/opt/hermes/.venv/bin/python -m mnemosyne.install && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
+      exec su -s /bin/bash hermes -c "(/opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force) && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
     fi
   else
-    /opt/hermes/.venv/bin/python -m mnemosyne.install
+    /opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force
     exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
   fi
 else
@@ -103,7 +103,7 @@ else
   unset GITHUB_TOKEN
 
   # 5. Initialize Mnemosyne and run the Hermes Agent gateway
-  /opt/hermes/.venv/bin/python -m mnemosyne.install
+  /opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force
 
   # 6. Start the Kanban Gateway HTTP API server in background
   if [ -x /usr/local/bin/kanban-gateway ]; then
