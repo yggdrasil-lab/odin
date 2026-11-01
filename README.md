@@ -15,7 +15,6 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 | huginn-gateway | custom (hermes-agent/Dockerfile) | Hermes Agent API server |
 | huginn-dashboard | custom (same Dockerfile) | Hermes web dashboard |
 | mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer |
-| huginn-backup | alpine + sqlite | Nightly SQLite backups, 30-day retention |
 | odin-git-backup | custom (git-backup/Dockerfile) | Nightly git backup of /opt/odin (IaC) |
 | docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only): Swarm service, task and log inspection from Huginn |
 | searxng | searxng/searxng:latest | Self-hosted metasearch engine: Hermes web_search backend |
