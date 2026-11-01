@@ -354,9 +354,10 @@ services:
       context: ./mnemosyne-dashboard
       dockerfile: Dockerfile
     volumes:
-      # Mount the Mnemosyne host directory as read-only for database visualization
-      - /opt/odin/mnemosyne:/opt/data:ro
+      # Mount the Mnemosyne host directory for SQLite WAL shared-memory coordination
+      - /opt/odin/mnemosyne:/opt/data
     environment:
+      - PYTHONUNBUFFERED=1
       - MNEMOSYNE_DASHBOARD_PORT=8080
       - MNEMOSYNE_DASHBOARD_DB=/opt/data/data/mnemosyne.db
       - MNEMOSYNE_DASHBOARD_HOST=0.0.0.0
@@ -364,6 +365,8 @@ services:
     networks:
       - aether-net
       - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
     deploy:
       mode: replicated
       replicas: 1
