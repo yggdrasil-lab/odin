@@ -13,6 +13,8 @@ RUN git clone https://github.com/wysie/mnemosyne-dashboard.git .
 # Install mnemosyne-memory (since the dashboard core imports it)
 RUN pip install --no-cache-dir --break-system-packages mnemosyne-memory[embeddings,mcp] sqlite-vec
 
+ENV PYTHONUNBUFFERED=1
+
 EXPOSE 8080
 
-CMD ["python", "server.py"]
+CMD ["python", "-u", "server.py"]
