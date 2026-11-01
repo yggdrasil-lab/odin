@@ -123,16 +123,23 @@ def patch_mnemosyne_install() -> bool:
         print("[odin-patch] mnemosyne.install already patched; skipping")
         return True
 
-    old_check = '    if "provider: mnemosyne" in config_text:\n'
-    new_check = (
-        f"    {MARKER_INSTALL}\n"
-        '    if "provider: mnemosyne" in config_text or \'provider: "mnemosyne"\' in config_text or "provider: \'mnemosyne\'" in config_text:\n'
-    )
-    if old_check not in src:
-        print("[odin-patch] ERROR: check 'provider: mnemosyne' not found in mnemosyne/install.py", file=sys.stderr)
+    legacy_check = '    if "provider: mnemosyne" in config_text:\n'
+    modern_check = '    if _config_selects_mnemosyne(config_text):\n'
+    if legacy_check in src:
+        new_check = (
+            f"    {MARKER_INSTALL}\n"
+            '    if "provider: mnemosyne" in config_text or \'provider: "mnemosyne"\' in config_text or "provider: \'mnemosyne\'" in config_text:\n'
+        )
+        src = src.replace(legacy_check, new_check, 1)
+    elif modern_check in src:
+        new_check = (
+            f"    {MARKER_INSTALL}\n"
+            f"{modern_check}"
+        )
+        src = src.replace(modern_check, new_check, 1)
+    else:
+        print("[odin-patch] ERROR: neither legacy nor modern mnemosyne config check found in mnemosyne/install.py", file=sys.stderr)
         return False
-
-    src = src.replace(old_check, new_check, 1)
 
     old_sub = (
         "        new_config = re.sub(\n"
