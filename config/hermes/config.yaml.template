@@ -249,6 +249,9 @@ memory:
     sleep_threshold: 50         # Number of working memories before trigger
     vector_type: "int8"         # Vector quantization type (float32, int8, or bit)
     db_path: "/opt/data/.hermes/mnemosyne/data/mnemosyne.db"
+    default_scope: "global"     # Align with Mnemosyne 4.0 cross-session accessibility
+    polyphonic_recall: true     # Multi-voice hybrid scoring (vec, fts, keyword, importance, recency)
+    enhanced_recall: true       # Enhanced semantic & contextual retrieval
     skip_contexts:
       - "flush"
       - "subagent"
