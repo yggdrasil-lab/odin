@@ -37,31 +37,45 @@ MARKER_INSTALL = "# odin-patch: harden mnemosyne install config detection and an
 
 
 def patch_adapter() -> bool:
+    targets: list[Path] = []
     try:
-        import hermes_memory_provider.hermes_llm_adapter as adapter_mod
-        target = Path(adapter_mod.__file__)
+        import mnemosyne_hermes.hermes_llm_adapter as modern_adapter
+        targets.append(Path(modern_adapter.__file__))
     except Exception:
-        candidate = Path("/opt/hermes/.venv/lib/python3.14/site-packages/hermes_memory_provider/hermes_llm_adapter.py")
-        if candidate.is_file():
-            target = candidate
-        else:
-            print("[odin-patch] ERROR: hermes_llm_adapter.py not found", file=sys.stderr)
-            return False
+        candidates = list(Path("/opt/hermes/.venv/lib").glob("python*/site-packages/mnemosyne_hermes/hermes_llm_adapter.py"))
+        if candidates:
+            targets.extend(candidates)
 
-    src = target.read_text(encoding="utf-8")
-    if MARKER_ADAPTER in src:
-        print("[odin-patch] hermes_llm_adapter already patched; skipping")
-        return True
+    try:
+        import hermes_memory_provider.hermes_llm_adapter as legacy_adapter
+        targets.append(Path(legacy_adapter.__file__))
+    except Exception:
+        candidates = list(Path("/opt/hermes/.venv/lib").glob("python*/site-packages/hermes_memory_provider/hermes_llm_adapter.py"))
+        if candidates:
+            targets.extend(candidates)
+
+    if not targets:
+        print("[odin-patch] ERROR: hermes_llm_adapter.py not found in modern or legacy path", file=sys.stderr)
+        return False
 
     old_task = '    task = "compression"\n'
     new_task = f'    {MARKER_ADAPTER}\n    task = "memory"\n'
-    if old_task not in src:
-        print("[odin-patch] ERROR: task = \"compression\" not found in hermes_llm_adapter.py", file=sys.stderr)
-        return False
 
-    target.write_text(src.replace(old_task, new_task, 1), encoding="utf-8")
-    print(f"[odin-patch] patched {target} (routed task to memory)")
-    return True
+    patched_any = False
+    for target in set(targets):
+        src = target.read_text(encoding="utf-8")
+        if MARKER_ADAPTER in src:
+            print(f"[odin-patch] {target} already patched; skipping")
+            patched_any = True
+            continue
+        if old_task in src:
+            target.write_text(src.replace(old_task, new_task, 1), encoding="utf-8")
+            print(f"[odin-patch] patched {target} (routed task to memory)")
+            patched_any = True
+        else:
+            print(f"[odin-patch] WARNING: task = \"compression\" not found in {target}", file=sys.stderr)
+
+    return patched_any
 
 
 def patch_local_llm() -> bool:
@@ -89,7 +103,10 @@ def patch_local_llm() -> bool:
         f"    {MARKER_LOCAL_LLM}\n"
         "    if get_host_llm_backend() is None:\n"
         "        try:\n"
-        "            from hermes_memory_provider.hermes_llm_adapter import register_hermes_host_llm\n"
+        "            try:\n"
+        "                from mnemosyne_hermes.hermes_llm_adapter import register_hermes_host_llm\n"
+        "            except ImportError:\n"
+        "                from hermes_memory_provider.hermes_llm_adapter import register_hermes_host_llm\n"
         "            register_hermes_host_llm()\n"
         "        except Exception:\n"
         "            pass\n"
