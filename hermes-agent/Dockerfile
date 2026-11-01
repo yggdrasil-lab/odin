@@ -19,7 +19,7 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
       /opt/hermes/.venv/bin/python get-pip.py && \
       rm get-pip.py; \
     fi && \
-    /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[embeddings,mcp] sqlite-vec playwright
+    /opt/hermes/.venv/bin/pip install --no-cache-dir mnemosyne-memory[embeddings,mcp] mnemosyne-hermes sqlite-vec playwright
 
 # Install the Antigravity CLI (agy) used by the delegated-subagent route.
 # The vendor installer is non-interactive and takes its target directory via
@@ -93,7 +93,5 @@ RUN chmod -R a+rX /usr/local/bin/ \
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-USER 1000:1000
 
 
