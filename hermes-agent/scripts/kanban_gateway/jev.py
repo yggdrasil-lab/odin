@@ -9,10 +9,13 @@ import urllib.request
 from typing import Any, Dict, Tuple
 
 from .config import (
+    ASSIGNEE_ALIASES,
     JEV_MODEL,
     MUNINN_API_KEY,
+    SPECIALIST_MODELS,
     USER_AGENT,
     logger,
+    normalize_assignee,
     resolve_muninn_endpoint,
 )
 
@@ -76,11 +79,25 @@ def evaluate_jev_actionability(event_text: str, context: str = "") -> Tuple[bool
     return is_actionable, elapsed, content
 
 
+def _infer_specialist_from_text(title: str, body: str, tier: str) -> str:
+    """Infers canonical Court of Odin specialist when Jev response omits an explicit role."""
+    combined = f"{title}\n{body}".lower()
+    if any(k in combined for k in ("eir", "kratos", "workout", "biometric", "hrv", "daily journal", "badminton", "00-health", "10-wealth", "20-career", "30-relationships")):
+        return "saga"
+    if any(k in combined for k in ("wrap-up", "wrapup", "mnemosyne", "skill", "areas/90-infrastructure", "efforts/", "chore/friction", "address friction")):
+        return "vor"
+    if any(k in combined for k in ("playwright", "visual gate", "visual review", "iphone 14", "pixel 7", "qa", "schema validation")):
+        return "forseti"
+    if any(k in combined for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml", "open a pr", "pull request")) or tier == "frontier_deep":
+        return "sindri"
+    return "huginn"
+
+
 def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
-    """Evaluates task complexity and routes to flash_fast, frontier_deep, or human_pairing (Choice)."""
+    """Evaluates task complexity and routes to Court of Odin specialist role and model tier."""
     system_prompt = (
-        "Evaluate the technical complexity of the following software/infrastructure task for an autonomous agent worker. "
-        "Classify into exactly one tier:\n"
+        "Evaluate the technical complexity and specialist domain of the following task for the Court of Odin autonomous workers. "
+        "Classify both tier and role:\n"
         "```json\n"
         "{\n"
         '  "questions": {\n'
@@ -88,9 +105,20 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
         '      "type": "choice",\n'
         '      "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",\n'
         '      "criteria": {\n'
-        '        "flash_fast": "Routine chores, documentation updates, typo fixes, script parameter tweaks, lint errors, minor path adjustments. Suitable for fast subscription models (gemini-3.8-flash-high).",\n'
-        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, multi-step refactoring, or critical reliability fixes. Requires frontier reasoning models (gemini-4-argon-high).",\n'
+        '        "flash_fast": "Routine chores, documentation updates, log/web investigation, biometric/journal entries, QA checks, or minor script tweaks. Uses gemini-3.8-flash-high.",\n'
+        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, or complex Forge PR implementation. Uses gemini-4-argon-high.",\n'
         '        "human_pairing": "Architectural forks, destructive deletions, subjective product decisions, or fundamental infrastructure trade-offs requiring pairing with Raymund."\n'
+        "      }\n"
+        "    },\n"
+        '    "role": {\n'
+        '      "type": "choice",\n'
+        '      "instructions": "Assign the task to the single best Court of Odin specialist: huginn, sindri, forseti, vor, or saga",\n'
+        '      "criteria": {\n'
+        '        "huginn": "Scout Raven: log triage, root-cause diagnostics, host/Swarm telemetry inspection, and web research.",\n'
+        '        "sindri": "Forge Builder: code changes, Docker Swarm compose stacks, Dockerfile/CI updates, and PR creation in Forge/<repo>.",\n'
+        '        "forseti": "QA & Visual Gate: Playwright visual verification (iPhone 14 / Pixel 7), PR diff invariant audits, and schema validation.",\n'
+        '        "vor": "Vault & Memory Curator: session wrap-ups, skill maintenance, Mnemosyne hygiene, and Areas/90-Infrastructure documentation.",\n'
+        '        "saga": "Journal & Health Scribe: Daily Journal stories, life areas (00-30), Eir biometrics analysis, and Kratos workout autoregulation."\n'
         "      }\n"
         "    }\n"
         "  }\n"
@@ -100,20 +128,49 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
     content, elapsed = call_jev_raw(system_prompt, f"Task Title: {title}\n\nTask Description:\n{body}")
     content_lower = content.lower()
     tier = "flash_fast"
-    recommended_model = "gemini-3.8-flash-high"
     if "human_pairing" in content_lower:
         tier = "human_pairing"
-        recommended_model = "human/raymund"
     elif "frontier_deep" in content_lower:
         tier = "frontier_deep"
-        recommended_model = "gemini-4-argon-high"
     elif "flash_fast" in content_lower:
         tier = "flash_fast"
-        recommended_model = "gemini-3.8-flash-high"
 
-    logger.info("Jev System One task complexity in %.2fs -> Tier: %s (%s)", elapsed, tier, recommended_model)
+    # Extract specialist role from JSON or text
+    recommended_assignee = ""
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict) and parsed.get("role"):
+            recommended_assignee = normalize_assignee(str(parsed["role"]))
+    except Exception:
+        pass
+
+    if not recommended_assignee or recommended_assignee == "swarm-worker":
+        for candidate in ("huginn", "sindri", "forseti", "vor", "saga", *ASSIGNEE_ALIASES.keys()):
+            if f'"{candidate}"' in content_lower or f"'{candidate}'" in content_lower or f"role: {candidate}" in content_lower:
+                recommended_assignee = normalize_assignee(candidate)
+                break
+
+    if tier == "human_pairing":
+        recommended_assignee = "raymund"
+        recommended_model = "human/raymund"
+    else:
+        if not recommended_assignee or recommended_assignee == "swarm-worker":
+            recommended_assignee = _infer_specialist_from_text(title, body, tier)
+        if tier == "frontier_deep" or recommended_assignee == "sindri":
+            recommended_model = "gemini-4-argon-high"
+        else:
+            recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-3.8-flash-high")
+
+    logger.info(
+        "Jev System One task complexity in %.2fs -> Tier: %s | Assignee: %s (%s)",
+        elapsed,
+        tier,
+        recommended_assignee,
+        recommended_model,
+    )
     return {
         "tier": tier,
+        "recommended_assignee": recommended_assignee,
         "recommended_model": recommended_model,
         "raw_verdict": content,
         "latency_seconds": round(elapsed, 3),

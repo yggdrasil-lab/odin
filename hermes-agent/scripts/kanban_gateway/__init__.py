@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .config import (
+    ASSIGNEE_ALIASES,
     DEFAULT_ASSIGNEE,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
@@ -11,10 +12,13 @@ from .config import (
     KANBAN_DB_PATH,
     MUNINN_API_KEY,
     MUNINN_API_URL,
+    SPECIALIST_MODELS,
     STATUS_CANONICAL,
     STATUS_COLORS,
     USER_AGENT,
+    VALID_ASSIGNEES,
     logger,
+    normalize_assignee,
     resolve_discord_env,
     resolve_muninn_endpoint,
 )
@@ -25,6 +29,7 @@ from .discord import (
 )
 from .engine import (
     create_kanban_task,
+    handoff_kanban_task,
     list_active_tasks,
     record_task_debrief,
     triage_and_intake,
