@@ -51,6 +51,7 @@ def _build_mcp_block(mcps: List[str], env_vars: Dict[str, str]) -> str:
                 [
                     "  playwright:",
                     "    enabled: true",
+                    "    transport: sse",
                     "    url: http://poseidon_playwright:8931/sse",
                 ]
             )
@@ -133,7 +134,9 @@ def provision_skill_symlinks(
     symlink_target_prefix: Optional[str] = None,
 ) -> List[str]:
     """Creates a clean symlinked skill tree under target_skills_dir."""
-    if os.path.exists(target_skills_dir):
+    if os.path.islink(target_skills_dir):
+        os.unlink(target_skills_dir)
+    elif os.path.exists(target_skills_dir):
         shutil.rmtree(target_skills_dir)
     os.makedirs(target_skills_dir, mode=0o755, exist_ok=True)
     os.chmod(target_skills_dir, 0o755)

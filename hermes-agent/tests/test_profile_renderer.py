@@ -50,6 +50,11 @@ class TestProfileRenderer(unittest.TestCase):
 
             self.assertEqual(len(all_49_skills), 49)
 
+            # Simulate legacy top-level symlink for swarm-worker/skills to verify safe replacement
+            legacy_worker_dir = os.path.join(profiles_dst, "swarm-worker")
+            os.makedirs(legacy_worker_dir, exist_ok=True)
+            os.symlink(skills_src, os.path.join(legacy_worker_dir, "skills"))
+
             rendered = render_all_profiles(
                 template_path=template_path,
                 roles_path=roles_path,
@@ -81,6 +86,7 @@ class TestProfileRenderer(unittest.TestCase):
                     self.assertNotIn("  kratos:", cfg_text)
                 elif specialist == "forseti":
                     self.assertIn("  playwright:", cfg_text)
+                    self.assertIn("    transport: sse", cfg_text)
                     self.assertNotIn("  kratos:", cfg_text)
                 elif specialist == "saga":
                     self.assertIn("  kratos:", cfg_text)
