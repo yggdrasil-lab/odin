@@ -130,6 +130,7 @@ def provision_skill_symlinks(
     skills_source_dir: str,
     skill_rel_paths: Iterable[str],
     optional_rel_paths: Iterable[str] = (),
+    symlink_target_prefix: Optional[str] = None,
 ) -> List[str]:
     """Creates a clean symlinked skill tree under target_skills_dir."""
     if os.path.exists(target_skills_dir):
@@ -137,6 +138,7 @@ def provision_skill_symlinks(
     os.makedirs(target_skills_dir, mode=0o755, exist_ok=True)
     os.chmod(target_skills_dir, 0o755)
 
+    target_base = symlink_target_prefix or skills_source_dir
     linked: List[str] = []
     for rel_path in list(skill_rel_paths) + list(optional_rel_paths):
         src = os.path.join(skills_source_dir, rel_path)
@@ -145,13 +147,14 @@ def provision_skill_symlinks(
             if is_optional:
                 continue
             continue
+        link_target = os.path.join(target_base, rel_path)
         dst = os.path.join(target_skills_dir, rel_path)
         parent = os.path.dirname(dst)
         os.makedirs(parent, mode=0o755, exist_ok=True)
         os.chmod(parent, 0o755)
         if os.path.lexists(dst):
             os.unlink(dst)
-        os.symlink(src, dst)
+        os.symlink(link_target, dst)
         linked.append(rel_path)
     return linked
 
@@ -162,6 +165,7 @@ def render_all_profiles(
     output_profiles_dir: str,
     skills_source_dir: str,
     env_vars: Optional[Dict[str, str]] = None,
+    symlink_target_prefix: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     env = dict(os.environ)
     if env_vars:
@@ -201,6 +205,7 @@ def render_all_profiles(
             skills_source_dir=skills_source_dir,
             skill_rel_paths=role_cfg.get("skills", []),
             optional_rel_paths=role_cfg.get("optional_skills", []),
+            symlink_target_prefix=symlink_target_prefix,
         )
 
         results[role_id] = {
@@ -233,7 +238,12 @@ def main() -> None:
     parser.add_argument(
         "--skills-source",
         default="/opt/data/skills",
-        help="Canonical skills directory to symlink from (default: /opt/data/skills)",
+        help="Canonical skills directory to verify from (default: /opt/data/skills)",
+    )
+    parser.add_argument(
+        "--symlink-target-prefix",
+        default=None,
+        help="Optional target prefix for generated symlinks inside container (e.g. /opt/data/skills)",
     )
     args = parser.parse_args()
     res = render_all_profiles(
@@ -241,6 +251,7 @@ def main() -> None:
         roles_path=args.roles,
         output_profiles_dir=args.output_dir,
         skills_source_dir=args.skills_source,
+        symlink_target_prefix=args.symlink_target_prefix,
     )
     for role_id, info in res.items():
         print(
