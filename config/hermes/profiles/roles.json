@@ -1,0 +1,181 @@
+{
+  "coordinator": {
+    "id": "odin",
+    "title": "Odin (The Allfather - Top-Level Coordinator)",
+    "model": "gemini-3.8-flash-high",
+    "mcps": [],
+    "toolsets": [
+      "clarify",
+      "cronjob",
+      "delegation",
+      "discord",
+      "file",
+      "memory",
+      "skills",
+      "terminal"
+    ],
+    "skills": [
+      "software-development/plan",
+      "software-development/subagent-driven-development",
+      "productivity/kanban-operations",
+      "productivity/daily-briefing",
+      "productivity/discord-thread-lifecycle",
+      "productivity/external-comms",
+      "email/email-send"
+    ]
+  },
+  "roles": {
+    "huginn": {
+      "title": "Huginn (Odin's Scout Raven - Research & Infra Diagnostics)",
+      "aliases": ["scout", "researcher", "heimdall"],
+      "tier": "flash_fast",
+      "model": "gemini-3.8-flash-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "mcps": [],
+      "toolsets": [
+        "file",
+        "memory",
+        "session_search",
+        "skills",
+        "terminal",
+        "web"
+      ],
+      "skills": [
+        "devops/odin-stack",
+        "devops/odin-llm-runtime",
+        "software-development/systematic-debugging",
+        "research/topic-watch",
+        "research/grounded-citations",
+        "research/rss-feeds",
+        "social-media/reddit-reading",
+        "web-scraping/blocked-page-recovery",
+        "media/youtube-content"
+      ],
+      "optional_skills": [
+        "devops/gaia-host-ops"
+      ]
+    },
+    "sindri": {
+      "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
+      "aliases": ["forge-builder", "builder", "coder"],
+      "tier": "frontier_deep",
+      "model": "gemini-4-argon-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-3.8-flash-high"],
+      "mcps": [],
+      "toolsets": [
+        "file",
+        "skills",
+        "terminal",
+        "todo"
+      ],
+      "skills": [
+        "devops/forge-pr-workflow",
+        "devops/forge-repositories",
+        "devops/swarm-compose-label-placement",
+        "devops/container-host-data-dir-prep",
+        "devops/container-host-access-grants",
+        "devops/stack-service-upgrades",
+        "devops/authentik",
+        "devops/arr-stack-configuration",
+        "devops/vpn-routed-services",
+        "devops/mcp-endpoint-hosting",
+        "software-development/github",
+        "software-development/greenfield-repo-bootstrap",
+        "creative/claude-design",
+        "software-development/verify-file-operations"
+      ]
+    },
+    "forseti": {
+      "title": "Forseti (God of Truth & Judgment - QA, Invariant & Visual Gate)",
+      "aliases": ["qa-reviewer", "qa", "reviewer"],
+      "tier": "flash_fast",
+      "model": "gemini-3.8-flash-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "mcps": ["playwright"],
+      "toolsets": [
+        "file",
+        "skills",
+        "terminal",
+        "vision"
+      ],
+      "skills": [
+        "software-development/mobile-pwa-development",
+        "web-scraping/browser-action-scaffolder",
+        "data-science/analytics-layer-validation",
+        "devops/postgres-schema-validation",
+        "devops/forge-pr-workflow",
+        "software-development/verify-file-operations"
+      ]
+    },
+    "vor": {
+      "title": "Vor (Goddess of Deep Inquiry - Vault, Skills & Memory Curator)",
+      "aliases": ["vault-curator", "curator"],
+      "tier": "flash_fast",
+      "model": "gemini-3.8-flash-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "mcps": [],
+      "toolsets": [
+        "file",
+        "memory",
+        "skills",
+        "terminal"
+      ],
+      "skills": [
+        "productivity/session-wrapup",
+        "productivity/task-debrief",
+        "devops/scheduled-jobs",
+        "devops/skills-audit-and-maintenance",
+        "autonomous-ai-agents/hermes-agent",
+        "note-taking/mnemosyne-maintenance",
+        "devops/infra-documentation-pattern",
+        "note-taking/obsidian",
+        "software-development/verify-file-operations"
+      ]
+    },
+    "saga": {
+      "title": "Saga (Goddess of History & Chronicles - Journal, Life & Eir/Kratos Health)",
+      "aliases": ["journal-scribe", "journal", "scribe"],
+      "tier": "flash_fast",
+      "model": "gemini-3.8-flash-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "mcps": ["kratos"],
+      "toolsets": [
+        "file",
+        "memory",
+        "skills",
+        "terminal"
+      ],
+      "skills": [
+        "note-taking/second-brain-management",
+        "note-taking/obsidian",
+        "note-taking/effort-history-recount",
+        "note-taking/vault-document-intake",
+        "productivity/ocr-and-documents",
+        "health-wellness/weekly-workout-plan",
+        "productivity/job-hunt-pipeline",
+        "creative/baoyu-infographic",
+        "software-development/verify-file-operations"
+      ]
+    },
+    "swarm-worker": {
+      "title": "Swarm Worker (Legacy Compatibility Worker)",
+      "aliases": [],
+      "tier": "flash_fast",
+      "model": "gemini-3.8-flash-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "mcps": [],
+      "toolsets": [
+        "file",
+        "memory",
+        "skills",
+        "terminal"
+      ],
+      "skills": [
+        "devops/forge-pr-workflow",
+        "productivity/kanban-operations",
+        "productivity/task-debrief",
+        "software-development/verify-file-operations"
+      ]
+    }
+  }
+}
