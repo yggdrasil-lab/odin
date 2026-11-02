@@ -126,6 +126,30 @@ def render_profile_config(
     return _expand_env(rendered, env_vars)
 
 
+def _prune_broken_symlinks(target_skills_dir: str, skills_source_dir: str, target_base: str) -> None:
+    """Removes only broken skill symlinks so user/agent-added symlinks survive restarts."""
+    if not os.path.isdir(target_skills_dir):
+        return
+    for root, dirs, files in os.walk(target_skills_dir, topdown=False):
+        for entry in list(dirs) + list(files):
+            full_path = os.path.join(root, entry)
+            if os.path.islink(full_path):
+                raw_target = os.readlink(full_path)
+                # Translate container target_base (e.g. /opt/data/skills) back to skills_source_dir when running on host
+                if target_base and raw_target.startswith(target_base + "/"):
+                    rel = raw_target[len(target_base) + 1 :]
+                    resolved = os.path.join(skills_source_dir, rel)
+                else:
+                    resolved = os.path.realpath(full_path)
+                if not os.path.exists(resolved):
+                    os.unlink(full_path)
+        if root != target_skills_dir and not os.listdir(root):
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+
+
 def provision_skill_symlinks(
     target_skills_dir: str,
     skills_source_dir: str,
@@ -133,33 +157,38 @@ def provision_skill_symlinks(
     optional_rel_paths: Iterable[str] = (),
     symlink_target_prefix: Optional[str] = None,
 ) -> List[str]:
-    """Creates a clean symlinked skill tree under target_skills_dir."""
+    """Non-destructively ensures baseline skill symlinks exist under target_skills_dir.
+
+    Preserves any additional skill symlinks added at runtime during session-wrapup
+    or continuous improvement, and only prunes broken/dangling symlinks.
+    """
     if os.path.islink(target_skills_dir):
         os.unlink(target_skills_dir)
-    elif os.path.exists(target_skills_dir):
-        shutil.rmtree(target_skills_dir)
     os.makedirs(target_skills_dir, mode=0o755, exist_ok=True)
     os.chmod(target_skills_dir, 0o755)
 
     target_base = symlink_target_prefix or skills_source_dir
-    linked: List[str] = []
+    _prune_broken_symlinks(target_skills_dir, skills_source_dir, target_base)
+
     for rel_path in list(skill_rel_paths) + list(optional_rel_paths):
         src = os.path.join(skills_source_dir, rel_path)
-        is_optional = rel_path in optional_rel_paths
         if not os.path.exists(src):
-            if is_optional:
-                continue
             continue
         link_target = os.path.join(target_base, rel_path)
         dst = os.path.join(target_skills_dir, rel_path)
         parent = os.path.dirname(dst)
         os.makedirs(parent, mode=0o755, exist_ok=True)
         os.chmod(parent, 0o755)
-        if os.path.lexists(dst):
-            os.unlink(dst)
-        os.symlink(link_target, dst)
-        linked.append(rel_path)
-    return linked
+        if not os.path.lexists(dst):
+            os.symlink(link_target, dst)
+
+    linked: List[str] = []
+    for root, dirs, files in os.walk(target_skills_dir):
+        for entry in list(dirs) + list(files):
+            full_path = os.path.join(root, entry)
+            if os.path.islink(full_path):
+                linked.append(os.path.relpath(full_path, target_skills_dir))
+    return sorted(linked)
 
 
 def render_all_profiles(
@@ -195,10 +224,10 @@ def render_all_profiles(
         with open(cfg_path, "w", encoding="utf-8") as cf:
             cf.write(cfg_text)
 
-        # 2. Copy SOUL.md
+        # 2. Seed SOUL.md only if missing (never overwrite continuous improvements in /opt/odin)
         soul_src = os.path.join(profiles_src_dir, role_id, "SOUL.md")
         soul_dst = os.path.join(prof_dir, "SOUL.md")
-        if os.path.isfile(soul_src):
+        if os.path.isfile(soul_src) and not os.path.exists(soul_dst):
             shutil.copy2(soul_src, soul_dst)
 
         # 3. Provision symlinked skills/
