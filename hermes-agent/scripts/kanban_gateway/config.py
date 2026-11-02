@@ -90,6 +90,56 @@ DISCORD_WEBHOOK_URL, DISCORD_CHANNEL_ID, DISCORD_USER_ID = resolve_discord_env()
 DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
 USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
 
+VALID_ASSIGNEES = (
+    "huginn",
+    "sindri",
+    "forseti",
+    "vor",
+    "saga",
+    "swarm-worker",
+    "raymund",
+)
+
+ASSIGNEE_ALIASES = {
+    "scout": "huginn",
+    "researcher": "huginn",
+    "heimdall": "huginn",
+    "forge-builder": "sindri",
+    "builder": "sindri",
+    "coder": "sindri",
+    "qa-reviewer": "forseti",
+    "qa": "forseti",
+    "reviewer": "forseti",
+    "vault-curator": "vor",
+    "curator": "vor",
+    "journal-scribe": "saga",
+    "journal": "saga",
+    "scribe": "saga",
+}
+
+SPECIALIST_MODELS = {
+    "huginn": "gemini-3.8-flash-high",
+    "sindri": "gemini-4-argon-high",
+    "forseti": "gemini-3.8-flash-high",
+    "vor": "gemini-3.8-flash-high",
+    "saga": "gemini-3.8-flash-high",
+    "swarm-worker": "gemini-3.8-flash-high",
+    "raymund": "human/raymund",
+}
+
+
+def normalize_assignee(assignee: str | None) -> str:
+    """Normalizes functional role aliases to canonical Court of Odin specialist IDs."""
+    if not assignee:
+        return DEFAULT_ASSIGNEE
+    cleaned = assignee.strip().lower()
+    if cleaned in ASSIGNEE_ALIASES:
+        return ASSIGNEE_ALIASES[cleaned]
+    if cleaned in VALID_ASSIGNEES:
+        return cleaned
+    return DEFAULT_ASSIGNEE
+
+
 # Severity / Status colors for Discord embeds
 STATUS_COLORS = {
     "TODO": 3447003,          # Blue

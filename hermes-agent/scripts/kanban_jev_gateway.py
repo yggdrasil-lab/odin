@@ -35,6 +35,7 @@ from kanban_gateway import (
     evaluate_friction_actionability,
     evaluate_jev_actionability,
     evaluate_task_complexity,
+    handoff_kanban_task,
     list_active_tasks,
     logger,
     post_discord_thread,
@@ -81,6 +82,13 @@ def main():
     p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up chore card")
     p_debrief.add_argument("--pr-url", default="", help="Optional GitHub PR URL requiring review")
 
+    # Handoff command (zero-chat specialist pipeline)
+    p_handoff = subparsers.add_parser("handoff", help="Hand off task to another Court of Odin specialist in the pipeline")
+    p_handoff.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
+    p_handoff.add_argument("--to", required=True, dest="to_assignee", help="Target specialist (huginn, sindri, forseti, vor, saga)")
+    p_handoff.add_argument("--summary", required=True, help="Compact state digest + file/PR paths for next specialist")
+    p_handoff.add_argument("--pr-url", default="", help="Optional PR or branch reference")
+
     # Serve command (HTTP API)
     p_serve = subparsers.add_parser("serve", help="Run HTTP API server for remote alert ingestion")
     p_serve.add_argument("--host", default="0.0.0.0", help="HTTP server listen host (default: 0.0.0.0)")
@@ -126,6 +134,9 @@ def main():
         print(f"Recorded debrief for {args.task_id}")
         if res.get("chore_id"):
             print(f"Auto-spawned friction chore card: {res['chore_id']}")
+    elif args.command == "handoff":
+        res = handoff_kanban_task(args.task_id, args.to_assignee, args.summary, pr_url=args.pr_url)
+        print(f"Handed off {args.task_id} from '{res['from_assignee']}' to '{res['to_assignee']}' ({res['model_override']})")
     elif args.command == "complexity":
         res = evaluate_task_complexity(args.title, args.body)
         print(json.dumps(res, indent=2))

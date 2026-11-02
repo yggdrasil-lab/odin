@@ -14,8 +14,10 @@ from .config import (
     DISCORD_USER_ID,
     DISCORD_WEBHOOK_URL,
     KANBAN_DB_PATH,
+    SPECIALIST_MODELS,
     STATUS_CANONICAL,
     logger,
+    normalize_assignee,
 )
 from .discord import (
     post_discord_thread,
@@ -45,14 +47,26 @@ def create_kanban_task(
         (task_id, discord_thread_id)
     """
     complexity = evaluate_task_complexity(title, body)
-    resolved_assignee = assignee or DEFAULT_ASSIGNEE
-    if complexity["tier"] == "human_pairing" and not assignee:
+    if assignee and assignee != DEFAULT_ASSIGNEE:
+        resolved_assignee = normalize_assignee(assignee)
+    else:
+        resolved_assignee = normalize_assignee(complexity.get("recommended_assignee") or DEFAULT_ASSIGNEE)
+
+    if complexity["tier"] == "human_pairing" and (not assignee or assignee == DEFAULT_ASSIGNEE):
         resolved_assignee = "raymund"
 
     model_override = None
     provider_override = None
-    if complexity["tier"] in ("frontier_deep", "flash_fast"):
-        model_override = complexity["recommended_model"]
+    if resolved_assignee == "raymund":
+        model_override = None
+        provider_override = None
+    elif resolved_assignee == "sindri" or complexity["tier"] == "frontier_deep":
+        model_override = "gemini-4-argon-high"
+        provider_override = "antigravity-subscription-directsdk"
+    else:
+        model_override = complexity.get("recommended_model") or SPECIALIST_MODELS.get(
+            resolved_assignee, "gemini-3.8-flash-high"
+        )
         provider_override = "antigravity-subscription-directsdk"
 
     short_id = uuid.uuid4().hex[:8]
@@ -211,20 +225,123 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
             title=chore_title,
             body=chore_body,
             priority=1,
-            assignee=DEFAULT_ASSIGNEE,
+            assignee="vor",
         )
-        logger.info("Auto-spawned session wrap-up chore %s for completed task %s", chore_id, task_id)
+        logger.info("Auto-spawned session wrap-up chore %s (vor) for completed task %s", chore_id, task_id)
 
         if thread_id:
             post_thread_lifecycle_update(
                 thread_id=thread_id,
                 status="wrapup_triggered",
-                message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`swarm-worker`) to sync infrastructure notes, journal, and self-improvement hardening.",
+                message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`vor`) to sync infrastructure notes, journal, and self-improvement hardening.",
             )
         return chore_id
     except Exception as e:
         logger.error("Failed to auto-spawn session wrap-up chore for %s: %s", task_id, e)
         return None
+
+
+def handoff_kanban_task(
+    task_id: str,
+    to_assignee: str,
+    summary: str,
+    pr_url: str = "",
+) -> Dict[str, Any]:
+    """Transitions a Kanban card to the next specialist in an async pipeline without conversational chat."""
+    resolved_to = normalize_assignee(to_assignee)
+    now = int(time.time())
+
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, body, assignee FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Task {task_id} not found in kanban database")
+
+    orig_title, orig_body, from_assignee = row[0] or "", row[1] or "", row[2] or "unknown"
+
+    handoff_block = (
+        f"\n\n---\n"
+        f"### Pipeline Handoff ({from_assignee} -> {resolved_to})\n"
+        f"{summary.strip()}"
+    )
+    if pr_url:
+        handoff_block += f"\n**PR / Branch:** {pr_url}"
+
+    new_body = f"{orig_body}{handoff_block}"
+    if resolved_to == "raymund":
+        model_override = None
+        provider_override = None
+    elif resolved_to == "sindri":
+        model_override = "gemini-4-argon-high"
+        provider_override = "antigravity-subscription-directsdk"
+    else:
+        model_override = SPECIALIST_MODELS.get(resolved_to, "gemini-3.8-flash-high")
+        provider_override = "antigravity-subscription-directsdk"
+
+    cursor.execute(
+        """
+        UPDATE tasks
+        SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?
+        WHERE id = ?
+        """,
+        (resolved_to, new_body, model_override, provider_override, task_id),
+    )
+
+    event_payload = {
+        "from_assignee": from_assignee,
+        "to_assignee": resolved_to,
+        "summary": summary,
+        "pr_url": pr_url,
+        "model_override": model_override,
+    }
+    cursor.execute(
+        """
+        INSERT INTO task_events (task_id, kind, payload, created_at)
+        VALUES (?, 'handoff', ?, ?)
+        """,
+        (task_id, json.dumps(event_payload), now),
+    )
+
+    cursor.execute(
+        """
+        SELECT thread_id FROM kanban_notify_subs
+        WHERE task_id = ? AND platform = 'discord' LIMIT 1
+        """,
+        (task_id,),
+    )
+    sub_row = cursor.fetchone()
+    thread_id = sub_row[0] if sub_row else None
+
+    conn.commit()
+    conn.close()
+
+    if thread_id:
+        fields = [
+            {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
+            {"name": "Pipeline Handoff", "value": f"`{from_assignee}` -> `{resolved_to}`", "inline": True},
+            {"name": "Model", "value": f"`{model_override or 'human/raymund'}`", "inline": True},
+        ]
+        if pr_url:
+            fields.append({"name": "PR / Branch", "value": pr_url, "inline": False})
+        post_thread_lifecycle_update(
+            thread_id=thread_id,
+            status="ready",
+            message=f"**Handoff Summary (`{from_assignee}` -> `{resolved_to}`):**\n{summary}",
+            fields=fields,
+        )
+
+    logger.info("Handed off task %s (%s): %s -> %s (%s)", task_id, orig_title, from_assignee, resolved_to, model_override)
+    return {
+        "task_id": task_id,
+        "from_assignee": from_assignee,
+        "to_assignee": resolved_to,
+        "model_override": model_override,
+        "summary": summary,
+        "pr_url": pr_url,
+        "thread_id": thread_id,
+    }
 
 
 def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
@@ -373,11 +490,17 @@ def record_task_debrief(
         )
         conn.commit()
         conn.close()
+        friction_lower = (frictions or "").lower()
+        friction_assignee = (
+            "sindri"
+            if any(k in friction_lower for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml"))
+            else "vor"
+        )
         chore_id, chore_thread_id = create_kanban_task(
             title=ctitle,
             body=cbody,
             priority=2,
-            assignee=DEFAULT_ASSIGNEE,
+            assignee=friction_assignee,
         )
         conn = sqlite3.connect(KANBAN_DB_PATH)
         cursor = conn.cursor()

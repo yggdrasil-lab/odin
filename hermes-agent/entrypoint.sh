@@ -111,7 +111,17 @@ else
     /usr/local/bin/kanban-gateway serve --host 0.0.0.0 --port 8643 &
   fi
 
-  # 7. Ensure profile directories and control files satisfy Hermes private-node checks
+  # 7. Render Court of Odin specialist profiles & symlinked skill trees if roles.json is mounted
+  if [ -f /app/vault/Forge/odin/config/hermes/profiles/render_profiles.py ]; then
+    echo "Rendering Court of Odin specialist profiles..."
+    /opt/hermes/.venv/bin/python /app/vault/Forge/odin/config/hermes/profiles/render_profiles.py \
+      --template /app/vault/Forge/odin/config/hermes/config.yaml.template \
+      --roles /app/vault/Forge/odin/config/hermes/profiles/roles.json \
+      --output-dir /opt/data/profiles \
+      --skills-source /opt/data/skills || true
+  fi
+
+  # 8. Ensure profile directories and control files satisfy Hermes private-node checks
   chmod 755 /opt/data /opt/data/profiles /opt/data/profiles/* 2>/dev/null || true
   chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true
 

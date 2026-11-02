@@ -19,7 +19,7 @@ model:
   # OAuth token under the container's home dir (~/.gemini/antigravity-cli).
   provider: "antigravity-subscription-directsdk"
 
-  # ── Token limits - two settings, easy to confuse ──────────────────────────
+  # -- Token limits - two settings, easy to confuse --------------------------
   #
   # context_length: TOTAL context window (input + output tokens combined).
   #   Controls when Hermes compresses history and validates requests.
@@ -214,10 +214,10 @@ compression:
   # Enable automatic context compression (default: true)
   enabled: true
   
-  # Trigger compression at this % of model's context limit (0.70 = 70% of context window)
-  threshold: 0.70
-  # Absolute token cap for agy 200k context: trigger at 140k tokens before agy 200k ceiling
-  threshold_tokens: 140000
+  # Trigger compression at this % of model's context limit (0.80 = 80% of context window)
+  threshold: 0.80
+  # Absolute token cap for agy 200k context: trigger at 160k tokens (80% of agy 200k ceiling)
+  threshold_tokens: 160000
   
   # Fraction of the threshold to preserve as recent tail (default: 0.20 = 20%)
   target_ratio: 0.20
@@ -279,52 +279,33 @@ plugins:
     - "jev-approvals"
 
 # =============================================================================
-# MCP Servers
+# Gateway Multiplexing (Court of Odin Specialist Profiles)
 # =============================================================================
-# The Kratos workout API is reached over its own MCP endpoint. That endpoint
-# carries a bearer token independent of the app's OIDC login, because an MCP
-# server cannot mint tokens for itself; the client presents a shared secret.
-#
-# The placeholder is deliberately the Cursor-style ${env:VAR} form rather than
-# ${VAR}. The deploy step renders this template with os.path.expandvars(), which
-# expands ${VAR} but leaves ${env:VAR} untouched: with ${VAR} the token would be
-# baked into /opt/data/config.yaml as plaintext at deploy time. With ${env:...}
-# the literal placeholder survives to the agent, which resolves it from the
-# container environment when it loads the MCP config (tools/mcp_tool_config.py,
-# _interpolate_env_vars). An unset variable resolves to the literal placeholder,
-# which fails closed as a 401 rather than sending an empty credential.
-mcp_servers:
-  kratos:
-    enabled: true
-    url: https://kratos.${DOMAIN_NAME}/mcp
-    headers:
-      Authorization: Bearer ${KRATOS_MCP_TOKEN}
-  playwright:
-    enabled: true
-    url: http://poseidon_playwright:8931/sse
+gateway:
+  multiplex_profiles: true
 
 # =============================================================================
-# Platform Toolsets
+# MCP Servers
+# =============================================================================
+# Main 'odin' Coordinator attaches 0 MCP servers to keep base turn overhead minimal.
+# Domain MCP servers are scoped strictly to specialist profiles via render_profiles.py:
+#   - saga: kratos MCP (https://kratos.${DOMAIN_NAME}/mcp)
+#   - forseti: playwright MCP (http://poseidon_playwright:8931/sse)
+mcp_servers: {}
+
+# =============================================================================
+# Platform Toolsets (Odin Top-Level Coordinator)
 # =============================================================================
 platform_toolsets:
   discord:
-    - browser
     - clarify
-    - code_execution
-    - computer_use
-    - connections
     - cronjob
     - delegation
     - discord
     - file
-    - image_gen
     - memory
-    - session_search
     - skills
     - terminal
-    - todo
-    - tts
-    - vision
-    - web
+
 
 
