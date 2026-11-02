@@ -113,6 +113,32 @@ class TestProfileRenderer(unittest.TestCase):
                             linked.append(d)
                 self.assertEqual(len(linked), len(expected_skills))
 
+            # Verify non-destructive behavior on re-render:
+            # 1. Runtime edits to SOUL.md survive re-render
+            vor_soul = os.path.join(profiles_dst, "vor", "SOUL.md")
+            with open(vor_soul, "a", encoding="utf-8") as sf:
+                sf.write("\n# Runtime wrap-up improvement\n")
+
+            # 2. Newly added valid skill symlink survives re-render, while broken symlink is pruned
+            extra_skill_src = os.path.join(skills_src, "custom", "learned-skill")
+            os.makedirs(extra_skill_src, exist_ok=True)
+            vor_custom_dir = os.path.join(profiles_dst, "vor", "skills", "custom")
+            os.makedirs(vor_custom_dir, exist_ok=True)
+            os.symlink(extra_skill_src, os.path.join(vor_custom_dir, "learned-skill"))
+            os.symlink(os.path.join(skills_src, "custom", "nonexistent-skill"), os.path.join(vor_custom_dir, "broken-skill"))
+
+            re_rendered = render_all_profiles(
+                template_path=template_path,
+                roles_path=roles_path,
+                output_profiles_dir=profiles_dst,
+                skills_source_dir=skills_src,
+                env_vars={"AGENT_MODEL": "gemini-3.8-flash-high", "DOMAIN_NAME": "tienzo.net"},
+            )
+            with open(vor_soul, "r", encoding="utf-8") as sf:
+                self.assertIn("# Runtime wrap-up improvement", sf.read())
+            self.assertIn("custom/learned-skill", re_rendered["vor"]["linked_skills"])
+            self.assertFalse(os.path.lexists(os.path.join(vor_custom_dir, "broken-skill")))
+
 
 if __name__ == "__main__":
     unittest.main()

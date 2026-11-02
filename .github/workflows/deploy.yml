@@ -97,14 +97,14 @@ jobs:
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"
 
-          # Expand config templates and render Court of Odin specialist profiles
+          # Expand config templates (specialist profiles are rendered non-destructively in /opt/odin/hermes/profiles)
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
-          python3 config/hermes/profiles/render_profiles.py --template config/hermes/config.yaml.template --roles config/hermes/profiles/roles.json --output-dir config/hermes/rendered_profiles --skills-source /opt/odin/hermes/skills --symlink-target-prefix /opt/data/skills
+          python3 config/hermes/profiles/render_profiles.py --template config/hermes/config.yaml.template --roles config/hermes/profiles/roles.json --output-dir /opt/odin/hermes/profiles --skills-source /opt/odin/hermes/skills --symlink-target-prefix /opt/data/skills
           
           # Write config files and preserve strict private-node permissions on control sockets/locks/SSH keys
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
-          docker run --rm -i -v /opt/odin/hermes:/opt/data -v "$PWD/config/hermes/rendered_profiles":/rendered_profiles:ro alpine sh -c "mkdir -p /opt/data /opt/data/profiles && cat > /opt/data/config.yaml && chmod 644 /opt/data/config.yaml && cp -a /rendered_profiles/. /opt/data/profiles/ && chown -R 1000:1000 /opt/data && chmod 755 /opt/data /opt/data/profiles /opt/data/profiles/* 2>/dev/null || true && chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true" < config/hermes/config.yaml
+          docker run --rm -i -v /opt/odin/hermes:/opt/data alpine sh -c "mkdir -p /opt/data /opt/data/profiles && cat > /opt/data/config.yaml && chmod 644 /opt/data/config.yaml && chown -R 1000:1000 /opt/data && chmod 755 /opt/data /opt/data/profiles /opt/data/profiles/* 2>/dev/null || true && chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true" < config/hermes/config.yaml
           
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
           chmod +x /tmp/deploy.sh
