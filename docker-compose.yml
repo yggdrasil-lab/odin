@@ -224,6 +224,7 @@ services:
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       # Bearer token for the Kratos MCP endpoint. Sourced from the organization
       # secret KRATOS_MCP_TOKEN.
+      - DOMAIN_NAME=${DOMAIN_NAME}
       - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
       - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
       # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
@@ -304,6 +305,7 @@ services:
       - HERMES_GID=1000
       # Bearer token for the Kratos MCP endpoint, same value the gateway
       # presents. Sourced from the organization secret KRATOS_MCP_TOKEN.
+      - DOMAIN_NAME=${DOMAIN_NAME}
       - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
       - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
       - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
