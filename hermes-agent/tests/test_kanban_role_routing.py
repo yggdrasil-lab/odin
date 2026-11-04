@@ -77,6 +77,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     created_at INTEGER,
                     workspace_kind TEXT,
                     consecutive_failures INTEGER,
+                    last_failure_error TEXT,
                     goal_mode INTEGER,
                     block_recurrences INTEGER,
                     model_override TEXT,
@@ -128,6 +129,16 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     body="Check docker service logs for poseidon.",
                     notify_discord=False,
                 )
+
+                # Simulate prior failure state on the task
+                conn = sqlite3.connect(db_path)
+                conn.execute(
+                    "UPDATE tasks SET consecutive_failures = 2, last_failure_error = 'Playwright assertion failure' WHERE id = ?",
+                    (task_id,),
+                )
+                conn.commit()
+                conn.close()
+
                 res = engine.handoff_kanban_task(
                     task_id=task_id,
                     to_assignee="sindri",
@@ -138,7 +149,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
 
                 conn = sqlite3.connect(db_path)
                 row = conn.execute(
-                    "SELECT assignee, status, model_override, body FROM tasks WHERE id = ?",
+                    "SELECT assignee, status, model_override, body, consecutive_failures, last_failure_error FROM tasks WHERE id = ?",
                     (task_id,),
                 ).fetchone()
                 conn.close()
@@ -146,6 +157,8 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 self.assertEqual(row[1], "ready")
                 self.assertEqual(row[2], "gemini-4-argon-high")
                 self.assertIn("Root cause: missing env var", row[3])
+                self.assertEqual(row[4], 0)
+                self.assertIsNone(row[5])
 
 
 if __name__ == "__main__":
