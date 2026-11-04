@@ -283,7 +283,7 @@ def handoff_kanban_task(
     cursor.execute(
         """
         UPDATE tasks
-        SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?
+        SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?, consecutive_failures = 0, last_failure_error = NULL
         WHERE id = ?
         """,
         (resolved_to, new_body, model_override, provider_override, task_id),
