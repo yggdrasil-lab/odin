@@ -100,7 +100,7 @@ REPLACEMENT_APPROVAL = (
     "    return None\n"
 )
 
-ANCHOR_APPROVAL_FULL = (
+ANCHOR_APPROVAL_LEGACY = (
     "def _unattended_deny(command: str, ctx: _Unattended) -> dict | None:\n"
     "    \"\"\"Deny-mode handling for one unattended context (cron / -q / webhook); None = allow.\"\"\"\n"
     "    if ctx.mode() != \"deny\":\n"
@@ -120,6 +120,57 @@ ANCHOR_APPROVAL_FULL = (
     "    return None\n"
 )
 
+ANCHOR_APPROVAL_V2 = (
+    "def _unattended_deny(command: str, ctx: _Unattended) -> dict | None:\n"
+    "    \"\"\"Deny-mode handling for one unattended context (cron / -q / webhook); None = allow.\"\"\"\n"
+    "    if ctx.mode() != \"deny\":\n"
+    "        return None\n"
+    "\n"
+    "    def block(subject: str) -> dict:\n"
+    "        return {\"approved\": False, \"message\": ctx.block_message(\n"
+    "            subject, noun=\"dangerous commands\",\n"
+    "            advice=\"Find an alternative approach that avoids this command.\")}\n"
+    "\n"
+    "    pending = _unapproved_findings(command, _is_permanently_approved)\n"
+    "    if pending is not None:\n"
+    "        keys, description = pending\n"
+    "        result = block(f\"Command flagged as dangerous ({description})\")\n"
+    "        if ctx.name == \"single_query\":\n"
+    "            result.update(pattern_key=keys[0], description=description)\n"
+    "        return result\n"
+    "    return None\n"
+)
+
+REPLACEMENT_APPROVAL_V2 = (
+    "def _unattended_deny(command: str, ctx: _Unattended) -> dict | None:\n"
+    "    \"\"\"Deny-mode handling for one unattended context (cron / -q / webhook); None = allow.\"\"\"\n"
+    "    if ctx.mode() != \"deny\":\n"
+    "        return None\n"
+    "\n"
+    f"    {MARKER_APPROVAL}\n"
+    "    def block(subject: str, advice: str = \"Find an alternative approach that avoids this command.\") -> dict:\n"
+    "        return {\"approved\": False, \"message\": ctx.block_message(\n"
+    "            subject, noun=\"dangerous commands\",\n"
+    "            advice=advice)}\n"
+    "\n"
+    "    pending = _unapproved_findings(command, _is_permanently_approved)\n"
+    "    if pending is not None:\n"
+    "        keys, description = pending\n"
+    "        if \"via -e/-c flag\" in description or \"via -c/-lc flag\" in description:\n"
+    "            advice = (\n"
+    "                \"Inline code flags (-c/-e) are blocked in unattended execution. \"\n"
+    "                \"Use execute_code for Python logic, write scripts to temporary files via write_file and run them, \"\n"
+    "                \"or use dedicated inspection tools (read_file, search_files).\"\n"
+    "            )\n"
+    "        else:\n"
+    "            advice = \"Find an alternative approach that avoids this command.\"\n"
+    "        result = block(f\"Command flagged as dangerous ({description})\", advice=advice)\n"
+    "        if ctx.name == \"single_query\":\n"
+    "            result.update(pattern_key=keys[0], description=description)\n"
+    "        return result\n"
+    "    return None\n"
+)
+
 
 def patch_worker(target: Path = TARGET_WORKER) -> bool:
     if not target.is_file():
@@ -129,12 +180,15 @@ def patch_worker(target: Path = TARGET_WORKER) -> bool:
     if MARKER_WORKER in src:
         print("[odin-patch] kanban_worker_client retry patch already applied; skipping")
         return True
-    if ANCHOR_WORKER not in src:
-        print(f"[odin-patch] ERROR: retry anchor not found in {target}; upstream changed", file=sys.stderr)
-        return False
-    target.write_text(src.replace(ANCHOR_WORKER, REPLACEMENT_WORKER, 1), encoding="utf-8")
-    print(f"[odin-patch] patched {target} (gateway retry resilience)")
-    return True
+    if ANCHOR_WORKER in src:
+        target.write_text(src.replace(ANCHOR_WORKER, REPLACEMENT_WORKER, 1), encoding="utf-8")
+        print(f"[odin-patch] patched {target} (gateway retry resilience)")
+        return True
+    if "except (GatewayClientError, WebSocketException, OSError, TimeoutError) as exc:" in src:
+        print("[odin-patch] upstream kanban_worker_client natively handles gateway retry; skipping")
+        return True
+    print(f"[odin-patch] ERROR: retry anchor not found in {target}; upstream changed", file=sys.stderr)
+    return False
 
 
 def patch_approval(target: Path = TARGET_APPROVAL) -> bool:
@@ -145,12 +199,16 @@ def patch_approval(target: Path = TARGET_APPROVAL) -> bool:
     if MARKER_APPROVAL in src:
         print("[odin-patch] approval error messaging patch already applied; skipping")
         return True
-    if ANCHOR_APPROVAL_FULL not in src:
-        print(f"[odin-patch] ERROR: approval anchor not found in {target}; upstream changed", file=sys.stderr)
-        return False
-    target.write_text(src.replace(ANCHOR_APPROVAL_FULL, REPLACEMENT_APPROVAL, 1), encoding="utf-8")
-    print(f"[odin-patch] patched {target} (clarified single-query/unattended error advice)")
-    return True
+    if ANCHOR_APPROVAL_V2 in src:
+        target.write_text(src.replace(ANCHOR_APPROVAL_V2, REPLACEMENT_APPROVAL_V2, 1), encoding="utf-8")
+        print(f"[odin-patch] patched {target} (clarified single-query/unattended error advice - v2)")
+        return True
+    if ANCHOR_APPROVAL_LEGACY in src:
+        target.write_text(src.replace(ANCHOR_APPROVAL_LEGACY, REPLACEMENT_APPROVAL, 1), encoding="utf-8")
+        print(f"[odin-patch] patched {target} (clarified single-query/unattended error advice - legacy)")
+        return True
+    print(f"[odin-patch] ERROR: approval anchor not found in {target}; upstream changed", file=sys.stderr)
+    return False
 
 
 def main() -> int:
