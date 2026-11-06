@@ -74,6 +74,17 @@ def call_typesafe_systemone(
         raise RuntimeError(f"TypeSafe connection error: {e}") from e
 
 
+def _extract_questions_dict(parsed: Any) -> Optional[Dict[str, Any]]:
+    """Extracts a valid Jev System One questions mapping from a parsed JSON object."""
+    if not isinstance(parsed, dict) or not parsed:
+        return None
+    if "questions" in parsed and isinstance(parsed["questions"], dict) and parsed["questions"]:
+        return parsed["questions"]
+    if any(isinstance(v, dict) and "type" in v for v in parsed.values()):
+        return parsed
+    return None
+
+
 def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, Dict[str, Any]]:
     """Inspects chat history to assemble state and derive typed decision primitives."""
     system_text = ""
@@ -90,20 +101,32 @@ def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, D
     state_body = "\n".join(user_texts).strip()
     full_prompt = f"{system_text}\n{state_body}".strip()
 
-    # Check for embedded custom schema hints
+    # Check for embedded custom schema hints in fenced code blocks
     custom_hint_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", full_prompt)
     if custom_hint_match:
         try:
             parsed = json.loads(custom_hint_match.group(1))
-            questions = None
-            if isinstance(parsed, dict):
-                if "questions" in parsed and isinstance(parsed["questions"], dict):
-                    questions = parsed["questions"]
-                elif any("type" in v for v in parsed.values() if isinstance(v, dict)):
-                    questions = parsed
+            questions = _extract_questions_dict(parsed)
             if questions:
-                clean_full = full_prompt[:custom_hint_match.start()].strip() + "\n" + full_prompt[custom_hint_match.end():].strip()
-                state = state_body or clean_full
+                clean_state = re.sub(r"```(?:json)?\s*\{[\s\S]*?\}\s*```", "", state_body).strip()
+                clean_full = (
+                    full_prompt[:custom_hint_match.start()].strip()
+                    + "\n"
+                    + full_prompt[custom_hint_match.end():].strip()
+                )
+                state = clean_state or clean_full
+                return state.strip(), questions
+        except Exception:
+            pass
+
+    # Check for raw JSON schema in system prompt
+    raw_sys = system_text.strip()
+    if raw_sys.startswith("{") and raw_sys.endswith("}"):
+        try:
+            parsed = json.loads(raw_sys)
+            questions = _extract_questions_dict(parsed)
+            if questions:
+                state = state_body or full_prompt
                 return state.strip(), questions
         except Exception:
             pass
@@ -174,31 +197,49 @@ def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, D
     return full_prompt, questions
 
 
+def extract_verdict(val: Any) -> Optional[str]:
+    """Extracts a normalized string verdict from a single Jev answer entry."""
+    if not isinstance(val, dict):
+        return None
+    if "choice" in val:
+        return str(val.get("choice", ""))
+    if "score" in val:
+        raw_score = float(val.get("score", 0.0))
+        scaled = int(round(1 + (raw_score / 3.0) * 9))
+        return str(scaled)
+    if "noul" in val:
+        prob = float(val.get("noul", 0.0))
+        return "true" if prob >= 0.5 else "false"
+    return None
+
+
 def format_openai_completion(
     model: str,
     answers: Dict[str, Any],
     raw_response: Dict[str, Any],
+    response_format: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Converts Jev answers dictionary into an OpenAI completion envelope."""
-    content = ""
-    for key, val in answers.items():
-        if not isinstance(val, dict):
-            continue
-        if "choice" in val:
-            content = str(val.get("choice", ""))
-            break
-        if "score" in val:
-            raw_score = val.get("score", 0.0)
-            scaled = int(round(1 + (raw_score / 3.0) * 9))
-            content = str(scaled)
-            break
-        if "noul" in val:
-            prob = val.get("noul", 0.0)
-            content = "true" if prob >= 0.5 else "false"
-            break
+    """Converts Jev answers dictionary into an OpenAI completion envelope.
 
-    if not content:
+    Single-question requests return a plain string verdict for backwards compatibility,
+    unless response_format={"type": "json_object"} is explicitly requested.
+    Multi-question requests (len(answers) > 1) return a JSON object mapping each
+    question key to its normalized string verdict.
+    """
+    verdicts: Dict[str, str] = {}
+    for key, val in answers.items():
+        verdict = extract_verdict(val)
+        if verdict is not None:
+            verdicts[key] = verdict
+
+    force_json = isinstance(response_format, dict) and response_format.get("type") == "json_object"
+
+    if not verdicts:
         content = json.dumps(answers)
+    elif len(answers) > 1 or len(verdicts) > 1 or force_json:
+        content = json.dumps(verdicts)
+    else:
+        content = next(iter(verdicts.values()))
 
     completion_id = f"chatcmpl-jev-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
@@ -278,6 +319,7 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
 
         messages = body.get("messages", [])
         requested_model = body.get("model", DEFAULT_MODEL)
+        response_format = body.get("response_format")
         upstream_model = DEFAULT_MODEL if "jev" in requested_model else DEFAULT_MODEL
 
         # Resolve API key from header or environment
@@ -297,12 +339,20 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
             return
 
         state, questions = infer_question_from_messages(messages)
+        explicit_questions = _extract_questions_dict(body.get("questions"))
+        if explicit_questions:
+            questions = explicit_questions
         logger.info("Routing request to Jev. Questions: %s", list(questions.keys()))
 
         try:
             jev_res = call_typesafe_systemone(state, questions, api_key, model=upstream_model)
             answers = jev_res.get("answers", {})
-            completion = format_openai_completion(requested_model, answers, jev_res)
+            completion = format_openai_completion(
+                requested_model,
+                answers,
+                jev_res,
+                response_format=response_format,
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

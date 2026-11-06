@@ -26,6 +26,7 @@ model_list:
   # agent-delegate  reasoning tier - delegation / coding subagents
   # memory-extract  fast tier      - Mnemosyne memory consolidation
   # compress        fast tier      - Hermes context compression summarizer
+  # app-synthesize  fast tier      - Homelab app synthesis (Kratos, Midas/Plutus, Eir)
   # agent-auto      complexity router (dormant)
 
   # Fast tier - Hermes main agent loop.
@@ -47,11 +48,21 @@ model_list:
       timeout: 600
 
   # Fast tier - Hermes context compression summarizer.
-  # Routed to Gemini 2.5 Flash on Google API (1M context, ~2s latency) rather than
-  # DeepSeek V4-Flash which experiences 503 upstream congestion and 300s timeouts.
+  # Routed to Gemini 2.5 Flash-Lite on Google API (1M context, ~2s latency, zero hidden
+  # thinking token drain) using GEMINI_API_KEY, with fallback to agent-loop.
   - model_name: compress
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: &gemini_flash_lite gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 120
+
+  # Fast tier - Homelab app protocol and scenario synthesis (Kratos, Midas/Plutus, Eir).
+  # Backed by Gemini 2.5 Flash-Lite ($0.10/$0.40 per 1M, 15 RPM / 500-1000 RPD on Free Tier)
+  # using GEMINI_API_KEY, with automatic fallback to agent-loop (DeepSeek V4-Flash).
+  - model_name: app-synthesize
+    litellm_params:
+      model: *gemini_flash_lite
+      api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
   # Fast tier - TypeSafe Jev System One decision and background monitor scorer.
@@ -87,15 +98,37 @@ model_list:
       complexity_router_default_model: agent-loop
 
   # Google Gemini Models (API key read from GEMINI_API_KEY environment variable)
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      model: *gemini_flash_lite
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 600
+
   - model_name: gemini-2.5-flash
     litellm_params:
       model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
   - model_name: gemini-2.5-pro
     litellm_params:
       model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
       timeout: 600
+
+litellm_settings:
+  fallbacks:
+    - app-synthesize:
+        - agent-loop
+    - compress:
+        - agent-loop
+
+router_settings:
+  fallbacks:
+    - app-synthesize:
+        - agent-loop
+    - compress:
+        - agent-loop
 
 general_settings:
   store_prompts_in_spend_logs: true
