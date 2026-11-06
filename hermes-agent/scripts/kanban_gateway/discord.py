@@ -9,6 +9,7 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 from .config import (
+    DISCORD_BOT_TOKEN,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
     DISCORD_WEBHOOK_URL,
@@ -20,52 +21,83 @@ from .config import (
 
 
 def post_discord_thread(title: str, thread_name: str, description: str, fields: Optional[list] = None) -> str:
-    """Creates a new topic thread in the Discord forum channel via webhook."""
-    if not DISCORD_WEBHOOK_URL:
-        raise ValueError("KANBAN_DISCORD_WEBHOOK_URL is not set in environment.")
-
-    url = f"{DISCORD_WEBHOOK_URL}?wait=true"
-
+    """Creates a new topic thread in the Discord forum channel via bot token or legacy webhook."""
     embed_fields = fields or []
     mention = f"<@{DISCORD_USER_ID}>" if DISCORD_USER_ID else ""
-    payload = {
-        "username": "Huginn Kanban",
-        "thread_name": thread_name[:100],
-        "content": mention,
-        "embeds": [
-            {
-                "title": f"📋 {title[:256]}",
-                "color": STATUS_COLORS["READY"],
-                "description": description[:4096],
-                "fields": embed_fields,
-                "footer": {"text": "Yggdrasil Autonomous Kanban • Huginn"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
+    embed = {
+        "title": f"📋 {title[:256]}",
+        "color": STATUS_COLORS["READY"],
+        "description": description[:4096],
+        "fields": embed_fields,
+        "footer": {"text": "Yggdrasil Autonomous Kanban • Huginn"},
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
+    # 1. Bot token channel thread creation (Discord Forum Channel type 15)
+    if DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID:
+        url = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/threads"
+        payload = {
+            "name": thread_name[:100],
+            "message": {
+                "content": mention,
+                "embeds": [embed],
+            },
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                thread_id = data.get("id")
+                if not thread_id:
+                    raise ValueError(f"Discord response missing thread id: {data}")
+                logger.info("Successfully provisioned Discord thread %s for '%s' via bot token", thread_id, title)
+                return str(thread_id)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            logger.error("Discord bot API returned HTTP %d: %s", e.code, body)
+            raise RuntimeError(f"Discord API HTTP {e.code}: {body}") from e
 
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            thread_id = data.get("channel_id")
-            if not thread_id:
-                raise ValueError(f"Discord response missing channel_id: {data}")
-            logger.info("Successfully provisioned Discord thread %s for '%s'", thread_id, title)
-            return str(thread_id)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        logger.error("Discord webhook returned HTTP %d: %s", e.code, body)
-        raise RuntimeError(f"Discord API HTTP {e.code}: {body}") from e
+    # 2. Legacy webhook forum thread creation fallback
+    if DISCORD_WEBHOOK_URL:
+        url = f"{DISCORD_WEBHOOK_URL}?wait=true"
+        payload = {
+            "username": "Huginn Kanban",
+            "thread_name": thread_name[:100],
+            "content": mention,
+            "embeds": [embed],
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                thread_id = data.get("channel_id")
+                if not thread_id:
+                    raise ValueError(f"Discord response missing channel_id: {data}")
+                logger.info("Successfully provisioned Discord thread %s for '%s' via webhook", thread_id, title)
+                return str(thread_id)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            logger.error("Discord webhook returned HTTP %d: %s", e.code, body)
+            raise RuntimeError(f"Discord API HTTP {e.code}: {body}") from e
+
+    raise ValueError("Neither DISCORD_BOT_TOKEN (+ channel ID) nor KANBAN_DISCORD_WEBHOOK_URL is set.")
 
 
 def post_thread_lifecycle_update(
@@ -75,50 +107,72 @@ def post_thread_lifecycle_update(
     fields: Optional[list] = None,
 ) -> bool:
     """Posts a status transition embed directly to an existing Discord card thread."""
-    if not DISCORD_WEBHOOK_URL:
-        logger.warning("KANBAN_DISCORD_WEBHOOK_URL is not set; skipping Discord thread update.")
-        return False
-
-    url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
     color = STATUS_COLORS.get(status.upper(), 3447003)
-
     embed_fields = fields or []
     canonical = STATUS_CANONICAL.get(status.lower(), status.lower())
     mention = f"<@{DISCORD_USER_ID}> 🔔 Review Required" if (canonical == "in_review" and DISCORD_USER_ID) else ""
 
-    payload = {
-        "username": "Huginn Kanban",
-        "embeds": [
-            {
-                "title": f"🔄 Task Lifecycle: {status.upper()}",
-                "color": color,
-                "description": message,
-                "fields": embed_fields,
-                "footer": {"text": f"Thread ID: {thread_id}"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
+    embed = {
+        "title": f"🔄 Task Lifecycle: {status.upper()}",
+        "color": color,
+        "description": message,
+        "fields": embed_fields,
+        "footer": {"text": f"Thread ID: {thread_id}"},
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    if mention:
-        payload["content"] = mention
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
+    # 1. Bot token thread message
+    if DISCORD_BOT_TOKEN:
+        url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
+        payload = {"embeds": [embed]}
+        if mention:
+            payload["content"] = mention
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                logger.info("Posted update '%s' to thread %s via bot token (HTTP %d)", status, thread_id, resp.status)
+                return True
+        except Exception as e:
+            logger.error("Failed posting update to thread %s via bot token: %s", thread_id, e)
+            return False
 
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            logger.info("Posted update '%s' to thread %s (HTTP %d)", status, thread_id, resp.status)
-            return True
-    except Exception as e:
-        logger.error("Failed posting update to thread %s: %s", thread_id, e)
-        return False
+    # 2. Legacy webhook thread message
+    if DISCORD_WEBHOOK_URL:
+        url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
+        payload = {
+            "username": "Huginn Kanban",
+            "embeds": [embed],
+        }
+        if mention:
+            payload["content"] = mention
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                logger.info("Posted update '%s' to thread %s via webhook (HTTP %d)", status, thread_id, resp.status)
+                return True
+        except Exception as e:
+            logger.error("Failed posting update to thread %s via webhook: %s", thread_id, e)
+            return False
+
+    logger.warning("Neither DISCORD_BOT_TOKEN nor KANBAN_DISCORD_WEBHOOK_URL is set; skipping Discord thread update.")
+    return False
 
 
 def post_thread_debrief(
@@ -133,11 +187,6 @@ def post_thread_debrief(
     friction_gate: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Posts a structured Task Debrief embed directly into a Discord card thread."""
-    if not DISCORD_WEBHOOK_URL:
-        logger.warning("KANBAN_DISCORD_WEBHOOK_URL is not set; skipping Discord thread update.")
-        return False
-
-    url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
     color = STATUS_COLORS.get("DEBRIEF", 10181046)
 
     # Auto-extract PR URL from summary if not explicitly provided
@@ -181,36 +230,64 @@ def post_thread_debrief(
     elif friction_gate and friction_gate.get("action") == "ignore_transient":
         fields.append({"name": "Friction Triage", "value": "Transient noise suppressed (no chore card spawned)", "inline": True})
 
-    payload = {
-        "username": "Huginn Kanban",
-        "embeds": [
-            {
-                "title": "Task Debrief & Retrospective",
-                "color": color,
-                "description": summary,
-                "fields": fields,
-                "footer": {"text": f"Thread ID: {thread_id} • Continuous Improvement"},
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        ],
+    embed = {
+        "title": "Task Debrief & Retrospective",
+        "color": color,
+        "description": summary,
+        "fields": fields,
+        "footer": {"text": f"Thread ID: {thread_id} • Continuous Improvement"},
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    if mention:
-        payload["content"] = mention
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
+    # 1. Bot token thread message
+    if DISCORD_BOT_TOKEN:
+        url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
+        payload = {"embeds": [embed]}
+        if mention:
+            payload["content"] = mention
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                logger.info("Posted debrief for %s to thread %s via bot token (HTTP %d)", task_id, thread_id, resp.status)
+                return True
+        except Exception as e:
+            logger.error("Failed posting debrief for %s to thread %s via bot token: %s", task_id, thread_id, e)
+            return False
 
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            logger.info("Posted debrief for %s to thread %s (HTTP %d)", task_id, thread_id, resp.status)
-            return True
-    except Exception as e:
-        logger.error("Failed posting debrief for %s to thread %s: %s", task_id, thread_id, e)
-        return False
+    # 2. Legacy webhook thread message
+    if DISCORD_WEBHOOK_URL:
+        url = f"{DISCORD_WEBHOOK_URL}?thread_id={thread_id}&wait=true"
+        payload = {
+            "username": "Huginn Kanban",
+            "embeds": [embed],
+        }
+        if mention:
+            payload["content"] = mention
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                logger.info("Posted debrief for %s to thread %s via webhook (HTTP %d)", task_id, thread_id, resp.status)
+                return True
+        except Exception as e:
+            logger.error("Failed posting debrief for %s to thread %s via webhook: %s", task_id, thread_id, e)
+            return False
+
+    logger.warning("Neither DISCORD_BOT_TOKEN nor KANBAN_DISCORD_WEBHOOK_URL is set; skipping Discord thread update.")
+    return False

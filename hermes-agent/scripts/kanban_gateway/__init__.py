@@ -5,6 +5,7 @@ from __future__ import annotations
 from .config import (
     ASSIGNEE_ALIASES,
     DEFAULT_ASSIGNEE,
+    DISCORD_BOT_TOKEN,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
     DISCORD_WEBHOOK_URL,
