@@ -6,7 +6,7 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .config import (
     ASSIGNEE_ALIASES,
@@ -59,7 +59,7 @@ def call_jev_raw(
             return content, elapsed
     except Exception as e:
         elapsed = time.time() - start
-        logger.error("Jev evaluation failed through Muninn (%s): %s", MUNINN_API_URL, e)
+        logger.error("Jev evaluation failed through Muninn (%s): %s", endpoint, e)
         return f"fallback_error: {e}", elapsed
 
 
@@ -128,21 +128,21 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
     content, elapsed = call_jev_raw(system_prompt, f"Task Title: {title}\n\nTask Description:\n{body}")
     content_lower = content.lower()
     tier = "flash_fast"
-    if "human_pairing" in content_lower:
-        tier = "human_pairing"
-    elif "frontier_deep" in content_lower:
-        tier = "frontier_deep"
-    elif "flash_fast" in content_lower:
-        tier = "flash_fast"
-
-    # Extract specialist role from JSON or text
     recommended_assignee = ""
     try:
         parsed = json.loads(content)
-        if isinstance(parsed, dict) and parsed.get("role"):
-            recommended_assignee = normalize_assignee(str(parsed["role"]))
+        if isinstance(parsed, dict):
+            if parsed.get("tier") in ("flash_fast", "frontier_deep", "human_pairing"):
+                tier = str(parsed["tier"])
+            if parsed.get("role"):
+                recommended_assignee = normalize_assignee(str(parsed["role"]))
     except Exception:
-        pass
+        if "human_pairing" in content_lower:
+            tier = "human_pairing"
+        elif "frontier_deep" in content_lower:
+            tier = "frontier_deep"
+        elif "flash_fast" in content_lower:
+            tier = "flash_fast"
 
     if not recommended_assignee or recommended_assignee == "swarm-worker":
         for candidate in ("huginn", "sindri", "forseti", "vor", "saga", *ASSIGNEE_ALIASES.keys()):
@@ -174,6 +174,206 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
         "recommended_model": recommended_model,
         "raw_verdict": content,
         "latency_seconds": round(elapsed, 3),
+    }
+
+
+def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "") -> Dict[str, Any]:
+    """Batches event actionability, task complexity tier, and specialist role in 1 Jev round-trip."""
+    schema = {
+        "questions": {
+            "actionable": {
+                "type": "noul",
+                "instructions": (
+                    "True if the event represents an actionable multi-step engineering task, bugfix, "
+                    "infrastructure repair, or maintenance job requiring Kanban tracking; False if routine "
+                    "telemetry, transient health ping, or non-actionable noise."
+                ),
+            },
+            "tier": {
+                "type": "choice",
+                "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",
+                "criteria": {
+                    "flash_fast": "Routine chores, documentation updates, log/web investigation, biometric/journal entries, QA checks, or minor script tweaks.",
+                    "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, or complex Forge PR implementation.",
+                    "human_pairing": "Architectural forks, destructive deletions, or fundamental trade-offs requiring pairing with Raymund.",
+                },
+            },
+            "role": {
+                "type": "choice",
+                "instructions": "Assign the task to the single best Court of Odin specialist: huginn, sindri, forseti, vor, or saga",
+                "criteria": {
+                    "huginn": "Scout Raven: log triage, root-cause diagnostics, host/Swarm telemetry inspection, and web research.",
+                    "sindri": "Forge Builder: code changes, Docker Swarm compose stacks, Dockerfile/CI updates, and PR creation in Forge/<repo>.",
+                    "forseti": "QA & Visual Gate: Playwright visual verification, PR diff invariant audits, and schema validation.",
+                    "vor": "Vault & Memory Curator: session wrap-ups, skill maintenance, Mnemosyne hygiene, and Areas/90-Infrastructure documentation.",
+                    "saga": "Journal & Health Scribe: Daily Journal stories, life areas (00-30), Eir biometrics analysis, and Kratos workout autoregulation.",
+                },
+            },
+        }
+    }
+    system_prompt = (
+        "Evaluate event actionability, complexity tier, and specialist role for the Court of Odin:\n"
+        f"```json\n{json.dumps(schema)}\n```"
+    )
+    user_content = (
+        f"Context:\n{context}\n\nTitle: {title}\n\nEvent:\n{event_text}"
+        if context
+        else f"Title: {title}\n\nEvent:\n{event_text}"
+    )
+    content, elapsed = call_jev_raw(system_prompt, user_content)
+
+    is_actionable = "fallback_error" in content
+    tier = "flash_fast"
+    recommended_assignee = ""
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            is_actionable = str(parsed.get("actionable", "true")).lower() == "true"
+            if parsed.get("tier") in ("flash_fast", "frontier_deep", "human_pairing"):
+                tier = str(parsed["tier"])
+            if parsed.get("role"):
+                recommended_assignee = normalize_assignee(str(parsed["role"]))
+    except Exception:
+        is_actionable = "true" in content.lower() or "fallback_error" in content
+
+    if tier == "human_pairing":
+        recommended_assignee = "raymund"
+        recommended_model = "human/raymund"
+    else:
+        if not recommended_assignee or recommended_assignee == "swarm-worker":
+            recommended_assignee = _infer_specialist_from_text(title, event_text, tier)
+        if tier == "frontier_deep" or recommended_assignee == "sindri":
+            recommended_model = "gemini-4-argon-high"
+        else:
+            recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-3.8-flash-high")
+
+    return {
+        "actionable": is_actionable,
+        "tier": tier,
+        "recommended_assignee": recommended_assignee,
+        "recommended_model": recommended_model,
+        "raw_verdict": content,
+        "latency_seconds": round(elapsed, 3),
+    }
+
+
+def evaluate_debrief_gates_batch(
+    task_title: str,
+    task_body: str,
+    debrief_summary: str,
+    pr_url: Optional[str] = None,
+    friction_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Evaluates debrief contract acceptance, PR auto-merge safety, and friction routing in 1 Jev round-trip."""
+    has_pr = bool(pr_url and pr_url.strip())
+    has_friction = bool(friction_text and friction_text.strip() and friction_text.strip().lower() != "none")
+
+    questions: Dict[str, Any] = {
+        "accepted": {
+            "type": "noul",
+            "instructions": (
+                "True if the worker's debrief summary demonstrates that the stated task acceptance criteria "
+                "and deliverables were fulfilled; False if prematurely aborted or missing core deliverables."
+            ),
+        }
+    }
+    if has_pr:
+        questions["auto_merge_eligible"] = {
+            "type": "noul",
+            "instructions": (
+                "True if the PR consists strictly of non-critical documentation, typo fixes, comment cleanups, "
+                "minor chore scripts, or safe lint patches with passing tests. False if it alters core "
+                "infrastructure, container entrypoints, compose networks, database schemas, or service runtime configs."
+            ),
+        }
+    if has_friction:
+        questions["friction_action"] = {
+            "type": "choice",
+            "instructions": "Classify friction actionability into spawn_chore, ignore_transient, or alert_channel",
+            "criteria": {
+                "spawn_chore": "A concrete, reproducible operational bug, missing tool, bad configuration, or recurring bottleneck that warrants a follow-up [Chore/Friction] card.",
+                "ignore_transient": "A one-off transient network retry, minor timing delay, benign warning, or non-actionable observation. Safe to ignore.",
+                "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention.",
+            },
+        }
+        questions["friction_assignee"] = {
+            "type": "choice",
+            "instructions": "Assign the follow-up friction chore to vor or sindri",
+            "criteria": {
+                "vor": "Skills, vault rules, documentation in Areas/90-Infrastructure, or Mnemosyne hygiene",
+                "sindri": "Forge stack repositories, Docker Swarm compose, Dockerfile, or CI workflows",
+            },
+        }
+
+    schema = {"questions": questions}
+    system_prompt = (
+        "Evaluate task completion debrief gates for the Court of Odin:\n"
+        f"```json\n{json.dumps(schema)}\n```"
+    )
+    user_parts = [
+        f"Task Title: {task_title}",
+        f"Task Contract / Description:\n{task_body}",
+        f"Worker Debrief Summary:\n{debrief_summary}",
+    ]
+    if has_pr:
+        user_parts.append(f"PR URL: {pr_url}")
+    if has_friction:
+        user_parts.append(f"Reported Friction:\n{friction_text}")
+
+    content, elapsed = call_jev_raw(system_prompt, "\n\n".join(user_parts))
+    parsed: Dict[str, Any] = {}
+    try:
+        loaded = json.loads(content)
+        if isinstance(loaded, dict):
+            parsed = loaded
+    except Exception:
+        if not has_pr and not has_friction:
+            parsed = {"accepted": "true" if ("true" in content.lower() or "fallback_error" in content) else "false"}
+
+    is_accepted = str(parsed.get("accepted", "true")).lower() == "true" or "fallback_error" in content
+    acceptance_gate = {
+        "accepted": is_accepted,
+        "raw_verdict": content,
+        "latency_seconds": round(elapsed, 3),
+    }
+
+    if has_pr:
+        is_auto_merge = str(parsed.get("auto_merge_eligible", "false")).lower() == "true" and "fallback_error" not in content
+        auto_merge_gate = {
+            "auto_merge_eligible": is_auto_merge,
+            "raw_verdict": content,
+            "latency_seconds": round(elapsed, 3),
+        }
+    else:
+        auto_merge_gate = {"auto_merge_eligible": False, "raw_verdict": "no_pr"}
+
+    friction_gate = None
+    friction_assignee = "vor"
+    if has_friction:
+        action = str(parsed.get("friction_action", "spawn_chore"))
+        if action not in ("spawn_chore", "ignore_transient", "alert_channel"):
+            action = "spawn_chore"
+        if parsed.get("friction_assignee") in ("vor", "sindri"):
+            friction_assignee = str(parsed["friction_assignee"])
+        else:
+            friction_lower = (friction_text or "").lower()
+            friction_assignee = (
+                "sindri"
+                if any(k in friction_lower for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml"))
+                else "vor"
+            )
+        friction_gate = {
+            "action": action,
+            "assignee": friction_assignee,
+            "raw_verdict": content,
+            "latency_seconds": round(elapsed, 3),
+        }
+
+    return {
+        "acceptance_gate": acceptance_gate,
+        "auto_merge_gate": auto_merge_gate,
+        "friction_gate": friction_gate,
+        "friction_assignee": friction_assignee,
     }
 
 

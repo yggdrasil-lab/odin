@@ -27,9 +27,11 @@ from .discord import (
 from .jev import (
     evaluate_auto_merge_safety,
     evaluate_debrief_acceptance,
+    evaluate_debrief_gates_batch,
     evaluate_friction_actionability,
     evaluate_jev_actionability,
     evaluate_task_complexity,
+    evaluate_triage_and_complexity,
 )
 
 
@@ -40,13 +42,14 @@ def create_kanban_task(
     assignee: Optional[str] = None,
     workspace_kind: str = "scratch",
     notify_discord: bool = True,
+    precomputed_complexity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Inserts a new task into kanban.db and provisions its Discord thread subscription.
 
     Returns:
         (task_id, discord_thread_id)
     """
-    complexity = evaluate_task_complexity(title, body)
+    complexity = precomputed_complexity or evaluate_task_complexity(title, body)
     if assignee and assignee != DEFAULT_ASSIGNEE:
         resolved_assignee = normalize_assignee(assignee)
     else:
@@ -441,17 +444,17 @@ def record_task_debrief(
         if m:
             extracted_pr = m.group(0)
 
-    # Jev System One Decision Gates
-    acceptance_gate = evaluate_debrief_acceptance(task_title=task_row[1], task_body=task_body, debrief_summary=summary)
-    auto_merge_gate = (
-        evaluate_auto_merge_safety(task_title=task_row[1], debrief_summary=summary, pr_url=extracted_pr)
-        if extracted_pr
-        else {"auto_merge_eligible": False, "raw_verdict": "no_pr"}
+    # Jev System One Decision Gates (batched in a single round-trip)
+    batch_gates = evaluate_debrief_gates_batch(
+        task_title=task_row[1],
+        task_body=task_body,
+        debrief_summary=summary,
+        pr_url=extracted_pr,
+        friction_text=frictions,
     )
-
-    friction_gate = None
-    if frictions and frictions.strip() and frictions.strip().lower() != "none":
-        friction_gate = evaluate_friction_actionability(frictions)
+    acceptance_gate = batch_gates["acceptance_gate"]
+    auto_merge_gate = batch_gates["auto_merge_gate"]
+    friction_gate = batch_gates["friction_gate"]
 
     # 2. Record debrief event
     payload = {
@@ -490,17 +493,24 @@ def record_task_debrief(
         )
         conn.commit()
         conn.close()
-        friction_lower = (frictions or "").lower()
-        friction_assignee = (
-            "sindri"
-            if any(k in friction_lower for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml"))
-            else "vor"
-        )
+        friction_assignee = batch_gates.get("friction_assignee") or "vor"
+        chore_tier = "frontier_deep" if friction_assignee == "sindri" else "flash_fast"
         chore_id, chore_thread_id = create_kanban_task(
             title=ctitle,
             body=cbody,
             priority=2,
             assignee=friction_assignee,
+            precomputed_complexity={
+                "tier": chore_tier,
+                "recommended_assignee": friction_assignee,
+                "recommended_model": (
+                    "gemini-4-argon-high"
+                    if friction_assignee == "sindri"
+                    else SPECIALIST_MODELS.get(friction_assignee, "gemini-3.8-flash-high")
+                ),
+                "raw_verdict": friction_gate.get("raw_verdict", "debrief_batch") if friction_gate else "debrief_batch",
+                "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,
+            },
         )
         conn = sqlite3.connect(KANBAN_DB_PATH)
         cursor = conn.cursor()
@@ -550,9 +560,20 @@ def record_task_debrief(
 
 
 def triage_and_intake(event_text: str, title: Optional[str] = None, context: str = "") -> Optional[Dict[str, Any]]:
-    """Complete entrypoint: evaluates with Jev and provisions task if actionable."""
+    """Complete entrypoint: evaluates actionability + complexity in 1 Jev round-trip and provisions task if actionable."""
     logger.info("Running Jev triage on event: %s", event_text[:80])
-    is_actionable, elapsed, verdict = evaluate_jev_actionability(event_text, context=context)
+
+    # Extract short title if not provided
+    if not title:
+        first_line = event_text.strip().split("\n")[0]
+        title = first_line[:60].strip()
+        if len(first_line) > 60:
+            title += "..."
+
+    triage_res = evaluate_triage_and_complexity(event_text, title=title, context=context)
+    is_actionable = bool(triage_res.get("actionable"))
+    verdict = str(triage_res.get("raw_verdict", ""))
+    elapsed = float(triage_res.get("latency_seconds", 0.0))
 
     if not is_actionable:
         logger.info("Event classified as NON-ACTIONABLE by Jev (suppressed from Kanban).")
@@ -564,18 +585,12 @@ def triage_and_intake(event_text: str, title: Optional[str] = None, context: str
             "thread_id": None,
         }
 
-    # Extract short title if not provided
-    if not title:
-        first_line = event_text.strip().split("\n")[0]
-        title = first_line[:60].strip()
-        if len(first_line) > 60:
-            title += "..."
-
     task_id, thread_id = create_kanban_task(
         title=title,
         body=event_text,
         priority=1,
         assignee=DEFAULT_ASSIGNEE,
+        precomputed_complexity=triage_res,
     )
 
     return {
