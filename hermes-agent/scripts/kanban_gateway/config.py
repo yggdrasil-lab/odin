@@ -50,7 +50,7 @@ def resolve_discord_env() -> Tuple[str, str, str]:
     """Resolves Discord bot token, channel ID, and user ID from process env or odin_huginn-gateway container."""
     bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
     channel = os.environ.get("DISCORD_CHANNEL_INFO_ID") or os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
-    uid = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
+    uid = os.environ.get("DISCORD_USER_ID", "")
     if bot_token and channel and uid:
         return bot_token, channel, uid
     try:
