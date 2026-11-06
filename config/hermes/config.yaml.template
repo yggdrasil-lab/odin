@@ -63,7 +63,8 @@ auxiliary:
 
   memory:
     # Mnemosyne memory consolidation and structured fact extraction ride all three flat-rate
-    # Antigravity subscription pools first, falling back to Muninn only on full quota exhaustion.
+    # Antigravity subscription pools first, falling back to Muninn app-synthesize (Gemini 2.5 Flash-Lite
+    # -> DeepSeek V4-Flash) only on full subscription quota exhaustion.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"
     timeout: 120
@@ -73,14 +74,15 @@ auxiliary:
       - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-argon-high"
       - provider: "custom"
-        model: "agent-loop"
+        model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
         key_env: "MUNINN_MASTER_KEY"
     fallback_providers: *memory_fallbacks
 
   background_review:
     # Background skill reviews rotate through all three flat-rate Antigravity subscription
-    # pools first, falling back to DeepSeek V4-Flash on muninn only if all subscription pools are exhausted.
+    # pools first, falling back to Muninn app-synthesize (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash)
+    # only if all subscription pools are exhausted.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-3.8-flash-high"
     fallback_providers:
@@ -89,7 +91,7 @@ auxiliary:
       - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-argon-high"
       - provider: "custom"
-        model: "agent-loop"
+        model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
         key_env: "MUNINN_MASTER_KEY"
 

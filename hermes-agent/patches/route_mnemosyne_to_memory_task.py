@@ -34,6 +34,8 @@ from pathlib import Path
 MARKER_ADAPTER = "# odin-patch: route host LLM to auxiliary.memory task"
 MARKER_LOCAL_LLM = "# odin-patch: lazy register hermes host LLM backend"
 MARKER_INSTALL = "# odin-patch: harden mnemosyne install config detection and anchor regex"
+MARKER_PM_ENV = "# odin-patch: preserve base_venv site-packages across PM generations"
+MARKER_PM_PKG = "# odin-patch: stamp and link base_venv site-packages in PM generations"
 
 
 def patch_adapter() -> bool:
@@ -185,9 +187,121 @@ def patch_mnemosyne_install() -> bool:
     return True
 
 
+def patch_pm_base_venv_bridge() -> bool:
+    """Ensure PM dependency generations retain access to image-baked /opt/hermes/.venv packages.
+
+    Upstream Hermes s6 stage2 rebuilds a managed uv virtualenv under /opt/data/installs/*/environments/*/venv
+    and strips /opt/hermes/.venv/lib/python3.*/site-packages from sys.path in activate_dependencies().
+    Because mnemosyne-memory, mnemosyne-hermes, sqlite-vec, and playwright are pre-installed in
+    /opt/hermes/.venv at Docker build time, stripping base_venv site-packages causes
+    ModuleNotFoundError: No module named 'mnemosyne' at runtime.
+    """
+    env_target = Path("/opt/hermes/pm/environments.py")
+    pkg_target = Path("/opt/hermes/pm/packages.py")
+    if not env_target.is_file() or not pkg_target.is_file():
+        print("[odin-patch] PM modules not present; skipping PM base_venv bridge")
+        return True
+
+    env_src = env_target.read_text(encoding="utf-8")
+    if MARKER_PM_ENV not in env_src:
+        old_activate = (
+            "    # uv editable members are activated by .pth files, not by sys.path alone.\n"
+            "    site.addsitedir(str(selected))\n"
+            "    sys.path[:] = [str(project_root.resolve()), str(selected),\n"
+            "                   *[entry for entry in sys.path if Path(entry).resolve() != selected.resolve()]]\n"
+            "    os.environ[\"PYTHONPATH\"] = os.pathsep.join([str(project_root.resolve()), str(selected)])\n"
+        )
+        new_activate = (
+            f"    {MARKER_PM_ENV}\n"
+            "    # uv editable members are activated by .pth files, not by sys.path alone.\n"
+            "    site.addsitedir(str(selected))\n"
+            "    base_site = site_packages(base_venv(project_root))\n"
+            "    extra_sites = [str(base_site)] if base_site.is_dir() and base_site.resolve() != selected.resolve() else []\n"
+            "    for extra_site in extra_sites:\n"
+            "        try:\n"
+            "            pth_file = selected / \"odin-base-site.pth\"\n"
+            "            if not pth_file.is_file():\n"
+            "                pth_file.write_text(f\"{extra_site}\\n\", encoding=\"utf-8\")\n"
+            "        except OSError:\n"
+            "            pass\n"
+            "        site.addsitedir(extra_site)\n"
+            "    exclude_resolved = {selected.resolve(), *(Path(s).resolve() for s in extra_sites)}\n"
+            "    sys.path[:] = [str(project_root.resolve()), str(selected), *extra_sites,\n"
+            "                   *[entry for entry in sys.path if Path(entry).resolve() not in exclude_resolved]]\n"
+            "    os.environ[\"PYTHONPATH\"] = os.pathsep.join([str(project_root.resolve()), str(selected), *extra_sites])\n"
+        )
+        if old_activate not in env_src:
+            print("[odin-patch] ERROR: activate_dependencies anchor not found in pm/environments.py", file=sys.stderr)
+            return False
+        env_src = env_src.replace(old_activate, new_activate, 1)
+
+        old_act_env = (
+            "    env[\"PYTHONPATH\"] = os.pathsep.join([str(project_root.resolve()),\n"
+            "                                         *([str(site_packages(environment))] if environment else [])])\n"
+        )
+        new_act_env = (
+            "    base_site = site_packages(base_venv(project_root))\n"
+            "    extra_sites = ([str(base_site)] if environment and base_site.is_dir()\n"
+            "                   and base_site.resolve() != site_packages(environment).resolve() else [])\n"
+            "    env[\"PYTHONPATH\"] = os.pathsep.join([str(project_root.resolve()),\n"
+            "                                         *([str(site_packages(environment)), *extra_sites] if environment else [])])\n"
+        )
+        if old_act_env not in env_src:
+            print("[odin-patch] ERROR: activation_environment anchor not found in pm/environments.py", file=sys.stderr)
+            return False
+        env_src = env_src.replace(old_act_env, new_act_env, 1)
+        env_target.write_text(env_src, encoding="utf-8")
+        print(f"[odin-patch] patched {env_target} (preserved base_venv site-packages)")
+
+    pkg_src = pkg_target.read_text(encoding="utf-8")
+    if MARKER_PM_PKG not in pkg_src:
+        old_stamp = (
+            "        h = hashlib.sha256()\n"
+            "        h.update(_uv_lock_digest(self.project_root() / \"uv.lock\"))\n"
+        )
+        new_stamp = (
+            f"        {MARKER_PM_PKG}\n"
+            "        h = hashlib.sha256()\n"
+            "        h.update(_uv_lock_digest(self.project_root() / \"uv.lock\"))\n"
+            "        h.update(_uv_lock_digest(self.project_root() / \"pm\" / \"environments.py\"))\n"
+        )
+        if old_stamp not in pkg_src:
+            print("[odin-patch] ERROR: expected_stamp anchor not found in pm/packages.py", file=sys.stderr)
+            return False
+        pkg_src = pkg_src.replace(old_stamp, new_stamp, 1)
+
+        old_check = (
+            "            resolved_lock = generation / \"workspace\" / \"uv.lock\"\n"
+            "            environment.check(resolved_lock)\n"
+        )
+        new_check = (
+            "            resolved_lock = generation / \"workspace\" / \"uv.lock\"\n"
+            "            environment.check(resolved_lock)\n"
+            "            from pm.environments import base_venv, site_packages\n"
+            "            base_site = site_packages(base_venv(project))\n"
+            "            cand_site = site_packages(candidate)\n"
+            "            if base_site.is_dir() and cand_site.is_dir() and base_site.resolve() != cand_site.resolve():\n"
+            "                (cand_site / \"odin-base-site.pth\").write_text(f\"{base_site}\\n\", encoding=\"utf-8\")\n"
+        )
+        if old_check not in pkg_src:
+            print("[odin-patch] ERROR: environment.check anchor not found in pm/packages.py", file=sys.stderr)
+            return False
+        pkg_src = pkg_src.replace(old_check, new_check, 1)
+        pkg_target.write_text(pkg_src, encoding="utf-8")
+        print(f"[odin-patch] patched {pkg_target} (stamped and linked base_venv site-packages)")
+
+    return True
+
+
 def main() -> int:
-    ok = patch_adapter() and patch_local_llm() and patch_mnemosyne_install()
+    ok = (
+        patch_adapter()
+        and patch_local_llm()
+        and patch_mnemosyne_install()
+        and patch_pm_base_venv_bridge()
+    )
     return 0 if ok else 1
+
 
 
 if __name__ == "__main__":

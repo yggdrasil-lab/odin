@@ -230,6 +230,59 @@ class TestJevShim(unittest.TestCase):
         self.assertNotIn("\u2014", content)
         self.assertNotIn("\u2013", content)
 
+    def test_kanban_gateway_batched_triage_and_debrief_gates(self) -> None:
+        scripts_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "hermes-agent",
+            "scripts",
+        )
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from kanban_gateway import jev as kg_jev
+
+        with patch.object(
+            kg_jev,
+            "call_jev_raw",
+            return_value=(json.dumps({"actionable": "true", "tier": "frontier_deep", "role": "sindri"}), 0.12),
+        ) as mock_triage:
+            res = kg_jev.evaluate_triage_and_complexity(
+                "Update Forge/odin docker-compose.yml and open PR",
+                title="Update Odin Compose",
+            )
+            self.assertEqual(mock_triage.call_count, 1)
+            self.assertTrue(res["actionable"])
+            self.assertEqual(res["tier"], "frontier_deep")
+            self.assertEqual(res["recommended_assignee"], "sindri")
+            self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
+
+        with patch.object(
+            kg_jev,
+            "call_jev_raw",
+            return_value=(
+                json.dumps(
+                    {
+                        "accepted": "true",
+                        "auto_merge_eligible": "false",
+                        "friction_action": "spawn_chore",
+                        "friction_assignee": "vor",
+                    }
+                ),
+                0.18,
+            ),
+        ) as mock_debrief:
+            gates = kg_jev.evaluate_debrief_gates_batch(
+                task_title="Update Odin Compose",
+                task_body="Update compose and verify",
+                debrief_summary="Completed in PR #128",
+                pr_url="https://github.com/yggdrasil-lab/odin/pull/128",
+                friction_text="Skill script had outdated CLI flag",
+            )
+            self.assertEqual(mock_debrief.call_count, 1)
+            self.assertTrue(gates["acceptance_gate"]["accepted"])
+            self.assertFalse(gates["auto_merge_gate"]["auto_merge_eligible"])
+            self.assertEqual(gates["friction_gate"]["action"], "spawn_chore")
+            self.assertEqual(gates["friction_assignee"], "vor")
+
 
 if __name__ == "__main__":
     unittest.main()

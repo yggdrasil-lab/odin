@@ -42,17 +42,19 @@ model_list:
       timeout: 600
 
   # Fast tier - Mnemosyne memory consolidation.
+  # Routed to Gemini 2.5 Flash-Lite using GEMINI_API_KEY, with fallback to agent-loop.
   - model_name: memory-extract
     litellm_params:
-      model: *flash
-      timeout: 600
+      model: &gemini_flash_lite gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 120
 
   # Fast tier - Hermes context compression summarizer.
   # Routed to Gemini 2.5 Flash-Lite on Google API (1M context, ~2s latency, zero hidden
   # thinking token drain) using GEMINI_API_KEY, with fallback to agent-loop.
   - model_name: compress
     litellm_params:
-      model: &gemini_flash_lite gemini/gemini-2.5-flash-lite
+      model: *gemini_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
@@ -122,12 +124,16 @@ litellm_settings:
         - agent-loop
     - compress:
         - agent-loop
+    - memory-extract:
+        - agent-loop
 
 router_settings:
   fallbacks:
     - app-synthesize:
         - agent-loop
     - compress:
+        - agent-loop
+    - memory-extract:
         - agent-loop
 
 general_settings:
