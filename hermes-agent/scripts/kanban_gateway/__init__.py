@@ -5,9 +5,9 @@ from __future__ import annotations
 from .config import (
     ASSIGNEE_ALIASES,
     DEFAULT_ASSIGNEE,
+    DISCORD_BOT_TOKEN,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
-    DISCORD_WEBHOOK_URL,
     JEV_MODEL,
     KANBAN_DB_PATH,
     MUNINN_API_KEY,

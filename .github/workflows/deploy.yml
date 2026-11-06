@@ -52,6 +52,33 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_RAW_PASSWORD }}
 
+      - name: Validate Required Configuration
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
+          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID }}
+          DISCORD_CHANNEL_INFO_ID: ${{ vars.DISCORD_CHANNEL_INFO_ID }}
+          API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
+        run: |
+          MISSING=""
+          [ -z "$DOMAIN_NAME" ] && MISSING="$MISSING DOMAIN_NAME"
+          [ -z "$LLDAP_LDAP_BASE_DN" ] && MISSING="$MISSING LLDAP_LDAP_BASE_DN"
+          [ -z "$MUNINN_MASTER_KEY" ] && MISSING="$MISSING MUNINN_MASTER_KEY"
+          [ -z "$DISCORD_BOT_TOKEN" ] && MISSING="$MISSING DISCORD_BOT_TOKEN"
+          [ -z "$DISCORD_USER_ID" ] && MISSING="$MISSING DISCORD_USER_ID"
+          [ -z "$DISCORD_CHANNEL_INFO_ID" ] && MISSING="$MISSING DISCORD_CHANNEL_INFO_ID"
+          [ -z "$API_SERVER_KEY" ] && MISSING="$MISSING API_SERVER_KEY"
+          [ -z "$GH_TOKEN" ] && MISSING="$MISSING GH_TOKEN"
+          [ -z "$KRATOS_MCP_TOKEN" ] && MISSING="$MISSING KRATOS_MCP_TOKEN"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Deployment halted: missing required configuration:$MISSING" >&2
+            exit 1
+          fi
+
       - name: Deploy Stack
         env:
           STACK_NAME: odin
@@ -62,37 +89,41 @@ jobs:
           HERMES_SSH_KEY_NAME: ${{ env.HERMES_SSH_KEY_NAME }}
           WEBUI_SECRET_KEY_NAME: ${{ env.WEBUI_SECRET_KEY_NAME }}
           HERMES_GIT_USER_NAME: ${{ vars.HERMES_GIT_USER_NAME || 'Huginn' }}
-          HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
+          HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_ALLOWED_USERS }}
-          DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID || vars.DISCORD_ALLOWED_USERS || '' }}
-          KANBAN_DISCORD_WEBHOOK_URL: ${{ secrets.KANBAN_DISCORD_WEBHOOK_URL || '' }}
-          KANBAN_DISCORD_CHANNEL_ID: ${{ secrets.KANBAN_DISCORD_CHANNEL_ID || vars.KANBAN_DISCORD_CHANNEL_ID || '' }}
+          DISCORD_ALLOWED_USERS: ${{ vars.DISCORD_USER_ID }}
+          DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID }}
+          DISCORD_CHANNEL_INFO_ID: ${{ vars.DISCORD_CHANNEL_INFO_ID }}
+          DISCORD_CHANNEL_HEALTH_ID: ${{ vars.DISCORD_CHANNEL_HEALTH_ID }}
+          DISCORD_CHANNEL_WEALTH_ID: ${{ vars.DISCORD_CHANNEL_WEALTH_ID }}
+          DISCORD_CHANNEL_WATCH_ID: ${{ vars.DISCORD_CHANNEL_WATCH_ID }}
+          DISCORD_CHANNEL_ALERT_ID: ${{ vars.DISCORD_CHANNEL_ALERT_ID }}
+          KANBAN_DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_INFO_ID }}
           KANBAN_DEFAULT_ASSIGNEE: ${{ vars.KANBAN_DEFAULT_ASSIGNEE || 'swarm-worker' }}
-          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY || 'sk-muninn-insecure-master-key' }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || '' }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY || '' }}
-          API_SERVER_KEY: ${{ secrets.API_SERVER_KEY || 'insecure_default_key_change_me' }}
-          REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX || '' }}
+          MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
+          REGISTRY_PREFIX: ${{ vars.REGISTRY_PREFIX }}
           MNEMOSYNE_LLM_ENABLED: ${{ vars.MNEMOSYNE_LLM_ENABLED || 'true' }}
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL || 'http://muninn:4000/v1' }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL || 'memory-extract' }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN || '' }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           # Odin git backup
           ODIN_GIT_REPO_URL: ${{ vars.ODIN_GIT_REPO_URL }}
-          ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL || 'huginn@tienzo.net' }}
+          ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL }}
           ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || '' }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY || '' }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
           TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
           # Bearer token for the Kratos MCP endpoint, injected from organization
           # secret KRATOS_MCP_TOKEN.
-          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
-          MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN || '' }}
+          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
+          MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN }}
           HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
-          OLLAMA_NUM_THREADS: ${{ vars.OLLAMA_NUM_THREADS || '' }}
-          OLLAMA_CONTEXT_LENGTH: ${{ vars.OLLAMA_CONTEXT_LENGTH || env.OLLAMA_CONTEXT_LENGTH || '16384' }}
+          OLLAMA_NUM_THREADS: ${{ vars.OLLAMA_NUM_THREADS }}
+          OLLAMA_CONTEXT_LENGTH: ${{ vars.OLLAMA_CONTEXT_LENGTH || '16384' }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"

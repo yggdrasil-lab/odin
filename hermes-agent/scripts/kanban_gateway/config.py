@@ -42,23 +42,17 @@ try:
 except Exception:
     MUNINN_API_URL = ""
 
-MUNINN_API_KEY = (
-    os.environ.get("MUNINN_API_KEY")
-    or os.environ.get("MUNINN_MASTER_KEY")
-    or os.environ.get("OPENAI_API_KEY")
-    or os.environ.get("LITELLM_MASTER_KEY")
-    or ""
-)
+MUNINN_API_KEY = os.environ.get("MUNINN_MASTER_KEY", "")
 JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 
 
 def resolve_discord_env() -> Tuple[str, str, str]:
-    """Resolves Discord webhook credentials from process env or odin_huginn-gateway container."""
-    webhook = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
-    channel = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
-    uid = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
-    if webhook and channel and uid:
-        return webhook, channel, uid
+    """Resolves Discord bot token, channel ID, and user ID from process env or odin_huginn-gateway container."""
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
+    channel = os.environ.get("DISCORD_CHANNEL_INFO_ID") or os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
+    uid = os.environ.get("DISCORD_USER_ID", "")
+    if bot_token and channel and uid:
+        return bot_token, channel, uid
     try:
         res = subprocess.run(
             [
@@ -75,18 +69,21 @@ def resolve_discord_env() -> Tuple[str, str, str]:
         )
         if res.returncode == 0:
             for line in res.stdout.splitlines():
-                if line.startswith("KANBAN_DISCORD_WEBHOOK_URL=") and not webhook:
-                    webhook = line.split("=", 1)[1]
-                elif line.startswith("KANBAN_DISCORD_CHANNEL_ID=") and not channel:
+                if line.startswith("DISCORD_BOT_TOKEN=") and not bot_token:
+                    bot_token = line.split("=", 1)[1]
+                elif (
+                    line.startswith("DISCORD_CHANNEL_INFO_ID=")
+                    or line.startswith("KANBAN_DISCORD_CHANNEL_ID=")
+                ) and not channel:
                     channel = line.split("=", 1)[1]
                 elif line.startswith("DISCORD_USER_ID=") and not uid:
                     uid = line.split("=", 1)[1]
     except Exception:
         pass
-    return webhook, channel, uid
+    return bot_token, channel, uid
 
 
-DISCORD_WEBHOOK_URL, DISCORD_CHANNEL_ID, DISCORD_USER_ID = resolve_discord_env()
+DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, DISCORD_USER_ID = resolve_discord_env()
 DEFAULT_ASSIGNEE = os.environ.get("KANBAN_DEFAULT_ASSIGNEE", "swarm-worker")
 USER_AGENT = "Yggdrasil-KanbanGateway/1.0 (DiscordBot)"
 

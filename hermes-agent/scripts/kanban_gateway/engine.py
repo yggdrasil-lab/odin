@@ -10,9 +10,9 @@ import uuid
 
 from .config import (
     DEFAULT_ASSIGNEE,
+    DISCORD_BOT_TOKEN,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
-    DISCORD_WEBHOOK_URL,
     KANBAN_DB_PATH,
     SPECIALIST_MODELS,
     STATUS_CANONICAL,
@@ -117,7 +117,7 @@ def create_kanban_task(
     )
 
     thread_id = None
-    if notify_discord and DISCORD_WEBHOOK_URL:
+    if notify_discord and DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID:
         try:
             fields = [
                 {"name": "Status", "value": "`READY`", "inline": True},
