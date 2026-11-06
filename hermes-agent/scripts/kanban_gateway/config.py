@@ -55,7 +55,7 @@ JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 def resolve_discord_env() -> Tuple[str, str, str]:
     """Resolves Discord webhook credentials from process env or odin_huginn-gateway container."""
     webhook = os.environ.get("KANBAN_DISCORD_WEBHOOK_URL", "")
-    channel = os.environ.get("KANBAN_DISCORD_CHANNEL_ID", "")
+    channel = os.environ.get("KANBAN_DISCORD_CHANNEL_ID") or os.environ.get("DISCORD_CHANNEL_INFO_ID", "")
     uid = os.environ.get("DISCORD_USER_ID") or os.environ.get("DISCORD_ALLOWED_USERS", "").split(",")[0].strip()
     if webhook and channel and uid:
         return webhook, channel, uid
@@ -77,7 +77,10 @@ def resolve_discord_env() -> Tuple[str, str, str]:
             for line in res.stdout.splitlines():
                 if line.startswith("KANBAN_DISCORD_WEBHOOK_URL=") and not webhook:
                     webhook = line.split("=", 1)[1]
-                elif line.startswith("KANBAN_DISCORD_CHANNEL_ID=") and not channel:
+                elif (
+                    line.startswith("KANBAN_DISCORD_CHANNEL_ID=")
+                    or line.startswith("DISCORD_CHANNEL_INFO_ID=")
+                ) and not channel:
                     channel = line.split("=", 1)[1]
                 elif line.startswith("DISCORD_USER_ID=") and not uid:
                     uid = line.split("=", 1)[1]
