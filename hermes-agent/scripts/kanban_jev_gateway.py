@@ -19,7 +19,6 @@ from kanban_gateway import (
     DEFAULT_ASSIGNEE,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
-    DISCORD_WEBHOOK_URL,
     JEV_MODEL,
     KANBAN_DB_PATH,
     MUNINN_API_KEY,
