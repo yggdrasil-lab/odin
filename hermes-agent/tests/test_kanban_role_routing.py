@@ -38,6 +38,20 @@ class TestKanbanRoleRouting(unittest.TestCase):
         self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
 
     @patch("kanban_gateway.jev.call_jev_raw")
+    def test_sindri_flash_fast_routing(self, mock_jev):
+        mock_jev.return_value = (
+            '{"tier": "flash_fast", "role": "sindri"}',
+            0.10,
+        )
+        res = evaluate_task_complexity(
+            "Kratos: Per-Dumbbell Weight Basis Formatting",
+            "Add per_hand label display to workout item.",
+        )
+        self.assertEqual(res["tier"], "flash_fast")
+        self.assertEqual(res["recommended_assignee"], "sindri")
+        self.assertEqual(res["recommended_model"], "gemini-3.8-flash-high")
+
+    @patch("kanban_gateway.jev.call_jev_raw")
     def test_alias_and_keyword_fallback_routing(self, mock_jev):
         mock_jev.return_value = (
             '{"tier": "flash_fast", "role": "vault-curator"}',
@@ -114,9 +128,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            with patch.object(engine, "KANBAN_DB_PATH", db_path), patch.object(
-                engine, "DISCORD_WEBHOOK_URL", ""
-            ), patch(
+            with patch.object(engine, "KANBAN_DB_PATH", db_path), patch(
                 "kanban_gateway.engine.evaluate_task_complexity",
                 return_value={
                     "tier": "flash_fast",

@@ -156,8 +156,10 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
     else:
         if not recommended_assignee or recommended_assignee == "swarm-worker":
             recommended_assignee = _infer_specialist_from_text(title, body, tier)
-        if tier == "frontier_deep" or recommended_assignee == "sindri":
+        if tier == "frontier_deep":
             recommended_model = "gemini-4-argon-high"
+        elif tier == "flash_fast":
+            recommended_model = "gemini-3.8-flash-high"
         else:
             recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-3.8-flash-high")
 
@@ -242,8 +244,10 @@ def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "
     else:
         if not recommended_assignee or recommended_assignee == "swarm-worker":
             recommended_assignee = _infer_specialist_from_text(title, event_text, tier)
-        if tier == "frontier_deep" or recommended_assignee == "sindri":
+        if tier == "frontier_deep":
             recommended_model = "gemini-4-argon-high"
+        elif tier == "flash_fast":
+            recommended_model = "gemini-3.8-flash-high"
         else:
             recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-3.8-flash-high")
 
