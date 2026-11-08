@@ -92,7 +92,7 @@ INFLIGHT_ANCHOR = (
     "            if msg.get(\"tool_calls\"):\n"
     "                break\n"
     "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
-    "                # Final answer already delivered - replaying the ask would\n"
+    "                # Final answer already delivered \u2014 replaying the ask would\n"
     "                # hand the model finished work as a fresh instruction.\n"
     "                return None\n"
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
