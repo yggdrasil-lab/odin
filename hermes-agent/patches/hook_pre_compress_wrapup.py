@@ -32,13 +32,17 @@ Fix
    - Automated Discord Thread Handover: if the active session is a Discord thread, automatically spawns
      a fresh continuation thread (e.g. '[Topic] - Part 2'), auto-joins the user (<@DISCORD_USER_ID>),
      seeds message 1 with the structured Handover Prompt, posts a migration link in the old thread,
-     and schedules a delayed 20-second background archive of the old thread.
+     and schedules a delayed 120-second background archive of the old thread.
+     Skips automated continuation for health and entity threads (#health, workout, fasting, alerts).
    - Fans out an ``agent:pre_compress`` event to any external hooks located in /opt/data/hooks/.
    - Runs in a failsafe try/except block so compression never aborts if vault writes encounter errors.
 2. Patch ``_find_inflight_user_task`` and ``_reappend_inflight_user_task`` to suppress duplicate task replays:
    - Suppress re-injecting wrapup/closeout tasks as in-flight since session wrapup is already handled or captured.
    - Check if an assistant message already delivered a final answer text after the user request without pending tool calls,
      preventing trailing background/cron tool results from falsely marking finished requests as in-flight.
+   - Suppress stale prior-compaction restatements ('[STILL IN PROGRESS') from being replayed as active instructions.
+3. Patch ``_SYNTHETIC_USER_ROW_PREFIXES`` and ``_is_synthetic_compression_user_turn`` to recognize
+   '[STILL IN PROGRESS' rows as synthetic scaffolding so they are never quoted under verbatim user messages.
 """
 from __future__ import annotations
 
@@ -48,8 +52,34 @@ import tempfile
 from pathlib import Path
 
 TARGET = Path("/opt/hermes/agent/context_compressor.py")
+# odin-patch: pre-compression wrapup hook
 MARKER = "# odin-patch: pre-compression wrapup hook"
 INFLIGHT_MARKER = "# odin-patch: prevent compaction duplicate response and wrapup replay"
+SYNTHETIC_MARKER = "# odin-patch: recognize inflight restatements as synthetic"
+
+SYNTHETIC_ROW_ANCHOR = (
+    '    "[Planning state preserved", "[ASYNC DELEGATION", "[OUT-OF-BAND", "Cronjob Response:",\n'
+    ')\n'
+)
+
+SYNTHETIC_ROW_INJECTION = (
+    '    "[Planning state preserved", "[ASYNC DELEGATION", "[OUT-OF-BAND", "Cronjob Response:",\n'
+    '    "[STILL IN PROGRESS",\n'
+    ')\n'
+)
+
+SYNTHETIC_TURN_ANCHOR = (
+    '        } or text.startswith((\n'
+    '            _BACKGROUND_PROCESS_NOTIFICATION_PREFIX, TODO_INJECTION_HEADER + "\\n", _LENGTH_CONTINUATION_DROPPED_TOOLS_PREFIX,\n'
+    '        ))\n'
+)
+
+SYNTHETIC_TURN_INJECTION = (
+    '        } or text.startswith((\n'
+    '            _BACKGROUND_PROCESS_NOTIFICATION_PREFIX, TODO_INJECTION_HEADER + "\\n", _LENGTH_CONTINUATION_DROPPED_TOOLS_PREFIX,\n'
+    '            "[STILL IN PROGRESS",\n'
+    '        ))\n'
+)
 
 INFLIGHT_ANCHOR = (
     "        if last_user_idx < 0:\n"
@@ -62,7 +92,7 @@ INFLIGHT_ANCHOR = (
     "            if msg.get(\"tool_calls\"):\n"
     "                break\n"
     "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
-    "                # Final answer already delivered \u2014 replaying the ask would\n"
+    "                # Final answer already delivered - replaying the ask would\n"
     "                # hand the model finished work as a fresh instruction.\n"
     "                return None\n"
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
@@ -80,6 +110,10 @@ INFLIGHT_INJECTION = (
     "        if any(kw in user_content for kw in _wrapup_keywords):\n"
     "            return None\n"
     "\n"
+    "        # Stale compaction restatements must never be replayed as active instructions\n"
+    "        if \"[still in progress\" in user_content:\n"
+    "            return None\n"
+    "\n"
     "        # If any assistant message after the request already delivered non-empty text without pending tool calls,\n"
     "        # the ask was answered - do not let trailing background/tool results re-trigger in-flight replay.\n"
     "        subsequent = messages[last_user_idx + 1:]\n"
@@ -95,7 +129,7 @@ INFLIGHT_INJECTION = (
     "            if msg.get(\"tool_calls\"):\n"
     "                break\n"
     "            if _content_text_for_contains(msg.get(\"content\")).strip():\n"
-    "                # Final answer already delivered \u2014 replaying the ask would\n"
+    "                # Final answer already delivered - replaying the ask would\n"
     "                # hand the model finished work as a fresh instruction.\n"
     "                return None\n"
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
@@ -117,6 +151,9 @@ REAPPEND_INJECTION = (
     "\n"
     "        _wrapup_keywords = (\"wrap up\", \"wrap-up\", \"wrapup\", \"close out\", \"close-out\", \"closeout\", \"session-wrapup\", \"session wrapup\")\n"
     "        if any(kw in task_text.lower() for kw in _wrapup_keywords):\n"
+    "            return compressed\n"
+    "\n"
+    "        if \"[still in progress\" in task_text.lower():\n"
     "            return compressed\n"
 )
 
@@ -349,6 +386,19 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         raw_title = (discord_thread_title or row["title"] or "Discussion").strip()
         clean_title = raw_title.replace("\\u2014", "-").replace("\\u2013", "-")
 
+        # Entity thread check: threads in forum channels (e.g. #health, #decisions) or daily biometric/workout threads
+        # must NOT automatically spawn continuation threads (which creates duplicate entity threads).
+        parent_chat_name = str(origin.get("parent_chat_name") or "").lower()
+        if (
+            "/ health /" in chat_name.lower()
+            or parent_chat_name == "health"
+            or clean_title.startswith(("⚡", "🍽️", "[KB-", "🚨"))
+            or "workout" in clean_title.lower()
+            or "fasting" in clean_title.lower()
+        ):
+            logger.info("[odin-handover] Skipping thread handover for health/entity thread %s ('%s')", thread_id, clean_title)
+            return
+
         parent_chat_id = origin.get("parent_chat_id") or row["chat_id"]
         # Fallback to #Home (1507958299428130907) if parent_chat_id is identical to the thread itself
         if not parent_chat_id or str(parent_chat_id) == str(thread_id):
@@ -492,19 +542,19 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         except Exception as m_err:
             logger.warning("[odin-handover] Failed to post migration notice to old thread: %s", m_err)
 
-        # 3. Trigger delayed archiving of the old thread (20s delay for message delivery)
+        # 3. Trigger delayed archiving of the old thread (120s delay for message delivery)
         import subprocess
         archive_script = Path("/opt/data/skills/productivity/discord-thread-lifecycle/scripts/archive_thread.py")
         if archive_script.is_file():
             try:
-                subprocess.Popen(["python3", str(archive_script), str(thread_id), "--delay", "20"])
+                subprocess.Popen(["python3", str(archive_script), str(thread_id), "--delay", "120"])
             except Exception as a_err:
                 logger.warning("[odin-handover] Failed to launch archive_thread.py: %s", a_err)
         else:
             import threading
             def _delayed_archive():
                 import time
-                time.sleep(20)
+                time.sleep(120)
                 try:
                     p_url = f"https://discord.com/api/v10/channels/{thread_id}"
                     p_req = urllib.request.Request(
@@ -522,16 +572,37 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
 
 
 def main() -> int:
-    if not TARGET.is_file():
-        print(f"[odin-patch] ERROR: {TARGET} not found", file=sys.stderr)
+    target = TARGET
+    if len(sys.argv) > 1:
+        target = Path(sys.argv[1])
+    elif not target.is_file():
+        candidates = [
+            Path("/opt/odin/hermes/installs/351f81cc06284494/environments/9e5c71f8178c44728088043d527566e1/workspace/agent/context_compressor.py"),
+        ]
+        for cand in candidates:
+            if cand.is_file():
+                target = cand
+                break
+
+    if not target.is_file():
+        print(f"[odin-patch] ERROR: {target} not found", file=sys.stderr)
         return 1
 
-    src = TARGET.read_text(encoding="utf-8")
+    src = target.read_text(encoding="utf-8")
     modified = False
 
     # 1. Apply pre-compression wrapup hook if not already applied
     if MARKER in src:
-        print("[odin-patch] pre-compression wrapup hook already applied; skipping hook injection")
+        # Check if METHOD_INJECTION needs an update (e.g. entity thread guard)
+        if "Skipping thread handover for health/entity thread" not in src and "    def _trigger_odin_pre_compress_wrapup(" in src:
+            m_start = src.find("    def _trigger_odin_pre_compress_wrapup(")
+            m_end = src.find(METHOD_ANCHOR, m_start)
+            if m_start != -1 and m_end != -1:
+                src = src[:m_start] + METHOD_INJECTION + "\n" + src[m_end:]
+                modified = True
+                print(f"[odin-patch] Updated pre-compression wrapup hook in {target}")
+        else:
+            print("[odin-patch] pre-compression wrapup hook already up to date; skipping hook injection")
     else:
         if CALL_ANCHOR not in src:
             print("[odin-patch] ERROR: CALL_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
@@ -548,11 +619,31 @@ def main() -> int:
         method_idx = src.find(METHOD_ANCHOR)
         src = src[:method_idx] + METHOD_INJECTION + "\n" + src[method_idx:]
         modified = True
-        print(f"[odin-patch] Injected pre-compression wrapup hook into {TARGET}")
+        print(f"[odin-patch] Injected pre-compression wrapup hook into {target}")
 
     # 2. Apply in-flight task replay suppression if not already applied
     if INFLIGHT_MARKER in src:
-        print("[odin-patch] in-flight task replay suppression already applied; skipping")
+        if "[still in progress" not in src:
+            # Upgrade existing inflight injection
+            if INFLIGHT_ANCHOR not in src and INFLIGHT_MARKER in src:
+                # Find start of existing marker block
+                m_start = src.find(f"        {INFLIGHT_MARKER}")
+                ret_anchor = "        return messages[last_user_idx]\n"
+                m_end = src.find(ret_anchor, m_start)
+                if m_start != -1 and m_end != -1:
+                    src = src[:m_start] + INFLIGHT_INJECTION[len("        if last_user_idx < 0:\n            return None\n\n"):] + src[m_end + len(ret_anchor):]
+                    modified = True
+                    print(f"[odin-patch] Upgraded in-flight task replay suppression in {target}")
+            if "[still in progress" not in src and "_wrapup_keywords" in src:
+                # Check reappend injection
+                src = src.replace(
+                    '        if any(kw in task_text.lower() for kw in _wrapup_keywords):\n            return compressed\n',
+                    '        if any(kw in task_text.lower() for kw in _wrapup_keywords):\n            return compressed\n\n        if "[still in progress" in task_text.lower():\n            return compressed\n',
+                    1
+                )
+                modified = True
+        else:
+            print("[odin-patch] in-flight task replay suppression already up to date; skipping")
     else:
         if INFLIGHT_ANCHOR not in src:
             print("[odin-patch] ERROR: INFLIGHT_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
@@ -565,15 +656,31 @@ def main() -> int:
         src = src.replace(INFLIGHT_ANCHOR, INFLIGHT_INJECTION, 1)
         src = src.replace(REAPPEND_ANCHOR, REAPPEND_INJECTION, 1)
         modified = True
-        print(f"[odin-patch] Injected in-flight task replay suppression into {TARGET}")
+        print(f"[odin-patch] Injected in-flight task replay suppression into {target}")
+
+    # 3. Apply synthetic user row recognition if not already applied
+    if SYNTHETIC_MARKER in src:
+        print("[odin-patch] synthetic user row recognition already applied; skipping")
+    else:
+        if SYNTHETIC_ROW_ANCHOR not in src:
+            print("[odin-patch] ERROR: SYNTHETIC_ROW_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
+        if SYNTHETIC_TURN_ANCHOR not in src:
+            print("[odin-patch] ERROR: SYNTHETIC_TURN_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
+
+        src = src.replace(SYNTHETIC_ROW_ANCHOR, f"# {SYNTHETIC_MARKER}\n" + SYNTHETIC_ROW_INJECTION, 1)
+        src = src.replace(SYNTHETIC_TURN_ANCHOR, SYNTHETIC_TURN_INJECTION, 1)
+        modified = True
+        print(f"[odin-patch] Injected synthetic user row recognition into {target}")
 
     if modified:
-        TARGET.write_text(src, encoding="utf-8")
-        print(f"[odin-patch] Patched {TARGET}")
+        target.write_text(src, encoding="utf-8")
+        print(f"[odin-patch] Patched {target}")
 
     # Verify python syntax
     try:
-        py_compile.compile(str(TARGET), doraise=True)
+        py_compile.compile(str(target), doraise=True)
         print("[odin-patch] Syntax check passed successfully")
     except py_compile.PyCompileError as e:
         print(f"[odin-patch] ERROR: Syntax check failed on patched file: {e}", file=sys.stderr)
