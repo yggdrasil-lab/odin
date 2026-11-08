@@ -98,6 +98,7 @@ INFLIGHT_ANCHOR = (
     "            # Empty assistant row (a bare reasoning/stub turn): keep looking.\n"
     "        return messages[last_user_idx]\n"
 )
+INFLIGHT_ANCHOR_HYPHEN = INFLIGHT_ANCHOR.replace("\u2014", "-")
 
 INFLIGHT_INJECTION = (
     "        if last_user_idx < 0:\n"
@@ -645,7 +646,8 @@ def main() -> int:
         else:
             print("[odin-patch] in-flight task replay suppression already up to date; skipping")
     else:
-        if INFLIGHT_ANCHOR not in src:
+        anchor = INFLIGHT_ANCHOR if INFLIGHT_ANCHOR in src else (INFLIGHT_ANCHOR_HYPHEN if INFLIGHT_ANCHOR_HYPHEN in src else None)
+        if not anchor:
             print("[odin-patch] ERROR: INFLIGHT_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
             return 1
 
@@ -653,7 +655,7 @@ def main() -> int:
             print("[odin-patch] ERROR: REAPPEND_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
             return 1
 
-        src = src.replace(INFLIGHT_ANCHOR, INFLIGHT_INJECTION, 1)
+        src = src.replace(anchor, INFLIGHT_INJECTION, 1)
         src = src.replace(REAPPEND_ANCHOR, REAPPEND_INJECTION, 1)
         modified = True
         print(f"[odin-patch] Injected in-flight task replay suppression into {target}")
