@@ -347,6 +347,225 @@ def handoff_kanban_task(
     }
 
 
+def verify_pipeline_stage(
+    task_id: str,
+    passed: bool,
+    summary: str = "",
+    feedback: str = "",
+    pr_url: str = "",
+    max_retries: int = 3,
+) -> Dict[str, Any]:
+    """Evaluates a verification gate in the Court of Odin pipeline and executes deterministic state transitions."""
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, body, assignee, consecutive_failures FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Task {task_id} not found in kanban database")
+
+    title, body, current_assignee, current_failures = row[0] or "", row[1] or "", row[2] or "unknown", row[3] or 0
+    now = int(time.time())
+
+    cursor.execute(
+        """
+        SELECT thread_id FROM kanban_notify_subs
+        WHERE task_id = ? AND platform = 'discord' LIMIT 1
+        """,
+        (task_id,),
+    )
+    sub_row = cursor.fetchone()
+    thread_id = sub_row[0] if sub_row else None
+
+    if passed:
+        # Determine next stage based on current assignee
+        if current_assignee == "forseti":
+            next_assignee = "vor"
+            stage_msg = "Verification passed by forseti. Advancing to vor for canonical documentation & memory curation."
+        elif current_assignee == "vor":
+            next_assignee = "odin"
+            stage_msg = "Documentation & memory curation passed by vor. Advancing to odin for final sign-off."
+        else:
+            next_assignee = "vor"
+            stage_msg = f"Verification passed by {current_assignee}. Advancing to {next_assignee}."
+
+        verify_block = (
+            f"\n\n---\n"
+            f"### Verification Gate Passed ({current_assignee})\n"
+            f"{summary.strip() or 'All automated tests and visual inspections passed.'}"
+        )
+        if pr_url:
+            verify_block += f"\n**PR / Branch:** {pr_url}"
+
+        new_body = f"{body}{verify_block}"
+        model_override = SPECIALIST_MODELS.get(next_assignee, "gemini-3.8-flash-high")
+        provider_override = "antigravity-subscription-directsdk"
+
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?,
+                consecutive_failures = 0, last_failure_error = NULL
+            WHERE id = ?
+            """,
+            (next_assignee, new_body, model_override, provider_override, task_id),
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO task_events (task_id, kind, payload, created_at)
+            VALUES (?, 'verification_passed', ?, ?)
+            """,
+            (task_id, json.dumps({"gate": current_assignee, "summary": summary, "pr_url": pr_url, "next": next_assignee}), now),
+        )
+        conn.commit()
+        conn.close()
+
+        if thread_id:
+            fields = [
+                {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
+                {"name": "Verification Gate", "value": f"`{current_assignee}`: **PASSED**", "inline": True},
+                {"name": "Next Assignee", "value": f"`{next_assignee}`", "inline": True},
+            ]
+            if pr_url:
+                fields.append({"name": "PR / Branch", "value": pr_url, "inline": False})
+            post_thread_lifecycle_update(
+                thread_id=thread_id,
+                status="ready",
+                message=f"**Verification Gate Passed:**\n{stage_msg}\n\n**Summary:** {summary or 'Green.'}",
+                fields=fields,
+            )
+
+        logger.info("Task %s verification PASSED at gate %s -> advancing to %s", task_id, current_assignee, next_assignee)
+        return {
+            "task_id": task_id,
+            "status": "ready",
+            "passed": True,
+            "current_assignee": current_assignee,
+            "next_assignee": next_assignee,
+            "consecutive_failures": 0,
+            "message": stage_msg,
+        }
+
+    else:
+        # Failure path: evaluate retry circuit breaker
+        failures = current_failures + 1
+        err_msg = feedback.strip() or "Verification gate reported unspecified failure."
+
+        if failures <= max_retries:
+            next_assignee = "sindri"
+            retry_block = (
+                f"\n\n---\n"
+                f"### Verification Gate Failed (Attempt {failures}/{max_retries})\n"
+                f"**Reported By:** {current_assignee}\n"
+                f"**Feedback / Errors:**\n{err_msg}\n"
+                f"**Next Action:** Automatically routed back to sindri to address regressions."
+            )
+            new_body = f"{body}{retry_block}"
+            model_override = "gemini-4-argon-high"
+            provider_override = "antigravity-subscription-directsdk"
+
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?,
+                    consecutive_failures = ?, last_failure_error = ?
+                WHERE id = ?
+                """,
+                (next_assignee, new_body, model_override, provider_override, failures, err_msg, task_id),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO task_events (task_id, kind, payload, created_at)
+                VALUES (?, 'verification_failed_retry', ?, ?)
+                """,
+                (task_id, json.dumps({"gate": current_assignee, "feedback": err_msg, "failures": failures, "max_retries": max_retries}), now),
+            )
+            conn.commit()
+            conn.close()
+
+            if thread_id:
+                fields = [
+                    {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
+                    {"name": "Verification Gate", "value": f"`{current_assignee}`: **FAILED**", "inline": True},
+                    {"name": "Retry Attempt", "value": f"`{failures}/{max_retries}` -> `sindri`", "inline": True},
+                ]
+                post_thread_lifecycle_update(
+                    thread_id=thread_id,
+                    status="ready",
+                    message=f"⚠️ **Verification Gate Failed (Attempt {failures}/{max_retries}):**\nAutomatically bouncing task back to `{next_assignee}` for remediation.\n\n**Error Details:**\n```\n{err_msg[:500]}\n```",
+                    fields=fields,
+                )
+
+            logger.warning("Task %s verification FAILED at gate %s (attempt %d/%d) -> bouncing to sindri", task_id, current_assignee, failures, max_retries)
+            return {
+                "task_id": task_id,
+                "status": "ready",
+                "passed": False,
+                "current_assignee": current_assignee,
+                "next_assignee": next_assignee,
+                "consecutive_failures": failures,
+                "circuit_tripped": False,
+                "message": f"Bounced back to {next_assignee} (attempt {failures}/{max_retries})",
+            }
+        else:
+            # Circuit breaker tripped: block and escalate to Raymund
+            next_assignee = "raymund"
+            blocked_block = (
+                f"\n\n---\n"
+                f"### Verification Circuit Breaker Tripped ({failures} Failures)\n"
+                f"Exceeded max retry limit ({max_retries}). Task blocked for human review.\n"
+                f"**Last Error:**\n{err_msg}"
+            )
+            new_body = f"{body}{blocked_block}"
+
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET assignee = ?, status = 'blocked', body = ?, model_override = NULL, provider_override = NULL,
+                    consecutive_failures = ?, last_failure_error = ?
+                WHERE id = ?
+                """,
+                (next_assignee, new_body, failures, err_msg, task_id),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO task_events (task_id, kind, payload, created_at)
+                VALUES (?, 'verification_circuit_tripped', ?, ?)
+                """,
+                (task_id, json.dumps({"gate": current_assignee, "feedback": err_msg, "failures": failures}), now),
+            )
+            conn.commit()
+            conn.close()
+
+            if thread_id:
+                fields = [
+                    {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
+                    {"name": "Verification Gate", "value": f"`{current_assignee}`: **CIRCUIT TRIPPED**", "inline": True},
+                    {"name": "Status", "value": "`BLOCKED` -> `raymund`", "inline": True},
+                ]
+                post_thread_lifecycle_update(
+                    thread_id=thread_id,
+                    status="blocked",
+                    message=f"🛑 **Verification Circuit Breaker Tripped ({failures} consecutive failures):**\nTask is blocked and escalated to Raymund for human inspection.\n\n**Last Error:**\n```\n{err_msg[:500]}\n```",
+                    fields=fields,
+                )
+
+            logger.error("Task %s verification circuit breaker tripped after %d failures -> blocked for raymund", task_id, failures)
+            return {
+                "task_id": task_id,
+                "status": "blocked",
+                "passed": False,
+                "current_assignee": current_assignee,
+                "next_assignee": next_assignee,
+                "consecutive_failures": failures,
+                "circuit_tripped": True,
+                "message": f"Circuit breaker tripped after {failures} failures -> blocked for human review",
+            }
+
+
 def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
     """Updates task status in kanban.db and notifies its assigned Discord thread."""
     canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())

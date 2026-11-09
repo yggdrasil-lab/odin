@@ -88,7 +88,10 @@ RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.
 # Copy helper scripts and make them executable in PATH
 COPY scripts/ /usr/local/bin/
 RUN chmod -R a+rX /usr/local/bin/ \
-    && ln -sf /usr/local/bin/kanban_jev_gateway.py /usr/local/bin/kanban-gateway
+    && ln -sf /usr/local/bin/kanban_jev_gateway.py /usr/local/bin/kanban-gateway \
+    && ln -sf /usr/local/bin/safe_exec.py /usr/local/bin/safe-exec \
+    && ln -sf /usr/local/bin/mnemosyne_associative.py /usr/local/bin/mnemosyne-associative \
+    && ln -sf /usr/local/bin/mnemosyne_temporal_hygiene.py /usr/local/bin/mnemosyne-hygiene-audit
 
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh

@@ -35,6 +35,7 @@ from .engine import (
     triage_and_intake,
     trigger_session_wrapup_chore,
     update_task_lifecycle,
+    verify_pipeline_stage,
 )
 from .jev import (
     call_jev_raw,
