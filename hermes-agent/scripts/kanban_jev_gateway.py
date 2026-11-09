@@ -47,6 +47,7 @@ from kanban_gateway import (
     triage_and_intake,
     trigger_session_wrapup_chore,
     update_task_lifecycle,
+    verify_pipeline_stage,
 )
 
 
@@ -87,6 +88,16 @@ def main():
     p_handoff.add_argument("--to", required=True, dest="to_assignee", help="Target specialist (huginn, sindri, forseti, vor, saga)")
     p_handoff.add_argument("--summary", required=True, help="Compact state digest + file/PR paths for next specialist")
     p_handoff.add_argument("--pr-url", default="", help="Optional PR or branch reference")
+
+    # Verify command (State-Machine Verification Gate)
+    p_verify = subparsers.add_parser("verify", help="Evaluate verification gate and trigger state transition")
+    p_verify.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
+    p_verify.add_argument("--pass", dest="passed", action="store_true", default=False, help="Verification gate passed")
+    p_verify.add_argument("--fail", dest="failed", action="store_true", default=False, help="Verification gate failed")
+    p_verify.add_argument("--summary", default="", help="Summary of passed verification and test checks")
+    p_verify.add_argument("--feedback", default="", help="Failure feedback, error diff, or visual regression details")
+    p_verify.add_argument("--pr-url", default="", help="Optional PR or branch reference")
+    p_verify.add_argument("--max-retries", type=int, default=3, help="Max retry cycles before circuit breaker trips (default: 3)")
 
     # Serve command (HTTP API)
     p_serve = subparsers.add_parser("serve", help="Run HTTP API server for remote alert ingestion")
@@ -136,6 +147,20 @@ def main():
     elif args.command == "handoff":
         res = handoff_kanban_task(args.task_id, args.to_assignee, args.summary, pr_url=args.pr_url)
         print(f"Handed off {args.task_id} from '{res['from_assignee']}' to '{res['to_assignee']}' ({res['model_override']})")
+    elif args.command == "verify":
+        if not args.passed and not args.failed:
+            sys.stderr.write("ERROR: Either --pass or --fail must be specified.\n")
+            sys.exit(1)
+        passed = args.passed and not args.failed
+        res = verify_pipeline_stage(
+            task_id=args.task_id,
+            passed=passed,
+            summary=args.summary,
+            feedback=args.feedback,
+            pr_url=args.pr_url,
+            max_retries=args.max_retries,
+        )
+        print(json.dumps(res, indent=2))
     elif args.command == "complexity":
         res = evaluate_task_complexity(args.title, args.body)
         print(json.dumps(res, indent=2))
