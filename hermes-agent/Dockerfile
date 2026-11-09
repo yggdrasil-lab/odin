@@ -93,7 +93,9 @@ RUN chmod -R a+rX /usr/local/bin/ \
     && ln -sf /usr/local/bin/mnemosyne_associative.py /usr/local/bin/mnemosyne-associative \
     && ln -sf /usr/local/bin/mnemosyne_temporal_hygiene.py /usr/local/bin/mnemosyne-hygiene-audit \
     && ln -sf /usr/local/bin/mnemosyne_consolidate_daemon.py /usr/local/bin/mnemosyne-dreaming \
-    && ln -sf /usr/local/bin/mnemosyne_consolidate_daemon.py /usr/local/bin/mnemosyne-consolidate-daemon
+    && ln -sf /usr/local/bin/mnemosyne_consolidate_daemon.py /usr/local/bin/mnemosyne-consolidate-daemon \
+    && ln -sf /usr/local/bin/morning_copilot_aggregator.py /usr/local/bin/morning-copilot \
+    && ln -sf /usr/local/bin/morning_copilot_aggregator.py /usr/local/bin/cross-stack-copilot
 
 # Copy and setup entrypoint script
 COPY entrypoint.sh /entrypoint.sh
