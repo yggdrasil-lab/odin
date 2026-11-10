@@ -43,17 +43,16 @@
       "skills": [
         "devops/odin-stack",
         "devops/odin-llm-runtime",
+        "devops/fleet",
         "software-development/systematic-debugging",
         "research/topic-watch",
         "research/grounded-citations",
         "research/rss-feeds",
         "social-media/reddit-reading",
-        "web-scraping/blocked-page-recovery",
+        "web/blocked-page-recovery",
         "media/youtube-content"
       ],
-      "optional_skills": [
-        "devops/gaia-host-ops"
-      ]
+      "optional_skills": []
     },
     "sindri": {
       "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
@@ -79,6 +78,8 @@
         "devops/arr-stack-configuration",
         "devops/vpn-routed-services",
         "devops/mcp-endpoint-hosting",
+        "media/romm-ops",
+        "software-development/subagent-driven-development",
         "software-development/github",
         "software-development/greenfield-repo-bootstrap",
         "creative/claude-design",
@@ -100,8 +101,8 @@
       ],
       "skills": [
         "software-development/mobile-pwa-development",
-        "web-scraping/browser-action-scaffolder",
-        "data-science/analytics-layer-validation",
+        "web/browser-action-scaffolder",
+        "devops/analytics-layer-validation",
         "devops/postgres-schema-validation",
         "devops/forge-pr-workflow",
         "software-development/verify-file-operations"
@@ -151,7 +152,9 @@
         "note-taking/effort-history-recount",
         "note-taking/vault-document-intake",
         "productivity/ocr-and-documents",
-        "health-wellness/weekly-workout-plan",
+        "productivity/microsoft-office",
+        "health/weekly-workout-plan",
+        "health/workout",
         "productivity/job-hunt-pipeline",
         "creative/baoyu-infographic",
         "software-development/verify-file-operations"
@@ -172,6 +175,7 @@
       ],
       "skills": [
         "devops/forge-pr-workflow",
+        "software-development/subagent-driven-development",
         "productivity/kanban-operations",
         "productivity/task-debrief",
         "software-development/verify-file-operations"

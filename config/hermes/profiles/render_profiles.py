@@ -159,6 +159,7 @@ def provision_skill_symlinks(
 ) -> List[str]:
     """Non-destructively ensures baseline skill symlinks exist under target_skills_dir.
 
+    Fails loudly if any mandatory skill in skill_rel_paths does not exist in skills_source_dir.
     Preserves any additional skill symlinks added at runtime during session-wrapup
     or continuous improvement, and only prunes broken/dangling symlinks.
     """
@@ -170,10 +171,17 @@ def provision_skill_symlinks(
     target_base = symlink_target_prefix or skills_source_dir
     _prune_broken_symlinks(target_skills_dir, skills_source_dir, target_base)
 
-    for rel_path in list(skill_rel_paths) + list(optional_rel_paths):
+    mandatory_list = list(skill_rel_paths)
+    optional_set = set(optional_rel_paths)
+
+    for rel_path in mandatory_list + [p for p in optional_rel_paths if p not in mandatory_list]:
         src = os.path.join(skills_source_dir, rel_path)
         if not os.path.exists(src):
-            continue
+            if rel_path in optional_set and rel_path not in mandatory_list:
+                continue
+            raise FileNotFoundError(
+                f"Required skill '{rel_path}' not found in '{skills_source_dir}' (fail-loud invariant)"
+            )
         link_target = os.path.join(target_base, rel_path)
         dst = os.path.join(target_skills_dir, rel_path)
         parent = os.path.dirname(dst)
@@ -198,6 +206,8 @@ def render_all_profiles(
     skills_source_dir: str,
     env_vars: Optional[Dict[str, str]] = None,
     symlink_target_prefix: Optional[str] = None,
+    overwrite_soul: bool = False,
+    antigravity_agents_dir: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     env = dict(os.environ)
     if env_vars:
@@ -212,6 +222,14 @@ def render_all_profiles(
     os.makedirs(output_profiles_dir, mode=0o755, exist_ok=True)
     os.chmod(output_profiles_dir, 0o755)
 
+    if antigravity_agents_dir is None and output_profiles_dir == "/opt/odin/hermes/profiles":
+        default_agy_dir = "/opt/atlas/vault/.agents/plugins/court-of-odin/agents"
+        if os.path.isdir(os.path.dirname(default_agy_dir)):
+            antigravity_agents_dir = default_agy_dir
+
+    if antigravity_agents_dir:
+        os.makedirs(antigravity_agents_dir, mode=0o755, exist_ok=True)
+
     results: Dict[str, Dict[str, Any]] = {}
     for role_id, role_cfg in spec.get("roles", {}).items():
         prof_dir = os.path.join(output_profiles_dir, role_id)
@@ -224,11 +242,17 @@ def render_all_profiles(
         with open(cfg_path, "w", encoding="utf-8") as cf:
             cf.write(cfg_text)
 
-        # 2. Seed SOUL.md only if missing (never overwrite continuous improvements in /opt/odin)
+        # 2. Seed SOUL.md (or overwrite when --overwrite-soul is passed)
         soul_src = os.path.join(profiles_src_dir, role_id, "SOUL.md")
         soul_dst = os.path.join(prof_dir, "SOUL.md")
-        if os.path.isfile(soul_src) and not os.path.exists(soul_dst):
-            shutil.copy2(soul_src, soul_dst)
+        if os.path.isfile(soul_src):
+            if overwrite_soul or not os.path.exists(soul_dst):
+                shutil.copy2(soul_src, soul_dst)
+            if antigravity_agents_dir and role_id != "swarm-worker":
+                agent_md = os.path.join(antigravity_agents_dir, f"{role_id}.md")
+                if os.path.islink(agent_md) or os.path.exists(agent_md):
+                    os.unlink(agent_md)
+                shutil.copy2(soul_src, agent_md)
 
         # 3. Provision symlinked skills/
         skills_dst = os.path.join(prof_dir, "skills")
@@ -277,6 +301,16 @@ def main() -> None:
         default=None,
         help="Optional target prefix for generated symlinks inside container (e.g. /opt/data/skills)",
     )
+    parser.add_argument(
+        "--overwrite-soul",
+        action="store_true",
+        help="Overwrite existing SOUL.md files in output profiles directory",
+    )
+    parser.add_argument(
+        "--antigravity-agents-dir",
+        default=None,
+        help="Optional directory to materialize Antigravity plugin agent .md files",
+    )
     args = parser.parse_args()
     res = render_all_profiles(
         template_path=args.template,
@@ -284,6 +318,8 @@ def main() -> None:
         output_profiles_dir=args.output_dir,
         skills_source_dir=args.skills_source,
         symlink_target_prefix=args.symlink_target_prefix,
+        overwrite_soul=args.overwrite_soul,
+        antigravity_agents_dir=args.antigravity_agents_dir,
     )
     for role_id, info in res.items():
         print(

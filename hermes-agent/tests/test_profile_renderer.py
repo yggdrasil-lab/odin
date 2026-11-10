@@ -13,10 +13,11 @@ def _parse_toolsets(cfg_text: str) -> set[str]:
 
 class TestProfileRenderer(unittest.TestCase):
     def test_render_all_profiles_and_skill_symlinks(self):
-        from render_profiles import load_roles_spec, render_all_profiles
+        from render_profiles import load_roles_spec, provision_skill_symlinks, render_all_profiles
 
-        roles_path = "/opt/atlas/vault/Forge/odin/config/hermes/profiles/roles.json"
-        template_path = "/opt/atlas/vault/Forge/odin/config/hermes/config.yaml.template"
+        vault_root = os.environ.get("VAULT", "/opt/atlas/vault" if os.path.exists("/opt/atlas/vault") else "/app/vault")
+        roles_path = os.path.join(vault_root, "Forge/odin/config/hermes/profiles/roles.json")
+        template_path = os.path.join(vault_root, "Forge/odin/config/hermes/config.yaml.template")
         spec = load_roles_spec(roles_path)
 
         # Verify main coordinator template has 0 MCP servers and lean toolsets
@@ -28,15 +29,16 @@ class TestProfileRenderer(unittest.TestCase):
             {"delegation", "terminal", "file", "memory", "discord", "clarify", "cronjob", "skills"},
         )
 
-        # Verify all 49 canonical Hermes skills are mapped across Coordinator + 5 Specialists
+        # Verify all 53 canonical Hermes skills are mapped across Coordinator + 5 Specialists
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_src = os.path.join(tmpdir, "skills_src")
             profiles_dst = os.path.join(tmpdir, "profiles")
+            agy_agents_dst = os.path.join(tmpdir, "agents")
 
-            all_49_skills = set(spec["coordinator"]["skills"])
+            all_canonical_skills = set(spec["coordinator"]["skills"])
             for role_id, role_cfg in spec["roles"].items():
                 for rel_skill in role_cfg.get("skills", []):
-                    all_49_skills.add(rel_skill)
+                    all_canonical_skills.add(rel_skill)
                     skill_dir = os.path.join(skills_src, rel_skill)
                     os.makedirs(skill_dir, exist_ok=True)
                     with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as sf:
@@ -48,7 +50,15 @@ class TestProfileRenderer(unittest.TestCase):
                 with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as sf:
                     sf.write(f"---\nname: {os.path.basename(rel_skill)}\ndescription: test\n---\n")
 
-            self.assertEqual(len(all_49_skills), 49)
+            self.assertEqual(len(all_canonical_skills), 53)
+
+            # Verify fail-loud invariant on missing mandatory skill
+            with self.assertRaises(FileNotFoundError):
+                provision_skill_symlinks(
+                    target_skills_dir=os.path.join(tmpdir, "fail_test"),
+                    skills_source_dir=skills_src,
+                    skill_rel_paths=["nonexistent/missing-skill"],
+                )
 
             # Simulate legacy top-level symlink for swarm-worker/skills to verify safe replacement
             legacy_worker_dir = os.path.join(profiles_dst, "swarm-worker")
@@ -65,6 +75,7 @@ class TestProfileRenderer(unittest.TestCase):
                     "DOMAIN_NAME": "tienzo.net",
                     "KRATOS_MCP_TOKEN": "test-token",
                 },
+                antigravity_agents_dir=agy_agents_dst,
             )
 
             for specialist in ("huginn", "sindri", "forseti", "vor", "saga"):
@@ -72,6 +83,15 @@ class TestProfileRenderer(unittest.TestCase):
                 prof_dir = os.path.join(profiles_dst, specialist)
                 self.assertTrue(os.path.isfile(os.path.join(prof_dir, "config.yaml")))
                 self.assertTrue(os.path.isfile(os.path.join(prof_dir, "SOUL.md")))
+
+                # Verify Antigravity agent file materialized as real file with subagent frontmatter
+                agy_md = os.path.join(agy_agents_dst, f"{specialist}.md")
+                self.assertTrue(os.path.isfile(agy_md))
+                self.assertFalse(os.path.islink(agy_md))
+                with open(agy_md, "r", encoding="utf-8") as af:
+                    agy_text = af.read()
+                self.assertIn("subagent: true", agy_text)
+                self.assertIn("mainAgent: false", agy_text)
 
                 # Check directory mode is 0755
                 mode = oct(os.stat(prof_dir).st_mode & 0o777)
