@@ -65,7 +65,7 @@ def get_auckland_today() -> str:
 def execute_cmd(cmd: List[str], timeout: int = 5) -> str:
     """Executes a bounded command without persistent subshells."""
     try:
-        res = subprocess.run(["timeout", str(timeout)] + cmd, capture_output=True, text=True)
+        res = subprocess.run(["timeout", str(timeout)] + cmd, capture_output=True, text=True, timeout=timeout + 2)
         return res.stdout.strip()
     except Exception as exc:
         logger.debug("Command execution failed for %s: %s", cmd, exc)

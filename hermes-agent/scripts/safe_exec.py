@@ -53,9 +53,12 @@ def validate_command(command: str) -> Tuple[bool, str]:
     return True, ""
 
 
+DEFAULT_CWD = "/home/raymund" if os.path.isdir("/home/raymund") else "/opt/data"
+
+
 def execute_safe_command(
     command: str,
-    cwd: str = "/opt/data",
+    cwd: str = DEFAULT_CWD,
     timeout: int = DEFAULT_TIMEOUT,
     max_output: int = DEFAULT_MAX_OUTPUT,
 ) -> int:
@@ -127,7 +130,7 @@ def execute_safe_command(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Anti-Stall Subprocess Execution Runner")
     parser.add_argument("command", help="Shell command string to execute")
-    parser.add_argument("--cwd", default="/opt/data", help="Execution working directory (default: /opt/data)")
+    parser.add_argument("--cwd", default=DEFAULT_CWD, help=f"Execution working directory (default: {DEFAULT_CWD})")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--max-output", type=int, default=DEFAULT_MAX_OUTPUT, help=f"Maximum output characters (default: {DEFAULT_MAX_OUTPUT})")
 

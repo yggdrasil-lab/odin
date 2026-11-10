@@ -212,14 +212,14 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
         f"**Origin PR:** {pr_url or 'N/A'}\n"
         f"**Origin Summary:** {summary or orig_title}\n"
         f"**Reported Frictions:** {frictions}\n\n"
-        f"Execute the full canonical wrap-up protocol (`.agents/skills/session-wrapup/SKILL.md`):\n\n"
+        f"Execute the full canonical wrap-up protocol (`${{HERMES_SKILLS_PATH:-/opt/odin/hermes/skills}}/productivity/session-wrapup/SKILL.md`):\n\n"
         f"### Protocol Execution Checklist:\n"
-        f"- [ ] **Gate 1 & Gate 2A (Auto Self-Improvement)**: Audit the reported frictions and execution trace. If any friction occurred, formulate a concrete hardening action and patch the corresponding skill under `/opt/odin/hermes/skills/` or rule under `.agents/rules/` to prevent recurrence.\n"
+        f"- [ ] **Gate 1 & Gate 2A (Auto Self-Improvement)**: Audit the reported frictions and execution trace. If any friction occurred, formulate a concrete hardening action and patch the corresponding skill under `${{HERMES_SKILLS_PATH:-/opt/odin/hermes/skills}}/` or rule under `.agents/rules/` to prevent recurrence.\n"
         f"{stack_instruction}"
         f"- [ ] **Gate 2C (Active Effort Audit)**: Check and update matching note in `second-brain/Efforts/` if linked to an active project.\n"
         f"- [ ] **Gate 2D (Mnemosyne Memory)**: Query and record durable architectural facts via Mnemosyne tools or host CLI.\n"
         f"- [ ] **Step 3 (Obsidian Daily Journal)**: Append a complete engineering session block into `second-brain/Journal/YYYY/MM/YYYY-MM-DD.md` (respecting the 06:00 Auckland sleep boundary). Include Dashboard, Narrative, Retrospective table (Friction / Root Cause / Hardening Action), and Next Session Handoff.\n"
-        f"- [ ] **Step 4 (Readiness Probe & Cleanup)**: Run `python3 /opt/odin/hermes/skills/productivity/session-wrapup/scripts/check_wrapup_readiness.py` to verify formatting, structure, and zero em/en dashes.\n"
+        f"- [ ] **Step 4 (Readiness Probe & Cleanup)**: Run `python3 ${{HERMES_SKILLS_PATH:-/opt/odin/hermes/skills}}/productivity/session-wrapup/scripts/check_wrapup_readiness.py` to verify formatting, structure, and zero em/en dashes.\n"
         f"- [ ] **Completion**: Run `kanban-gateway debrief <THIS_TASK_ID> --summary \"Session wrap-up complete for {task_id}\"` and call `kanban_complete`.\n"
     )
 
