@@ -25,6 +25,7 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
 # The vendor installer is non-interactive and takes its target directory via
 # --dir; it does NOT read AGY_INSTALL_DIR. `bash -s --` is required to pass the
 # flag through the curl pipe.
+ARG AGY_VERSION=1.5.5
 RUN mkdir -p /opt/agy \
     && curl -fsSL --retry 3 https://antigravity.google/cli/install.sh \
       | bash -s -- --dir /opt/agy \
