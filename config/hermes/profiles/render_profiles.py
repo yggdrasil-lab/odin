@@ -128,7 +128,7 @@ def render_profile_config(
 
 def _prune_broken_symlinks(target_skills_dir: str, skills_source_dir: str, target_base: str) -> None:
     """Removes only broken skill symlinks so user/agent-added symlinks survive restarts."""
-    if not os.path.isdir(target_skills_dir):
+    if not os.path.isdir(target_skills_dir) or not os.path.isdir(skills_source_dir):
         return
     for root, dirs, files in os.walk(target_skills_dir, topdown=False):
         for entry in list(dirs) + list(files):
@@ -173,15 +173,23 @@ def provision_skill_symlinks(
 
     mandatory_list = list(skill_rel_paths)
     optional_set = set(optional_rel_paths)
+    source_mounted = os.path.isdir(skills_source_dir)
+
+    if not source_mounted and not symlink_target_prefix:
+        raise FileNotFoundError(
+            f"Skills source directory '{skills_source_dir}' does not exist (fail-loud invariant)"
+        )
 
     for rel_path in mandatory_list + [p for p in optional_rel_paths if p not in mandatory_list]:
         src = os.path.join(skills_source_dir, rel_path)
-        if not os.path.exists(src):
+        if source_mounted and not os.path.exists(src):
             if rel_path in optional_set and rel_path not in mandatory_list:
                 continue
             raise FileNotFoundError(
                 f"Required skill '{rel_path}' not found in '{skills_source_dir}' (fail-loud invariant)"
             )
+        if not source_mounted and rel_path in optional_set and rel_path not in mandatory_list:
+            continue
         link_target = os.path.join(target_base, rel_path)
         dst = os.path.join(target_skills_dir, rel_path)
         parent = os.path.dirname(dst)
@@ -222,10 +230,14 @@ def render_all_profiles(
     os.makedirs(output_profiles_dir, mode=0o755, exist_ok=True)
     os.chmod(output_profiles_dir, 0o755)
 
-    if antigravity_agents_dir is None and output_profiles_dir == "/opt/odin/hermes/profiles":
-        default_agy_dir = "/opt/atlas/vault/.agents/plugins/court-of-odin/agents"
-        if os.path.isdir(os.path.dirname(default_agy_dir)):
-            antigravity_agents_dir = default_agy_dir
+    if antigravity_agents_dir is None and output_profiles_dir in ("/opt/odin/hermes/profiles", "/opt/data/profiles"):
+        for candidate in (
+            "/opt/atlas/vault/.agents/plugins/court-of-odin/agents",
+            "/app/vault/.agents/plugins/court-of-odin/agents",
+        ):
+            if os.path.isdir(os.path.dirname(candidate)):
+                antigravity_agents_dir = candidate
+                break
 
     if antigravity_agents_dir:
         os.makedirs(antigravity_agents_dir, mode=0o755, exist_ok=True)

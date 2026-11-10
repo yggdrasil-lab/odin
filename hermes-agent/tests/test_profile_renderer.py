@@ -52,13 +52,22 @@ class TestProfileRenderer(unittest.TestCase):
 
             self.assertEqual(len(all_canonical_skills), 53)
 
-            # Verify fail-loud invariant on missing mandatory skill
+            # Verify fail-loud invariant on missing mandatory skill when skills_source_dir is mounted
             with self.assertRaises(FileNotFoundError):
                 provision_skill_symlinks(
                     target_skills_dir=os.path.join(tmpdir, "fail_test"),
                     skills_source_dir=skills_src,
                     skill_rel_paths=["nonexistent/missing-skill"],
                 )
+
+            # Verify cross-environment CI runner mode (unmounted skills_source_dir with symlink_target_prefix)
+            ci_links = provision_skill_symlinks(
+                target_skills_dir=os.path.join(tmpdir, "ci_runner_test"),
+                skills_source_dir=os.path.join(tmpdir, "unmounted_host_skills"),
+                skill_rel_paths=["devops/odin-stack"],
+                symlink_target_prefix="/opt/data/skills",
+            )
+            self.assertEqual(ci_links, ["devops/odin-stack"])
 
             # Simulate legacy top-level symlink for swarm-worker/skills to verify safe replacement
             legacy_worker_dir = os.path.join(profiles_dst, "swarm-worker")
