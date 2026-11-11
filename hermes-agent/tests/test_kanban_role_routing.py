@@ -197,6 +197,30 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 wrapup_id = engine.trigger_session_wrapup_chore(prop_id, info["title"])
                 self.assertIsNone(wrapup_id)
 
+                # Test Tier 2 failing script friction in record_task_debrief -> spawns 'ready' [Auto-Fix] card assigned to vor
+                with patch.object(engine, "DISCORD_BOT_TOKEN", ""), patch.object(engine, "DISCORD_CHANNEL_ID", ""), patch(
+                    "kanban_gateway.engine.evaluate_debrief_gates_batch",
+                    return_value={
+                        "acceptance_gate": {"accepted": True, "raw_verdict": "accepted"},
+                        "auto_merge_gate": {"auto_merge_eligible": False, "raw_verdict": "no_pr"},
+                        "friction_gate": {"action": "auto_fix_script", "assignee": "vor", "raw_verdict": "auto_fix_script"},
+                        "friction_assignee": "vor",
+                    },
+                ):
+                    debrief_res = engine.record_task_debrief(
+                        task_id=task_id,
+                        summary="Completed poseidon diagnostic.",
+                        frictions="check_poseidon.py failed with FileNotFoundError on line 42.",
+                        chore_title="Fix FileNotFoundError in check_poseidon.py",
+                    )
+                    autofix_id = debrief_res["chore_id"]
+                    self.assertIsNotNone(autofix_id)
+                    autofix_info = engine.show_kanban_task(autofix_id, as_json=True)
+                    self.assertEqual(autofix_info["status"], "ready")
+                    self.assertEqual(autofix_info["assignee"], "vor")
+                    self.assertIn("[Auto-Fix] Fix FileNotFoundError in check_poseidon.py", autofix_info["title"])
+                    self.assertIsNone(engine.trigger_session_wrapup_chore(autofix_id, autofix_info["title"]))
+
 
 if __name__ == "__main__":
     unittest.main()

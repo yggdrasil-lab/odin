@@ -265,13 +265,14 @@ def create_improvement_proposal(
 def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optional[str] = None) -> Optional[str]:
     """Auto-spawns an autonomous session wrap-up chore when a dev or engineering task transitions to done."""
     clean_title = orig_title.lower()
-    # Recursion guard: do not trigger wrap-up for wrap-up chores, friction chores, proposals, or triage tasks
+    # Recursion guard: do not trigger wrap-up for wrap-up chores, friction chores, auto-fixes, proposals, or triage tasks
     if (
         clean_title.startswith("wrap-up")
         or clean_title.startswith("auto-sync")
         or "address friction" in clean_title
         or "session wrap-up" in clean_title
         or "proposal:" in clean_title
+        or "[auto-fix]" in clean_title
     ):
         logger.info("Skipping wrap-up trigger for maintenance/wrap-up/proposal task %s", task_id)
         return None
@@ -325,7 +326,7 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
         f"**Reported Frictions:** {frictions}\n\n"
         f"Execute the full canonical wrap-up protocol (`${{HERMES_SKILLS_PATH:-/opt/odin/hermes/skills}}/productivity/session-wrapup/SKILL.md`):\n\n"
         f"### Protocol Execution Checklist:\n"
-        f"- [ ] **Gate 1 & Gate 2A (3-Tier Bounded Continuous Improvement)**: Audit the reported frictions and execution trace. Apply Tier 1/2 doc/reference syncs inline (keeping all skills `<= 4,000 B` body and `<= 5,000 B` view). For any Tier 3 change (new script, new skill, or rule modification), NEVER mutate rules/skills unreviewed: submit a proposal via `kanban-gateway propose --title \"...\" --friction \"...\" --proposal \"...\" --origin-task {task_id}` (skip if a proposal thread was already spawned during debrief).\n"
+        f"- [ ] **Gate 1 & Gate 2A (3-Tier Bounded Continuous Improvement)**: Audit the reported frictions and execution trace. If an existing script failed or had a broken path/flag (Tier 1/2), fix it directly and autonomously inline (keeping all skills `<= 4,000 B` body and `<= 5,000 B` view). For any Tier 3 change (brand-new script, brand-new skill, or canonical rule change), NEVER mutate rules/skills unreviewed: submit a proposal via `kanban-gateway propose --title \"...\" --friction \"...\" --proposal \"...\" --origin-task {task_id}` (skip if a card was already spawned during debrief).\n"
         f"{stack_instruction}"
         f"- [ ] **Gate 2C (Active Effort Audit)**: Check and update matching note in `second-brain/Efforts/` if linked to an active project.\n"
         f"- [ ] **Gate 2D (Mnemosyne Memory)**: Query and record durable architectural facts via Mnemosyne tools or host CLI.\n"
@@ -750,8 +751,12 @@ def record_task_debrief(
     frictions: Optional[str] = None,
     chore_title: Optional[str] = None,
     pr_url: Optional[str] = None,
+    auto_fix: bool = False,
 ) -> Dict[str, Any]:
-    """Records a task debrief / retrospective receipt and optionally spawns a follow-up chore card."""
+    """Records a task debrief / retrospective receipt and routes follow-ups:
+    - Tier 2 (auto_fix_script / auto_fix=True): spawns a 'ready' [Auto-Fix] card assigned directly to vor/sindri.
+    - Tier 3 (propose_review / spawn_chore): spawns an 'in_review' Proposal thread in #info assigned to raymund.
+    """
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
 
@@ -809,13 +814,55 @@ def record_task_debrief(
         cursor.execute("UPDATE tasks SET status = 'in_review' WHERE id = ?", (task_id,))
         logger.info("Transitioned task %s to 'in_review' due to PR: %s", task_id, extracted_pr)
 
-    # 4. If friction is actionable (spawn_chore) or chore_title explicitly provided, spawn an in_review Proposal thread in #info
+    # 4. Route actionable frictions: Tier 2 (auto_fix_script) -> direct 'ready' [Auto-Fix] card; Tier 3 (propose_review) -> 'in_review' #info Proposal
     chore_id = None
     chore_thread_id = None
-    should_spawn = bool(chore_title) or (friction_gate and friction_gate.get("action") == "spawn_chore")
-    if should_spawn:
+    action = (
+        "auto_fix_script"
+        if auto_fix
+        else (friction_gate.get("action") if friction_gate else ("propose_review" if chore_title else "ignore_transient"))
+    )
+    if auto_fix and friction_gate is not None:
+        friction_gate["action"] = "auto_fix_script"
+
+    if action == "auto_fix_script":
+        raw_title = chore_title or f"Fix failing script in {task_id}"
+        if not raw_title.lower().startswith("[auto-fix]"):
+            ctitle = f"[Auto-Fix] {raw_title}"
+        else:
+            ctitle = raw_title
+        cbody = (
+            f"Autonomous Tier 2 script/path repair spawned from task debrief for `{task_id}`:\n\n"
+            f"**Failing Script / Friction Report:**\n{frictions}\n\n"
+            f"**Origin Task:** {task_row[1]} (`{task_id}`)\n\n"
+            f"**Execution Mandate:** Fix the failing existing script, broken path, or CLI flag directly and verify with tests (`validate_skill.py --all` if touching skills). Do not create brand-new skills or alter canonical rules in `AGENTS.md`."
+        )
+        conn.commit()
+        conn.close()
+        friction_assignee = batch_gates.get("friction_assignee") or "vor"
+        chore_tier = "frontier_deep" if friction_assignee == "sindri" else "flash_fast"
+        chore_id, chore_thread_id = create_kanban_task(
+            title=ctitle,
+            body=cbody,
+            priority=1,
+            assignee=friction_assignee,
+            precomputed_complexity={
+                "tier": chore_tier,
+                "recommended_assignee": friction_assignee,
+                "recommended_model": (
+                    "gemini-4-argon-high"
+                    if friction_assignee == "sindri"
+                    else SPECIALIST_MODELS.get(friction_assignee, "gemini-3.8-flash-high")
+                ),
+                "raw_verdict": friction_gate.get("raw_verdict", "auto_fix_script") if friction_gate else "auto_fix_script",
+                "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,
+            },
+        )
+        conn = sqlite3.connect(KANBAN_DB_PATH)
+        cursor = conn.cursor()
+    elif action in ("propose_review", "spawn_chore") or bool(chore_title):
         ctitle = chore_title or f"Address friction in {task_id}"
-        triage_verdict = friction_gate.get("raw_verdict", "Explicit chore requested") if friction_gate else "Explicit chore requested"
+        triage_verdict = friction_gate.get("raw_verdict", "Explicit proposal requested") if friction_gate else "Explicit proposal requested"
         cproposal = (
             f"Formulate and implement a targeted fix for the friction encountered during `{task_id}` ({task_row[1]}).\n"
             f"- **Jev Triage Verdict:** {triage_verdict}"

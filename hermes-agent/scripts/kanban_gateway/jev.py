@@ -261,6 +261,42 @@ def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "
     }
 
 
+def _classify_friction_tier_fallback(friction_text: str) -> str:
+    """Deterministic fallback classifying whether a friction is an existing failing script (Tier 2 auto-fix)
+    or a structural/rule/new-skill proposal (Tier 3 human review).
+    """
+    lower = (friction_text or "").lower()
+    if not lower or lower == "none":
+        return "ignore_transient"
+    tier3_markers = ("new skill", "create skill", "agents.md", ".agents/rules", "new rule", "redesign", "architectural")
+    if any(m in lower for m in tier3_markers):
+        return "propose_review"
+    script_fail_markers = (
+        "traceback",
+        "syntaxerror",
+        "filenotfounderror",
+        "modulenotfounderror",
+        "typeerror",
+        "valueerror",
+        "keyerror",
+        "attributeerror",
+        "calledprocesserror",
+        "unrecognized arguments",
+        "no such file",
+        "broken symlink",
+        "failing script",
+        "script failed",
+        "script crash",
+        "exit code 1",
+        "exit code 2",
+        ".py",
+        ".sh",
+    )
+    if any(m in lower for m in script_fail_markers):
+        return "auto_fix_script"
+    return "propose_review"
+
+
 def evaluate_debrief_gates_batch(
     task_title: str,
     task_body: str,
@@ -293,9 +329,10 @@ def evaluate_debrief_gates_batch(
     if has_friction:
         questions["friction_action"] = {
             "type": "choice",
-            "instructions": "Classify friction actionability into spawn_chore, ignore_transient, or alert_channel",
+            "instructions": "Classify friction actionability into auto_fix_script, propose_review, ignore_transient, or alert_channel",
             "criteria": {
-                "spawn_chore": "A concrete, reproducible operational bug, missing tool, bad configuration, or recurring bottleneck that warrants a follow-up [Chore/Friction] card.",
+                "auto_fix_script": "A failing or broken existing script (Python/bash traceback, SyntaxError, FileNotFoundError, broken path/symlink, missing CLI flag, unhandled exception) or a stale path/flag in an existing skill doc that should be repaired directly and autonomously without waiting for human decision.",
+                "propose_review": "A brand-new skill, brand-new script, canonical rule change (AGENTS.md / .agents/rules/), workflow redesign, or architectural friction that requires human review and decision in a #info proposal thread before execution.",
                 "ignore_transient": "A one-off transient network retry, minor timing delay, benign warning, or non-actionable observation. Safe to ignore.",
                 "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention.",
             },
@@ -354,9 +391,13 @@ def evaluate_debrief_gates_batch(
     friction_gate = None
     friction_assignee = "vor"
     if has_friction:
-        action = str(parsed.get("friction_action", "spawn_chore"))
-        if action not in ("spawn_chore", "ignore_transient", "alert_channel"):
-            action = "spawn_chore"
+        raw_action = str(parsed.get("friction_action", ""))
+        if raw_action in ("auto_fix_script", "propose_review", "spawn_chore", "ignore_transient", "alert_channel"):
+            action = raw_action
+        else:
+            action = _classify_friction_tier_fallback(friction_text or "")
+        if action == "spawn_chore":
+            action = _classify_friction_tier_fallback(friction_text or "")
         if parsed.get("friction_assignee") in ("vor", "sindri"):
             friction_assignee = str(parsed["friction_assignee"])
         else:
@@ -435,7 +476,7 @@ def evaluate_auto_merge_safety(task_title: str, debrief_summary: str, pr_url: st
 
 
 def evaluate_friction_actionability(friction_text: str) -> Dict[str, Any]:
-    """Classifies reported frictions to avoid spawning redundant chore cards for transient noise (Choice)."""
+    """Classifies reported frictions into auto_fix_script (Tier 2), propose_review (Tier 3), ignore_transient, or alert_channel."""
     system_prompt = (
         "Classify the reported task execution friction into exactly one category:\n"
         "```json\n"
@@ -443,9 +484,10 @@ def evaluate_friction_actionability(friction_text: str) -> Dict[str, Any]:
         '  "questions": {\n'
         '    "action": {\n'
         '      "type": "choice",\n'
-        '      "instructions": "Classify friction actionability into spawn_chore, ignore_transient, or alert_channel",\n'
+        '      "instructions": "Classify friction actionability into auto_fix_script, propose_review, ignore_transient, or alert_channel",\n'
         '      "criteria": {\n'
-        '        "spawn_chore": "A concrete, reproducible operational bug, missing tool, bad configuration, or recurring bottleneck that warrants creating an autonomous follow-up [Chore/Friction] Kanban card.",\n'
+        '        "auto_fix_script": "A failing or broken existing script (Python/bash traceback, SyntaxError, FileNotFoundError, broken path/symlink, missing CLI flag, unhandled exception) or a stale path/flag in an existing skill doc that should be repaired directly and autonomously without waiting for human decision.",\n'
+        '        "propose_review": "A brand-new skill, brand-new script, canonical rule change (AGENTS.md / .agents/rules/), workflow redesign, or architectural friction that requires human review and decision in a #info proposal thread before execution.",\n'
         '        "ignore_transient": "A one-off transient network retry, minor timing delay, benign warning, or non-actionable observation (e.g. 0 frictions, clean execution). Safe to ignore without spawning a card.",\n'
         '        "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention."\n'
         "      }\n"
@@ -456,13 +498,15 @@ def evaluate_friction_actionability(friction_text: str) -> Dict[str, Any]:
     )
     content, elapsed = call_jev_raw(system_prompt, f"Reported Friction:\n{friction_text}")
     content_lower = content.lower()
-    action = "spawn_chore"  # Safe default
+    action = _classify_friction_tier_fallback(friction_text)
     if "ignore_transient" in content_lower:
         action = "ignore_transient"
     elif "alert_channel" in content_lower:
         action = "alert_channel"
-    elif "spawn_chore" in content_lower:
-        action = "spawn_chore"
+    elif "auto_fix_script" in content_lower:
+        action = "auto_fix_script"
+    elif "propose_review" in content_lower or "spawn_chore" in content_lower:
+        action = "propose_review"
 
     logger.info("Jev System One friction classification in %.2fs -> Action: %s (Raw: '%s')", elapsed, action, content)
     return {
