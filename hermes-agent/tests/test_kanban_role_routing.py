@@ -221,6 +221,17 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     self.assertIn("[Auto-Fix] Fix FileNotFoundError in check_poseidon.py", autofix_info["title"])
                     self.assertIsNone(engine.trigger_session_wrapup_chore(autofix_id, autofix_info["title"]))
 
+                    # Test session wrap-up chore auto-spawn passes precomputed_complexity (bypassing Jev/Muninn evaluation)
+                    with patch("kanban_gateway.engine.evaluate_task_complexity") as mock_eval_complexity:
+                        wrapup_chore_id = engine.trigger_session_wrapup_chore(task_id, "Investigate Iris alert on poseidon")
+                        self.assertIsNotNone(wrapup_chore_id)
+                        mock_eval_complexity.assert_not_called()
+                        wrapup_info = engine.show_kanban_task(wrapup_chore_id, as_json=True)
+                        self.assertEqual(wrapup_info["status"], "ready")
+                        self.assertEqual(wrapup_info["assignee"], "vor")
+                        self.assertEqual(wrapup_info["model_override"], "gemini-3.8-flash-high")
+                        self.assertIn("Wrap-up: Session wrap-up and docs sync for Investigate Iris alert on poseidon", wrapup_info["title"])
+
 
 if __name__ == "__main__":
     unittest.main()

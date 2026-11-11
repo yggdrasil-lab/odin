@@ -341,6 +341,13 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
             body=chore_body,
             priority=1,
             assignee="vor",
+            precomputed_complexity={
+                "tier": "flash_fast",
+                "recommended_assignee": "vor",
+                "recommended_model": "gemini-3.8-flash-high",
+                "raw_verdict": "auto_spawn_session_wrapup",
+                "latency_seconds": 0.0,
+            },
         )
         logger.info("Auto-spawned session wrap-up chore %s (vor) for completed task %s", chore_id, task_id)
 
