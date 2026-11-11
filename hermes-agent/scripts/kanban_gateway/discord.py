@@ -168,7 +168,10 @@ def post_thread_debrief(
         fields.append({"name": "Execution Quality", "value": "Clean execution (zero frictions recorded)", "inline": False})
 
     if chore_task_id:
-        fields.append({"name": "Tier 3 Proposal Thread", "value": f"`{chore_task_id}` (in_review in #info)", "inline": True})
+        if friction_gate and friction_gate.get("action") == "auto_fix_script":
+            fields.append({"name": "Autonomous Script Fix (Tier 2)", "value": f"`{chore_task_id}` (ready -> auto-dispatched)", "inline": True})
+        else:
+            fields.append({"name": "Tier 3 Proposal Thread", "value": f"`{chore_task_id}` (in_review in #info)", "inline": True})
     elif friction_gate and friction_gate.get("action") == "ignore_transient":
         fields.append({"name": "Friction Triage", "value": "Transient noise suppressed (no proposal spawned)", "inline": True})
 

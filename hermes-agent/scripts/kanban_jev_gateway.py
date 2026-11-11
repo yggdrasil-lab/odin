@@ -77,12 +77,13 @@ def main():
     p_update.add_argument("--message", required=True, help="Status update or progress message")
 
     # Debrief command
-    p_debrief = subparsers.add_parser("debrief", help="Record task debrief/retro and optionally spawn a friction chore card")
+    p_debrief = subparsers.add_parser("debrief", help="Record task debrief/retro and route follow-ups (Tier 2 auto-fix vs Tier 3 #info proposal)")
     p_debrief.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
     p_debrief.add_argument("--summary", required=True, help="Summary of work delivered and testing")
     p_debrief.add_argument("--friction", default="", help="Frictions, tool errors, or failure modes encountered")
-    p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up chore card")
+    p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up card")
     p_debrief.add_argument("--pr-url", default="", help="Optional GitHub PR URL requiring review")
+    p_debrief.add_argument("--auto-fix", action="store_true", default=False, help="Force Tier 2 direct autonomous script fix ('ready') instead of Tier 3 proposal")
 
     # Handoff command (zero-chat specialist pipeline)
     p_handoff = subparsers.add_parser("handoff", help="Hand off task to another Court of Odin specialist in the pipeline")
@@ -155,10 +156,21 @@ def main():
         update_task_lifecycle(args.task_id, args.status, args.message)
         print(f"Updated task {args.task_id} to status '{args.status}'")
     elif args.command == "debrief":
-        res = record_task_debrief(args.task_id, args.summary, frictions=args.friction, chore_title=args.chore_title, pr_url=args.pr_url)
+        res = record_task_debrief(
+            args.task_id,
+            args.summary,
+            frictions=args.friction,
+            chore_title=args.chore_title,
+            pr_url=args.pr_url,
+            auto_fix=args.auto_fix,
+        )
         print(f"Recorded debrief for {args.task_id}")
         if res.get("chore_id"):
-            print(f"Created Tier 3 improvement proposal (in_review): {res['chore_id']}")
+            fg = res.get("friction_gate") or {}
+            if args.auto_fix or fg.get("action") == "auto_fix_script":
+                print(f"Auto-spawned Tier 2 direct script fix (ready): {res['chore_id']}")
+            else:
+                print(f"Created Tier 3 improvement proposal (in_review): {res['chore_id']}")
     elif args.command == "propose":
         prop_id, prop_thread = create_improvement_proposal(
             title=args.title,
