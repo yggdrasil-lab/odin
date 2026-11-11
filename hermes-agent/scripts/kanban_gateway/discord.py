@@ -168,9 +168,9 @@ def post_thread_debrief(
         fields.append({"name": "Execution Quality", "value": "Clean execution (zero frictions recorded)", "inline": False})
 
     if chore_task_id:
-        fields.append({"name": "Auto-Spawned Chore", "value": f"`{chore_task_id}` (enqueued to backlog)", "inline": True})
+        fields.append({"name": "Tier 3 Proposal Thread", "value": f"`{chore_task_id}` (in_review in #info)", "inline": True})
     elif friction_gate and friction_gate.get("action") == "ignore_transient":
-        fields.append({"name": "Friction Triage", "value": "Transient noise suppressed (no chore card spawned)", "inline": True})
+        fields.append({"name": "Friction Triage", "value": "Transient noise suppressed (no proposal spawned)", "inline": True})
 
     embed = {
         "title": "Task Debrief & Retrospective",

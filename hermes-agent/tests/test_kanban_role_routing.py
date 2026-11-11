@@ -1,9 +1,12 @@
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../scripts")))
 
 from kanban_gateway.jev import evaluate_task_complexity
 
@@ -89,6 +92,8 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     priority INTEGER,
                     created_by TEXT,
                     created_at INTEGER,
+                    started_at INTEGER,
+                    completed_at INTEGER,
                     workspace_kind TEXT,
                     consecutive_failures INTEGER,
                     last_failure_error TEXT,
@@ -171,6 +176,26 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 self.assertIn("Root cause: missing env var", row[3])
                 self.assertEqual(row[4], 0)
                 self.assertIsNone(row[5])
+
+                # Test Tier 3 improvement proposal creation (in_review assigned to raymund) & show_kanban_task
+                prop_id, prop_thread = engine.create_improvement_proposal(
+                    title="Add preflight skill validator to wrap-up",
+                    friction="Tail-of-session edits exceeded 4,000B body cap without failing check_wrapup_readiness.py.",
+                    proposal="Run validate_skill.py --all inside check_wrapup_readiness.py.",
+                    target_specialist="vor",
+                    origin_task_id=task_id,
+                    notify_discord=False,
+                )
+                self.assertIsNone(prop_thread)
+                info = engine.show_kanban_task(prop_id, as_json=True)
+                self.assertEqual(info["status"], "in_review")
+                self.assertEqual(info["assignee"], "raymund")
+                self.assertIn("💡 Proposal: Add preflight skill validator to wrap-up", info["title"])
+                self.assertIn("kanban-gateway handoff", info["body"])
+
+                # Verify recursion guard skips wrap-up trigger for Proposal cards
+                wrapup_id = engine.trigger_session_wrapup_chore(prop_id, info["title"])
+                self.assertIsNone(wrapup_id)
 
 
 if __name__ == "__main__":
