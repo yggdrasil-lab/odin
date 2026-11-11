@@ -28,6 +28,7 @@ from kanban_gateway import (
     USER_AGENT,
     KanbanGatewayHTTPHandler,
     call_jev_raw,
+    create_improvement_proposal,
     create_kanban_task,
     evaluate_auto_merge_safety,
     evaluate_debrief_acceptance,
@@ -44,6 +45,7 @@ from kanban_gateway import (
     resolve_discord_env,
     resolve_muninn_endpoint,
     run_http_server,
+    show_kanban_task,
     triage_and_intake,
     trigger_session_wrapup_chore,
     update_task_lifecycle,
@@ -128,6 +130,19 @@ def main():
     # List command
     subparsers.add_parser("list", aliases=["ls"], help="List active Kanban cards and mapped threads")
 
+    # Show command
+    p_show = subparsers.add_parser("show", help="Inspect a Kanban card and its recent events")
+    p_show.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
+    p_show.add_argument("--json", action="store_true", help="Output task details as JSON")
+
+    # Propose command (Tier 3 Continuous Improvement Proposal in #info)
+    p_propose = subparsers.add_parser("propose", help="Create a Tier 3 continuous improvement proposal thread in #info (in_review)")
+    p_propose.add_argument("--title", required=True, help="Short proposal title")
+    p_propose.add_argument("--friction", required=True, help="Friction or failure mode observed")
+    p_propose.add_argument("--proposal", required=True, help="Proposed skill, script, or rule change specification")
+    p_propose.add_argument("--target", default="vor", help="Recommended specialist upon approval (vor or sindri)")
+    p_propose.add_argument("--origin-task", default="", help="Optional originating Kanban task ID")
+
     args = parser.parse_args()
 
     if args.command == "triage":
@@ -143,7 +158,18 @@ def main():
         res = record_task_debrief(args.task_id, args.summary, frictions=args.friction, chore_title=args.chore_title, pr_url=args.pr_url)
         print(f"Recorded debrief for {args.task_id}")
         if res.get("chore_id"):
-            print(f"Auto-spawned friction chore card: {res['chore_id']}")
+            print(f"Created Tier 3 improvement proposal (in_review): {res['chore_id']}")
+    elif args.command == "propose":
+        prop_id, prop_thread = create_improvement_proposal(
+            title=args.title,
+            friction=args.friction,
+            proposal=args.proposal,
+            target_specialist=args.target,
+            origin_task_id=args.origin_task or None,
+        )
+        print(f"Created Tier 3 proposal {prop_id} (in_review) with #info thread ID {prop_thread}")
+    elif args.command == "show":
+        show_kanban_task(args.task_id, as_json=args.json)
     elif args.command == "handoff":
         res = handoff_kanban_task(args.task_id, args.to_assignee, args.summary, pr_url=args.pr_url)
         print(f"Handed off {args.task_id} from '{res['from_assignee']}' to '{res['to_assignee']}' ({res['model_override']})")

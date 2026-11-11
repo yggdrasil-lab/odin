@@ -230,6 +230,14 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
 
         # Sanitize summary and strictly strip all em and en dashes (invariant)
         clean_summary = (summary or "").replace("\\u2014", "-").replace("\\u2013", "-").strip()
+        if clean_summary.startswith("[CONTEXT COMPACTION"):
+            first_heading = clean_summary.find("\\n## ")
+            if first_heading != -1:
+                clean_summary = clean_summary[first_heading + 1:].strip()
+        for internal_sec in ("\\n## Anchor Index", "\\n## Context Recovery"):
+            sec_idx = clean_summary.find(internal_sec)
+            if sec_idx != -1:
+                clean_summary = clean_summary[:sec_idx].strip()
 
         # Extract recent user queries/topics from turns_to_summarize or messages
         user_queries = []
@@ -270,15 +278,11 @@ METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         checkpoint_text = "\\n".join(lines)
         checkpoint_text = checkpoint_text.replace("\\u2014", "-").replace("\\u2013", "-")
 
-        # Write to journal note
+        # Write to journal note (always append at end of daily journal to preserve multi-session handoff blocks)
         journal_file.parent.mkdir(parents=True, exist_ok=True)
         if journal_file.exists():
             existing = journal_file.read_text(encoding="utf-8")
-            if "## Next Session Handoff Block" in existing:
-                parts = existing.split("## Next Session Handoff Block", 1)
-                updated = parts[0].rstrip() + "\\n\\n" + checkpoint_text + "\\n\\n## Next Session Handoff Block" + parts[1]
-            else:
-                updated = existing.rstrip() + "\\n\\n" + checkpoint_text + "\\n"
+            updated = existing.rstrip() + "\\n\\n---\\n\\n" + checkpoint_text + "\\n"
         else:
             updated = f"---\\ndate: {date_str}\\ntags: [journal, auto-checkpoint]\\nlocation: \\"Auckland\\"\\n---\\n\\n## Journal Entry\\n\\n{checkpoint_text}\\n"
 
@@ -594,8 +598,8 @@ def main() -> int:
 
     # 1. Apply pre-compression wrapup hook if not already applied
     if MARKER in src:
-        # Check if METHOD_INJECTION needs an update (e.g. entity thread guard)
-        if "Skipping thread handover for health/entity thread" not in src and "    def _trigger_odin_pre_compress_wrapup(" in src:
+        # Check if METHOD_INJECTION needs an update (e.g. compaction preamble strip & multi-session append fix)
+        if "for internal_sec in" not in src and "    def _trigger_odin_pre_compress_wrapup(" in src:
             m_start = src.find("    def _trigger_odin_pre_compress_wrapup(")
             m_end = src.find(METHOD_ANCHOR, m_start)
             if m_start != -1 and m_end != -1:
