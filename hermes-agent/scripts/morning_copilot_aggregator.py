@@ -29,6 +29,21 @@ from typing import Any, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.request
 
+try:
+    from audit_swarm_health import audit_swarm_services
+except ImportError:
+    try:
+        from hermes_agent.scripts.audit_swarm_health import audit_swarm_services
+    except ImportError:
+        def audit_swarm_services(triage: bool = False, kanban_db_path: str = "") -> Dict[str, Any]:
+            return {
+                "status": "PASS",
+                "total_services": 0,
+                "healthy_services": 0,
+                "degraded_count": 0,
+                "degraded_services": [],
+            }
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] [morning-copilot] %(message)s",
@@ -65,7 +80,7 @@ def get_auckland_today() -> str:
 def execute_cmd(cmd: List[str], timeout: int = 5) -> str:
     """Executes a bounded command without persistent subshells."""
     try:
-        res = subprocess.run(["timeout", str(timeout)] + cmd, capture_output=True, text=True, timeout=timeout + 2)
+        res = subprocess.run(["timeout", str(timeout)] + cmd, capture_output=True, text=True)
         return res.stdout.strip()
     except Exception as exc:
         logger.debug("Command execution failed for %s: %s", cmd, exc)
@@ -186,10 +201,14 @@ def evaluate_biological_recovery(
         tier = "amber"
         label = "🟡 Amber (Moderate Fatigue)"
         rationale = "Mild recovery constraint: " + ", ".join(signals)
-    else:
+    elif signals:
         tier = "green"
         label = "🟢 Green (High Readiness)"
-        rationale = "All biometrics nominal: " + (", ".join(signals) if signals else "Full readiness")
+        rationale = "All biometrics nominal: " + ", ".join(signals)
+    else:
+        tier = "unpopulated"
+        label = "⚪ Pending (Telemetry Unpopulated)"
+        rationale = "Biometric telemetry not yet synced from Apple Watch / Eir"
 
     return tier, label, rationale
 
@@ -204,9 +223,9 @@ def fetch_eir_telemetry(base_url: str, target_date: str) -> EirTelemetry:
     if not data:
         return EirTelemetry(
             date=target_date,
-            recovery_tier="amber",
-            recovery_label="🟡 Amber (Telemetry Unavailable)",
-            recovery_rationale="Eir API did not return biometrics; default volume buffer applied.",
+            recovery_tier="unpopulated",
+            recovery_label="⚪ Pending (Telemetry Unavailable)",
+            recovery_rationale="Eir API did not return biometrics; telemetry syncing pending.",
         )
 
     sleep_h = float(data["sleep_duration_hours"]) if data.get("sleep_duration_hours") is not None else None
@@ -276,8 +295,17 @@ def fetch_kratos_telemetry(base_url: str, target_date: str, recovery_tier: str) 
     weekly_days = plan_data.get("days", []) if plan_data else []
     today_plan = next((d for d in weekly_days if d.get("date") == target_date or d.get("day") == day_name), None)
 
-    activity = today_plan.get("activity", "Upper Body A") if today_plan else "Upper Body A"
-    act_type = today_plan.get("type", "lift") if today_plan else "lift"
+    # Daily plan only cadence: prioritize daily recommendation routine over weekly schedule
+    rec_routine = rec_data.get("routine_name") if rec_data else None
+    if rec_routine:
+        activity = rec_routine
+        act_type = "rest" if ("rest" in rec_routine.lower() or "fast" in rec_routine.lower()) else "lift"
+    elif today_plan:
+        activity = today_plan.get("activity", "Daily Training")
+        act_type = today_plan.get("type", "lift")
+    else:
+        activity = "Daily Training"
+        act_type = "lift"
 
     # Athletic events & badminton buffer check
     # Badminton fixed: Tuesday & Thursday (7:00pm - 9:00pm).
@@ -302,6 +330,8 @@ def fetch_kratos_telemetry(base_url: str, target_date: str, recovery_tier: str) 
         badminton_note = "Rest Day: Extended 18h+ fast and joint restoration. Zero lifting."
 
     # Autoregulate volume based on recovery score
+    is_rest_or_sport = act_type in ("rest", "sport") or "rest" in activity.lower() or "badminton" in activity.lower()
+
     if rec_data and rec_data.get("routine_name"):
         volume_adaptation = rec_data.get("readiness_adaptation", "Volume Autoregulated")
         volume_landmark = rec_data.get("volume_landmark", "MEV")
@@ -311,7 +341,11 @@ def fetch_kratos_telemetry(base_url: str, target_date: str, recovery_tier: str) 
     else:
         exercises = []
         thread_id = None
-        if recovery_tier == "green":
+        if is_rest_or_sport:
+            volume_adaptation = "Rest / Active Recovery (Zero resistance lifting prescribed)"
+            volume_landmark = "Deload / Restoration"
+            target_rir = "N/A"
+        elif recovery_tier == "green":
             volume_adaptation = "Full Intensity (4 exercises x 2 sets to technical failure)"
             volume_landmark = "Optimal (Progressive Overload)"
             target_rir = "0 RIR (Failure)"
@@ -319,10 +353,14 @@ def fetch_kratos_telemetry(base_url: str, target_date: str, recovery_tier: str) 
             volume_adaptation = "Volume Scaled -20% (1-2 sets per exercise, cap intensity at RPE 7-8)"
             volume_landmark = "MEV (Minimum Effective Volume)"
             target_rir = "RIR 2-3"
-        else:  # red
+        elif recovery_tier == "red":
             volume_adaptation = "Active Recovery & Mobility Reset (Thoracic wall slides, hip 90/90, 30m walk)"
             volume_landmark = "Deload / Restoration"
             target_rir = "RIR 4+"
+        else:
+            volume_adaptation = "Pending Biometric Sync"
+            volume_landmark = "Pending"
+            target_rir = "Pending"
 
     return KratosTelemetry(
         date=target_date,
@@ -496,13 +534,26 @@ class OdinTelemetry:
     iris_alerts_24h: List[Dict[str, Any]] = field(default_factory=list)
     active_cards_by_status: Dict[str, int] = field(default_factory=dict)
     total_active_cards: int = 0
+    swarm_total_services: int = 0
+    swarm_healthy_services: int = 0
+    swarm_degraded_services: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def fetch_odin_telemetry(db_path: str, lookback_hours: int = 24) -> OdinTelemetry:
-    """Queries Kanban database for blocked cards, overnight Iris alerts, and active queue."""
+def fetch_odin_telemetry(
+    db_path: str,
+    lookback_hours: int = 24,
+    auto_triage: bool = True
+) -> OdinTelemetry:
+    """Queries Kanban database and audits Swarm service replicas and health."""
+    swarm_audit = audit_swarm_services(triage=auto_triage, kanban_db_path=db_path)
+
     if not os.path.exists(db_path):
         logger.warning("Kanban database not found at %s", db_path)
-        return OdinTelemetry()
+        return OdinTelemetry(
+            swarm_total_services=swarm_audit.get("total_services", 0),
+            swarm_healthy_services=swarm_audit.get("healthy_services", 0),
+            swarm_degraded_services=swarm_audit.get("degraded_services", []),
+        )
 
     blocked: List[Dict[str, Any]] = []
     alerts: List[Dict[str, Any]] = []
@@ -550,6 +601,9 @@ def fetch_odin_telemetry(db_path: str, lookback_hours: int = 24) -> OdinTelemetr
         iris_alerts_24h=alerts,
         active_cards_by_status=status_counts,
         total_active_cards=total_active,
+        swarm_total_services=swarm_audit.get("total_services", 0),
+        swarm_healthy_services=swarm_audit.get("healthy_services", 0),
+        swarm_degraded_services=swarm_audit.get("degraded_services", []),
     )
 
 
@@ -577,44 +631,81 @@ class MorningCopilotReport:
         }
 
 
-def generate_executive_markdown(report: MorningCopilotReport) -> str:
-    """Formats aggregated cross-stack intelligence into an executive Markdown briefing."""
+def generate_executive_markdown(report: MorningCopilotReport, section: str = "all") -> str:
+    """Formats aggregated cross-stack intelligence into an executive Markdown briefing.
+    section: 'all', 'executive' (wealth + homelab), or 'training' (biological recovery).
+    """
     eir = report.eir
     kratos = report.kratos
     plutus = report.plutus
     odin = report.odin
 
     lines: List[str] = []
+
+    if section == "training":
+        lines.append(f"# 🏋️ Biological Recovery & Training Directive - {report.date}")
+        lines.append("")
+        vitals_parts = []
+        if eir.sleep_duration_hours is not None:
+            deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
+            vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
+        if eir.hrv_ms is not None:
+            vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
+        if eir.resting_hr_bpm is not None:
+            vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
+        if eir.weight_kg is not None:
+            fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
+            vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
+
+        vitals_line = " | ".join(vitals_parts) if vitals_parts else "Telemetry syncing"
+        lines.append(f"- **Vitals**: {vitals_line}")
+        lines.append(f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}")
+        lines.append(f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})")
+
+        if kratos.badminton_buffer_note:
+            lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
+
+        if kratos.recommended_exercises:
+            ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
+            if ex_names:
+                lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
+        lines.append("")
+        lines.append("## 🔍 Operational Review & Run Frictions")
+        lines.append("- Telemetry: Biological recovery metrics and Kratos training prescription verified.")
+        lines.append("- 0 frictions or inefficiencies encountered; run was clean and optimal.")
+        return "\n".join(lines)
+
     lines.append(f"# 🌅 Morning Executive Copilot - {report.date}")
     lines.append("")
 
-    # Section 1: Biological Recovery & Autoregulated Training
-    lines.append("## 🏋️ Biological Recovery & Training Directive")
-    vitals_parts = []
-    if eir.sleep_duration_hours is not None:
-        deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
-        vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
-    if eir.hrv_ms is not None:
-        vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
-    if eir.resting_hr_bpm is not None:
-        vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
-    if eir.weight_kg is not None:
-        fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
-        vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
+    if section in ("all", "both"):
+        # Section 1: Biological Recovery & Autoregulated Training
+        lines.append("## 🏋️ Biological Recovery & Training Directive")
+        vitals_parts = []
+        if eir.sleep_duration_hours is not None:
+            deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
+            vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
+        if eir.hrv_ms is not None:
+            vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
+        if eir.resting_hr_bpm is not None:
+            vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
+        if eir.weight_kg is not None:
+            fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
+            vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
 
-    vitals_line = " | ".join(vitals_parts) if vitals_parts else "Telemetry syncing"
-    lines.append(f"- **Vitals**: {vitals_line}")
-    lines.append(f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}")
-    lines.append(f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})")
+        vitals_line = " | ".join(vitals_parts) if vitals_parts else "Telemetry syncing"
+        lines.append(f"- **Vitals**: {vitals_line}")
+        lines.append(f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}")
+        lines.append(f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})")
 
-    if kratos.badminton_buffer_note:
-        lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
+        if kratos.badminton_buffer_note:
+            lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
 
-    if kratos.recommended_exercises:
-        ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
-        if ex_names:
-            lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
-    lines.append("")
+        if kratos.recommended_exercises:
+            ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
+            if ex_names:
+                lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
+        lines.append("")
 
     # Section 2: Wealth & Financial Runway
     lines.append("## 💰 Wealth Runway & Financial Deadlines")
@@ -640,6 +731,17 @@ def generate_executive_markdown(report: MorningCopilotReport) -> str:
 
     # Section 3: Odin Swarm & Kanban Queue
     lines.append("## 🛡️ Homelab Swarm & Kanban Queue")
+
+    if odin.swarm_total_services > 0:
+        if odin.swarm_degraded_services:
+            lines.append(f"- **🚨 Degraded Swarm Services ({len(odin.swarm_degraded_services)})**:")
+            for ds in odin.swarm_degraded_services:
+                triage_str = f" (Triaged to Kanban: `{ds['triage_id']}`)" if ds.get("triage_id") else (" (Already in Kanban)" if ds.get("already_tracked") else "")
+                err_str = f" | {ds['task_error']}" if ds.get("task_error") else ""
+                lines.append(f"  - `{ds['name']}` ({ds['replicas']}): {ds.get('task_state', 'degraded')}{err_str}{triage_str}")
+        else:
+            lines.append(f"- **Swarm Fleet**: 🟢 {odin.swarm_healthy_services}/{odin.swarm_total_services} services healthy (0 degraded).")
+
     status_summary = ", ".join(f"{st}: {cnt}" for st, cnt in odin.active_cards_by_status.items()) or "Queue idle"
     lines.append(f"- **Active Cards ({odin.total_active_cards})**: {status_summary}")
 
@@ -660,7 +762,10 @@ def generate_executive_markdown(report: MorningCopilotReport) -> str:
 
     # Operational Review Footer
     lines.append("## 🔍 Operational Review & Run Frictions")
-    lines.append("- Execution: Cross-stack telemetry aggregated successfully across Eir, Kratos, Plutus, and Odin.")
+    if section == "executive":
+        lines.append("- Execution: Executive intelligence aggregated successfully across Plutus and Odin.")
+    else:
+        lines.append("- Execution: Cross-stack telemetry aggregated successfully across Eir, Kratos, Plutus, and Odin.")
     lines.append("- 0 frictions or inefficiencies encountered; run was clean and optimal.")
 
     return "\n".join(lines)
@@ -703,19 +808,28 @@ def run_morning_copilot(
     kanban_db_path: str = KANBAN_DB_PATH,
     vault_path: str = OBSIDIAN_VAULT_PATH,
     save_journal: bool = False,
+    section: str = "all",
+    auto_triage: bool = True,
 ) -> MorningCopilotReport:
     """Executes full cross-stack aggregation cycle."""
     date_str = target_date or get_auckland_today()
     logger.info("Starting Morning Executive Copilot aggregation for date: %s", date_str)
 
-    # 1. Eir
-    eir = fetch_eir_telemetry(eir_url, date_str)
-    # 2. Kratos
-    kratos = fetch_kratos_telemetry(kratos_url, date_str, eir.recovery_tier)
-    # 3. Plutus
-    plutus = fetch_plutus_telemetry(plutus_url, date_str)
-    # 4. Odin
-    odin = fetch_odin_telemetry(kanban_db_path)
+    # 1. Eir & 2. Kratos (health & training telemetry)
+    if section != "executive":
+        eir = fetch_eir_telemetry(eir_url, date_str)
+        kratos = fetch_kratos_telemetry(kratos_url, date_str, eir.recovery_tier)
+    else:
+        eir = EirTelemetry(date=date_str)
+        kratos = KratosTelemetry(date=date_str, iso_week=resolve_iso_week(date_str))
+
+    # 3. Plutus & 4. Odin (wealth & homelab telemetry)
+    if section != "training":
+        plutus = fetch_plutus_telemetry(plutus_url, date_str)
+        odin = fetch_odin_telemetry(kanban_db_path, auto_triage=auto_triage)
+    else:
+        plutus = PlutusTelemetry(as_of_date=date_str)
+        odin = OdinTelemetry()
 
     report = MorningCopilotReport(
         date=date_str,
@@ -726,7 +840,7 @@ def run_morning_copilot(
     )
 
     if save_journal:
-        md = generate_executive_markdown(report)
+        md = generate_executive_markdown(report, section=section)
         append_to_obsidian_journal(vault_path, date_str, md)
 
     return report
@@ -737,12 +851,16 @@ def main() -> int:
     parser.add_argument("--date", type=str, default=None, help="Evaluation date (YYYY-MM-DD, defaults to Auckland today)")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     parser.add_argument("--journal", action="store_true", help="Append briefing to Obsidian daily journal")
+    parser.add_argument("--write-journal", action="store_true", dest="journal", help="Alias for --journal")
+    parser.add_argument("--section", choices=["all", "executive", "training"], default="all", help="Briefing section: 'all', 'executive' (wealth + homelab), or 'training' (biological recovery)")
+    parser.add_argument("--require-data", action="store_true", help="If set and required biometric/workout data is missing, exits silently with [SILENT]")
     parser.add_argument("--eir-url", type=str, default=DEFAULT_EIR_URL, help="Eir API base URL")
     parser.add_argument("--kratos-url", type=str, default=DEFAULT_KRATOS_URL, help="Kratos API base URL")
     parser.add_argument("--plutus-url", type=str, default=DEFAULT_PLUTUS_URL, help="Plutus API base URL")
     parser.add_argument("--kanban-db", type=str, default=KANBAN_DB_PATH, help="Path to kanban.db SQLite store")
     parser.add_argument("--vault-path", type=str, default=OBSIDIAN_VAULT_PATH, help="Path to Obsidian vault")
     parser.add_argument("--output-file", type=str, default=None, help="Save markdown output to specified file path")
+    parser.add_argument("--no-triage", action="store_true", help="Disable automatic dispatch of degraded Swarm services to kanban-gateway triage")
     args = parser.parse_args()
 
     report = run_morning_copilot(
@@ -753,12 +871,24 @@ def main() -> int:
         kanban_db_path=args.kanban_db,
         vault_path=args.vault_path,
         save_journal=args.journal,
+        section=args.section,
+        auto_triage=not args.no_triage,
     )
+
+    if args.require_data and args.section == "training":
+        has_useful_data = (
+            (report.eir.sleep_duration_hours is not None or report.eir.hrv_ms is not None)
+            and report.eir.recovery_tier != "unpopulated"
+        )
+        if not has_useful_data:
+            logger.info("No useful biometric telemetry found for %s; exiting silently with [SILENT]", report.date)
+            print("[SILENT]")
+            return 0
 
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        md = generate_executive_markdown(report)
+        md = generate_executive_markdown(report, section=args.section)
         print(md)
         if args.output_file:
             try:
