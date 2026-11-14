@@ -97,6 +97,7 @@ RUN chmod -R a+rX /usr/local/bin/ \
     && ln -sf /usr/local/bin/mnemosyne_consolidate_daemon.py /usr/local/bin/mnemosyne-consolidate-daemon \
     && ln -sf /usr/local/bin/morning_copilot_aggregator.py /usr/local/bin/morning-copilot \
     && ln -sf /usr/local/bin/morning_copilot_aggregator.py /usr/local/bin/cross-stack-copilot \
+    && ln -sf /usr/local/bin/audit_swarm_health.py /usr/local/bin/audit-swarm-health \
     && ln -sf /usr/local/bin/forseti_visual_gatekeeper.py /usr/local/bin/forseti-visual-gatekeeper \
     && ln -sf /usr/local/bin/forseti_visual_gatekeeper.py /usr/local/bin/forseti-gatekeeper \
     && ln -sf /usr/local/bin/mimir_code_graph.py /usr/local/bin/mimir-code \
