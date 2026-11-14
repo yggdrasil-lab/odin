@@ -396,43 +396,6 @@ services:
         - "homepage.href=https://mnemosyne.${DOMAIN_NAME}"
         - "homepage.description=Memory Store Visualizer & Event Inspector"
 
-  odin-git-backup:
-    image: ${REGISTRY_PREFIX}odin-git-backup:${STACK_NAME}
-    build:
-      context: ./git-backup
-      dockerfile: Dockerfile
-    working_dir: /git
-    entrypoint: /bin/sh
-    command: -c '
-        echo "Running initial backup...";
-        /usr/local/bin/git-backup.sh;
-        echo "Initial backup complete. Setting up daily cron...";
-        echo "0 3 * * * /usr/local/bin/git-backup.sh >> /var/log/git-backup.log 2>&1" | crontab -;
-        echo "Starting crond...";
-        crond -f -l 2
-      '
-    environment:
-      - GIT_REPO_URL=${ODIN_GIT_REPO_URL}
-      - GIT_USER_EMAIL=${ODIN_GIT_USER_EMAIL}
-      - GIT_USER_NAME=${ODIN_GIT_USER_NAME}
-    secrets:
-      - source: hermes_ssh_key
-        target: odin_git_backup_ssh_key
-    volumes:
-      - /opt/odin:/git
-    networks:
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-
   # Read-only Docker API for Huginn. Answers the "which task actually
   # restarted, and what did it log before it died?" class of question without
   # a shell on Gaia.
