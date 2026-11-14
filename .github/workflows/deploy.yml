@@ -109,10 +109,6 @@ jobs:
           MNEMOSYNE_LLM_BASE_URL: ${{ vars.MNEMOSYNE_LLM_BASE_URL || 'http://muninn:4000/v1' }}
           MNEMOSYNE_LLM_MODEL: ${{ vars.MNEMOSYNE_LLM_MODEL || 'memory-extract' }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          # Odin git backup
-          ODIN_GIT_REPO_URL: ${{ vars.ODIN_GIT_REPO_URL }}
-          ODIN_GIT_USER_EMAIL: ${{ secrets.ODIN_GIT_USER_EMAIL }}
-          ODIN_GIT_USER_NAME: ${{ vars.ODIN_GIT_USER_NAME || 'Huginn' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
