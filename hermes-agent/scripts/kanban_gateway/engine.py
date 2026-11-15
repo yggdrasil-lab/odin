@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import sqlite3
 import time
@@ -35,6 +36,140 @@ from .jev import (
 )
 
 
+# ============================================================================
+# PURE DOMAIN MODELS & ROUTING EVALUATORS (Zero I/O)
+# ============================================================================
+@dataclass(frozen=True)
+class TaskRoutingResolution:
+    resolved_assignee: str
+    model_override: Optional[str]
+    provider_override: Optional[str]
+    complexity: Dict[str, Any]
+    initial_status: str
+
+
+@dataclass(frozen=True)
+class RecoveryEscalationDecision:
+    next_assignee: str
+    model_override: str
+    provider_override: str
+    escalated_from: Optional[str]
+    retry_block: str
+
+
+def resolve_handoff_model(
+    resolved_assignee: str,
+    tier: Optional[str] = None,
+    recommended_model: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Pure evaluator for specialist model and provider overrides across complexity tiers."""
+    clean_tier = (tier or "").strip().lower()
+    if resolved_assignee == "raymund":
+        return None, None
+    if clean_tier == "frontier_deep":
+        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
+    if clean_tier == "flash_fast":
+        return (recommended_model or "gemini-4-hydrogen-high"), "antigravity-subscription-directsdk"
+    if resolved_assignee == "sindri":
+        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
+    return (
+        recommended_model or SPECIALIST_MODELS.get(resolved_assignee, "gemini-4-hydrogen-high"),
+        "antigravity-subscription-directsdk",
+    )
+
+
+def resolve_task_routing(
+    assignee: Optional[str],
+    complexity: Dict[str, Any],
+    tier: Optional[str] = None,
+    await_approval: bool = False,
+) -> TaskRoutingResolution:
+    """Pure evaluator resolving task assignee, tier, model override, and initial status."""
+    comp = dict(complexity)
+    if tier:
+        resolved_tier = tier.strip().lower()
+        comp["tier"] = resolved_tier
+        comp["recommended_model"] = (
+            "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high"
+        )
+
+    if assignee and assignee != DEFAULT_ASSIGNEE:
+        resolved_assignee = normalize_assignee(assignee)
+    else:
+        resolved_assignee = normalize_assignee(comp.get("recommended_assignee") or DEFAULT_ASSIGNEE)
+
+    if comp["tier"] == "human_pairing" and (not assignee or assignee == DEFAULT_ASSIGNEE):
+        resolved_assignee = "raymund"
+
+    model_override, provider_override = resolve_handoff_model(
+        resolved_assignee=resolved_assignee,
+        tier=comp.get("tier"),
+        recommended_model=comp.get("recommended_model"),
+    )
+    return TaskRoutingResolution(
+        resolved_assignee=resolved_assignee,
+        model_override=model_override,
+        provider_override=provider_override,
+        complexity=comp,
+        initial_status="in_review" if await_approval else "ready",
+    )
+
+
+def format_hitl_approval_body(
+    body: str,
+    task_id: str,
+    routing: TaskRoutingResolution,
+    await_approval: bool,
+) -> str:
+    """Pure formatter appending HITL approval instructions when await_approval is enabled."""
+    if not await_approval:
+        return body
+    approval_cmd = (
+        f'kanban-gateway handoff {task_id} --to {routing.resolved_assignee} '
+        f'--tier {routing.complexity["tier"]} --summary "Approved for execution"'
+    )
+    return (
+        f"{body.rstrip()}\n\n---\n"
+        f"### Human-in-the-Loop (HITL) Approval Gate\n"
+        f"- **Status:** `in_review` (Parked awaiting operator approval before execution)\n"
+        f"- **Target Specialist:** `{routing.resolved_assignee}` (`{routing.model_override or 'default'}`)\n"
+        f"- **Approve & Dispatch:** `{approval_cmd}`"
+    )
+
+
+def evaluate_two_way_recovery(
+    current_assignee: str,
+    prev_model: str,
+    failures: int,
+    max_retries: int,
+    err_msg: str,
+) -> RecoveryEscalationDecision:
+    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Orchestrator) when a verification gate fails."""
+    next_assignee = "sindri"
+    model_override = "gemini-pro-orchestrator-g1-pro"
+    provider_override = "antigravity-subscription-directsdk"
+    escalated_from = prev_model if prev_model and prev_model != "gemini-pro-orchestrator-g1-pro" else None
+    escalation_note = (
+        f"\n**Two-Way Recovery Escalation:** Escalated model from `{escalated_from}` to `{model_override}`."
+        if escalated_from
+        else ""
+    )
+    retry_block = (
+        f"\n\n---\n"
+        f"### Verification Gate Failed (Attempt {failures}/{max_retries})\n"
+        f"**Reported By:** {current_assignee}\n"
+        f"**Feedback / Errors:**\n{err_msg}\n"
+        f"**Next Action:** Automatically routed back to sindri (`{model_override}`) to address regressions.{escalation_note}"
+    )
+    return RecoveryEscalationDecision(
+        next_assignee=next_assignee,
+        model_override=model_override,
+        provider_override=provider_override,
+        escalated_from=escalated_from,
+        retry_block=retry_block,
+    )
+
+
 def create_kanban_task(
     title: str,
     body: str,
@@ -43,39 +178,44 @@ def create_kanban_task(
     workspace_kind: str = "scratch",
     notify_discord: bool = True,
     precomputed_complexity: Optional[Dict[str, Any]] = None,
+    tier: Optional[str] = None,
+    await_approval: bool = False,
 ) -> Tuple[str, Optional[str]]:
     """Inserts a new task into kanban.db and provisions its Discord thread subscription.
 
     Returns:
         (task_id, discord_thread_id)
     """
-    complexity = precomputed_complexity or evaluate_task_complexity(title, body)
-    if assignee and assignee != DEFAULT_ASSIGNEE:
-        resolved_assignee = normalize_assignee(assignee)
+    if tier and not precomputed_complexity:
+        resolved_tier = tier.strip().lower()
+        target_role = normalize_assignee(assignee) if (assignee and assignee != DEFAULT_ASSIGNEE) else "sindri"
+        base_complexity: Dict[str, Any] = {
+            "tier": resolved_tier,
+            "recommended_assignee": target_role,
+            "recommended_model": "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high",
+            "raw_verdict": f"explicit_tier:{resolved_tier}",
+            "latency_seconds": 0.0,
+        }
     else:
-        resolved_assignee = normalize_assignee(complexity.get("recommended_assignee") or DEFAULT_ASSIGNEE)
+        base_complexity = dict(precomputed_complexity or evaluate_task_complexity(title, body))
 
-    if complexity["tier"] == "human_pairing" and (not assignee or assignee == DEFAULT_ASSIGNEE):
-        resolved_assignee = "raymund"
-
-    model_override = None
-    provider_override = None
-    if resolved_assignee == "raymund":
-        model_override = None
-        provider_override = None
-    elif resolved_assignee == "sindri" or complexity["tier"] == "frontier_deep":
-        model_override = "gemini-4-argon-high"
-        provider_override = "antigravity-subscription-directsdk"
-    else:
-        model_override = complexity.get("recommended_model") or SPECIALIST_MODELS.get(
-            resolved_assignee, "gemini-3.8-flash-high"
-        )
-        provider_override = "antigravity-subscription-directsdk"
+    routing = resolve_task_routing(
+        assignee=assignee,
+        complexity=base_complexity,
+        tier=tier,
+        await_approval=await_approval,
+    )
+    resolved_assignee = routing.resolved_assignee
+    model_override = routing.model_override
+    provider_override = routing.provider_override
+    complexity = routing.complexity
+    initial_status = routing.initial_status
 
     short_id = uuid.uuid4().hex[:8]
     task_id = f"kb-{short_id}"
     full_title = f"[KB-{short_id}] {title}"
     now = int(time.time())
+    final_body = format_hitl_approval_body(body, task_id, routing, await_approval)
 
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
@@ -87,13 +227,14 @@ def create_kanban_task(
             id, title, body, assignee, status, priority, created_by,
             created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences,
             model_override, provider_override
-        ) VALUES (?, ?, ?, ?, 'ready', ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)
         """,
         (
             task_id,
             full_title,
-            body,
+            final_body,
             resolved_assignee,
+            initial_status,
             priority,
             now,
             workspace_kind,
@@ -107,6 +248,8 @@ def create_kanban_task(
         "source": "jev-gateway",
         "title": full_title,
         "complexity": complexity,
+        "await_approval": await_approval,
+        "initial_status": initial_status,
     }
     cursor.execute(
         """
@@ -119,16 +262,17 @@ def create_kanban_task(
     thread_id = None
     if notify_discord and DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID:
         try:
+            status_badge = "`IN_REVIEW (AWAITING APPROVAL)`" if await_approval else "`READY`"
             fields = [
-                {"name": "Status", "value": "`READY`", "inline": True},
+                {"name": "Status", "value": status_badge, "inline": True},
                 {"name": "Priority", "value": f"`P{priority}`", "inline": True},
                 {"name": "Assignee", "value": f"`{resolved_assignee}`", "inline": True},
-                {"name": "Model Tier", "value": f"`{complexity['tier']}` ({complexity['recommended_model']})", "inline": True},
+                {"name": "Model Tier", "value": f"`{complexity['tier']}` ({model_override or complexity.get('recommended_model')})", "inline": True},
             ]
             thread_id = post_discord_thread(
                 title=full_title,
                 thread_name=full_title,
-                description=body,
+                description=final_body,
                 fields=fields,
             )
 
@@ -168,9 +312,9 @@ def create_improvement_proposal(
         resolved_target = "vor"
 
     recommended_model = (
-        "gemini-4-argon-high"
+        "gemini-pro-orchestrator-g1-pro"
         if resolved_target == "sindri"
-        else SPECIALIST_MODELS.get(resolved_target, "gemini-3.8-flash-high")
+        else SPECIALIST_MODELS.get(resolved_target, "gemini-4-hydrogen-high")
     )
 
     short_id = uuid.uuid4().hex[:8]
@@ -344,7 +488,7 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
             precomputed_complexity={
                 "tier": "flash_fast",
                 "recommended_assignee": "vor",
-                "recommended_model": "gemini-3.8-flash-high",
+                "recommended_model": "gemini-4-hydrogen-high",
                 "raw_verdict": "auto_spawn_session_wrapup",
                 "latency_seconds": 0.0,
             },
@@ -368,6 +512,7 @@ def handoff_kanban_task(
     to_assignee: str,
     summary: str,
     pr_url: str = "",
+    tier: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Transitions a Kanban card to the next specialist in an async pipeline without conversational chat."""
     resolved_to = normalize_assignee(to_assignee)
@@ -392,15 +537,7 @@ def handoff_kanban_task(
         handoff_block += f"\n**PR / Branch:** {pr_url}"
 
     new_body = f"{orig_body}{handoff_block}"
-    if resolved_to == "raymund":
-        model_override = None
-        provider_override = None
-    elif resolved_to == "sindri":
-        model_override = "gemini-4-argon-high"
-        provider_override = "antigravity-subscription-directsdk"
-    else:
-        model_override = SPECIALIST_MODELS.get(resolved_to, "gemini-3.8-flash-high")
-        provider_override = "antigravity-subscription-directsdk"
+    model_override, provider_override = resolve_handoff_model(resolved_to, tier=tier)
 
     cursor.execute(
         """
@@ -477,13 +614,19 @@ def verify_pipeline_stage(
     """Evaluates a verification gate in the Court of Odin pipeline and executes deterministic state transitions."""
     conn = sqlite3.connect(KANBAN_DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, body, assignee, consecutive_failures FROM tasks WHERE id = ?", (task_id,))
+    cursor.execute("SELECT title, body, assignee, consecutive_failures, model_override FROM tasks WHERE id = ?", (task_id,))
     row = cursor.fetchone()
     if not row:
         conn.close()
         raise ValueError(f"Task {task_id} not found in kanban database")
 
-    title, body, current_assignee, current_failures = row[0] or "", row[1] or "", row[2] or "unknown", row[3] or 0
+    title, body, current_assignee, current_failures, prev_model = (
+        row[0] or "",
+        row[1] or "",
+        row[2] or "unknown",
+        row[3] or 0,
+        row[4] or "",
+    )
     now = int(time.time())
 
     cursor.execute(
@@ -517,7 +660,7 @@ def verify_pipeline_stage(
             verify_block += f"\n**PR / Branch:** {pr_url}"
 
         new_body = f"{body}{verify_block}"
-        model_override = SPECIALIST_MODELS.get(next_assignee, "gemini-3.8-flash-high")
+        model_override = SPECIALIST_MODELS.get(next_assignee, "gemini-4-hydrogen-high")
         provider_override = "antigravity-subscription-directsdk"
 
         cursor.execute(
@@ -572,17 +715,18 @@ def verify_pipeline_stage(
         err_msg = feedback.strip() or "Verification gate reported unspecified failure."
 
         if failures <= max_retries:
-            next_assignee = "sindri"
-            retry_block = (
-                f"\n\n---\n"
-                f"### Verification Gate Failed (Attempt {failures}/{max_retries})\n"
-                f"**Reported By:** {current_assignee}\n"
-                f"**Feedback / Errors:**\n{err_msg}\n"
-                f"**Next Action:** Automatically routed back to sindri to address regressions."
+            recovery = evaluate_two_way_recovery(
+                current_assignee=current_assignee,
+                prev_model=prev_model,
+                failures=failures,
+                max_retries=max_retries,
+                err_msg=err_msg,
             )
-            new_body = f"{body}{retry_block}"
-            model_override = "gemini-4-argon-high"
-            provider_override = "antigravity-subscription-directsdk"
+            next_assignee = recovery.next_assignee
+            model_override = recovery.model_override
+            provider_override = recovery.provider_override
+            escalated_from = recovery.escalated_from
+            new_body = f"{body}{recovery.retry_block}"
 
             cursor.execute(
                 """
@@ -599,7 +743,20 @@ def verify_pipeline_stage(
                 INSERT INTO task_events (task_id, kind, payload, created_at)
                 VALUES (?, 'verification_failed_retry', ?, ?)
                 """,
-                (task_id, json.dumps({"gate": current_assignee, "feedback": err_msg, "failures": failures, "max_retries": max_retries}), now),
+                (
+                    task_id,
+                    json.dumps(
+                        {
+                            "gate": current_assignee,
+                            "feedback": err_msg,
+                            "failures": failures,
+                            "max_retries": max_retries,
+                            "model_override": model_override,
+                            "escalated_from": escalated_from,
+                        }
+                    ),
+                    now,
+                ),
             )
             conn.commit()
             conn.close()
@@ -608,22 +765,24 @@ def verify_pipeline_stage(
                 fields = [
                     {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
                     {"name": "Verification Gate", "value": f"`{current_assignee}`: **FAILED**", "inline": True},
-                    {"name": "Retry Attempt", "value": f"`{failures}/{max_retries}` -> `sindri`", "inline": True},
+                    {"name": "Retry Attempt", "value": f"`{failures}/{max_retries}` -> `sindri` (`{model_override}`)", "inline": True},
                 ]
                 post_thread_lifecycle_update(
                     thread_id=thread_id,
                     status="ready",
-                    message=f"⚠️ **Verification Gate Failed (Attempt {failures}/{max_retries}):**\nAutomatically bouncing task back to `{next_assignee}` for remediation.\n\n**Error Details:**\n```\n{err_msg[:500]}\n```",
+                    message=f"⚠️ **Verification Gate Failed (Attempt {failures}/{max_retries}):**\nAutomatically bouncing task back to `{next_assignee}` (`{model_override}`) for remediation.{escalation_note}\n\n**Error Details:**\n```\n{err_msg[:500]}\n```",
                     fields=fields,
                 )
 
-            logger.warning("Task %s verification FAILED at gate %s (attempt %d/%d) -> bouncing to sindri", task_id, current_assignee, failures, max_retries)
+            logger.warning("Task %s verification FAILED at gate %s (attempt %d/%d) -> bouncing to sindri (%s)", task_id, current_assignee, failures, max_retries, model_override)
             return {
                 "task_id": task_id,
                 "status": "ready",
                 "passed": False,
                 "current_assignee": current_assignee,
                 "next_assignee": next_assignee,
+                "model_override": model_override,
+                "escalated_from": escalated_from,
                 "consecutive_failures": failures,
                 "circuit_tripped": False,
                 "message": f"Bounced back to {next_assignee} (attempt {failures}/{max_retries})",
@@ -859,7 +1018,7 @@ def record_task_debrief(
                 "recommended_model": (
                     "gemini-4-argon-high"
                     if friction_assignee == "sindri"
-                    else SPECIALIST_MODELS.get(friction_assignee, "gemini-3.8-flash-high")
+                    else SPECIALIST_MODELS.get(friction_assignee, "gemini-4-hydrogen-high")
                 ),
                 "raw_verdict": friction_gate.get("raw_verdict", "auto_fix_script") if friction_gate else "auto_fix_script",
                 "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,

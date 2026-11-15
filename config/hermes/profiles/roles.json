@@ -2,7 +2,7 @@
   "coordinator": {
     "id": "odin",
     "title": "Odin (The Allfather - Top-Level Coordinator)",
-    "model": "gemini-3.8-flash-high",
+    "model": "gemini-4-hydrogen-high",
     "mcps": [],
     "toolsets": [
       "clarify",
@@ -29,8 +29,8 @@
       "title": "Huginn (Odin's Scout Raven - Research & Infra Diagnostics)",
       "aliases": ["scout", "researcher", "heimdall"],
       "tier": "flash_fast",
-      "model": "gemini-3.8-flash-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "model": "gemini-4-hydrogen-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -58,8 +58,8 @@
       "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
       "aliases": ["forge-builder", "builder", "coder"],
       "tier": "frontier_deep",
-      "model": "gemini-4-argon-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-3.8-flash-high"],
+      "model": "gemini-pro-orchestrator-g1-pro",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-hydrogen-high"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -90,8 +90,8 @@
       "title": "Forseti (God of Truth & Judgment - QA, Invariant & Visual Gate)",
       "aliases": ["qa-reviewer", "qa", "reviewer"],
       "tier": "flash_fast",
-      "model": "gemini-3.8-flash-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "model": "gemini-4-hydrogen-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": ["playwright"],
       "toolsets": [
         "file",
@@ -112,8 +112,8 @@
       "title": "Vor (Goddess of Deep Inquiry - Vault, Skills & Memory Curator)",
       "aliases": ["vault-curator", "curator"],
       "tier": "flash_fast",
-      "model": "gemini-3.8-flash-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "model": "gemini-4-hydrogen-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -137,8 +137,8 @@
       "title": "Saga (Goddess of History & Chronicles - Journal, Life & Eir/Kratos Health)",
       "aliases": ["journal-scribe", "journal", "scribe"],
       "tier": "flash_fast",
-      "model": "gemini-3.8-flash-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "model": "gemini-4-hydrogen-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": ["kratos"],
       "toolsets": [
         "file",
@@ -164,8 +164,8 @@
       "title": "Swarm Worker (Legacy Compatibility Worker)",
       "aliases": [],
       "tier": "flash_fast",
-      "model": "gemini-3.8-flash-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "model": "gemini-4-hydrogen-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",

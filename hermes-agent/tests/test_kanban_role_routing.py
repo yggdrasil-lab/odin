@@ -24,7 +24,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "flash_fast")
         self.assertEqual(res["recommended_assignee"], "saga")
-        self.assertEqual(res["recommended_model"], "gemini-3.8-flash-high")
+        self.assertEqual(res["recommended_model"], "gemini-4-hydrogen-high")
 
     @patch("kanban_gateway.jev.call_jev_raw")
     def test_sindri_routing(self, mock_jev):
@@ -38,7 +38,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "frontier_deep")
         self.assertEqual(res["recommended_assignee"], "sindri")
-        self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
+        self.assertEqual(res["recommended_model"], "gemini-pro-orchestrator-g1-pro")
 
     @patch("kanban_gateway.jev.call_jev_raw")
     def test_sindri_flash_fast_routing(self, mock_jev):
@@ -52,7 +52,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "flash_fast")
         self.assertEqual(res["recommended_assignee"], "sindri")
-        self.assertEqual(res["recommended_model"], "gemini-3.8-flash-high")
+        self.assertEqual(res["recommended_model"], "gemini-4-hydrogen-high")
 
     @patch("kanban_gateway.jev.call_jev_raw")
     def test_alias_and_keyword_fallback_routing(self, mock_jev):
@@ -66,7 +66,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "flash_fast")
         self.assertEqual(res["recommended_assignee"], "vor")
-        self.assertEqual(res["recommended_model"], "gemini-3.8-flash-high")
+        self.assertEqual(res["recommended_model"], "gemini-4-hydrogen-high")
 
     def test_handoff_kanban_task(self):
         from kanban_gateway import engine
@@ -138,7 +138,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 return_value={
                     "tier": "flash_fast",
                     "recommended_assignee": "huginn",
-                    "recommended_model": "gemini-3.8-flash-high",
+                    "recommended_model": "gemini-4-hydrogen-high",
                 },
             ):
                 task_id, _ = engine.create_kanban_task(
@@ -146,6 +146,48 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     body="Check docker service logs for poseidon.",
                     notify_discord=False,
                 )
+
+                # Verify flash_fast Sindri task preserves gemini-4-hydrogen-high and escalates to Argon on failure
+                sindri_fast_id, _ = engine.create_kanban_task(
+                    title="Minor CSS tweak on Kratos",
+                    body="Update padding on header.",
+                    assignee="sindri",
+                    tier="flash_fast",
+                    notify_discord=False,
+                )
+                sindri_fast_info = engine.show_kanban_task(sindri_fast_id, as_json=True)
+                self.assertEqual(sindri_fast_info["assignee"], "sindri")
+                self.assertEqual(sindri_fast_info["status"], "ready")
+                self.assertEqual(sindri_fast_info["model_override"], "gemini-4-hydrogen-high")
+
+                # Simulate verification failure on flash_fast Sindri task -> Two-Way Recovery escalates to gemini-4-argon-high
+                verify_fail_res = engine.verify_pipeline_stage(
+                    task_id=sindri_fast_id,
+                    passed=False,
+                    feedback="Unit test failed on header padding",
+                )
+                self.assertFalse(verify_fail_res["passed"])
+                self.assertEqual(verify_fail_res["model_override"], "gemini-pro-orchestrator-g1-pro")
+                self.assertEqual(verify_fail_res["escalated_from"], "gemini-4-hydrogen-high")
+                escalated_info = engine.show_kanban_task(sindri_fast_id, as_json=True)
+                self.assertEqual(escalated_info["model_override"], "gemini-pro-orchestrator-g1-pro")
+                self.assertIn("Two-Way Recovery Escalation", escalated_info["body"])
+
+                # Verify --await-approval parks task in 'in_review' with approval handoff command
+                hitl_id, _ = engine.create_kanban_task(
+                    title="Refactor Cerberus Authentik provider",
+                    body="Update proxy provider bindings.",
+                    assignee="sindri",
+                    tier="frontier_deep",
+                    await_approval=True,
+                    notify_discord=False,
+                )
+                hitl_info = engine.show_kanban_task(hitl_id, as_json=True)
+                self.assertEqual(hitl_info["status"], "in_review")
+                self.assertEqual(hitl_info["assignee"], "sindri")
+                self.assertEqual(hitl_info["model_override"], "gemini-pro-orchestrator-g1-pro")
+                self.assertIn("Human-in-the-Loop (HITL) Approval Gate", hitl_info["body"])
+                self.assertIn(f"kanban-gateway handoff {hitl_id} --to sindri", hitl_info["body"])
 
                 # Simulate prior failure state on the task
                 conn = sqlite3.connect(db_path)
@@ -162,7 +204,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     summary="Root cause: missing env var in poseidon compose. Ready for Forge fix.",
                 )
                 self.assertEqual(res["to_assignee"], "sindri")
-                self.assertEqual(res["model_override"], "gemini-4-argon-high")
+                self.assertEqual(res["model_override"], "gemini-pro-orchestrator-g1-pro")
 
                 conn = sqlite3.connect(db_path)
                 row = conn.execute(
@@ -172,7 +214,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 conn.close()
                 self.assertEqual(row[0], "sindri")
                 self.assertEqual(row[1], "ready")
-                self.assertEqual(row[2], "gemini-4-argon-high")
+                self.assertEqual(row[2], "gemini-pro-orchestrator-g1-pro")
                 self.assertIn("Root cause: missing env var", row[3])
                 self.assertEqual(row[4], 0)
                 self.assertIsNone(row[5])
@@ -229,7 +271,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                         wrapup_info = engine.show_kanban_task(wrapup_chore_id, as_json=True)
                         self.assertEqual(wrapup_info["status"], "ready")
                         self.assertEqual(wrapup_info["assignee"], "vor")
-                        self.assertEqual(wrapup_info["model_override"], "gemini-3.8-flash-high")
+                        self.assertEqual(wrapup_info["model_override"], "gemini-4-hydrogen-high")
                         self.assertIn("Wrap-up: Session wrap-up and docs sync for Investigate Iris alert on poseidon", wrapup_info["title"])
 
 
