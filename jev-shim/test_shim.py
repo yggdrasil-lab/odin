@@ -253,7 +253,7 @@ class TestJevShim(unittest.TestCase):
             self.assertTrue(res["actionable"])
             self.assertEqual(res["tier"], "frontier_deep")
             self.assertEqual(res["recommended_assignee"], "sindri")
-            self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
+            self.assertEqual(res["recommended_model"], "gemini-pro-orchestrator-g1-pro")
 
         with patch.object(
             kg_jev,
@@ -263,7 +263,7 @@ class TestJevShim(unittest.TestCase):
                     {
                         "accepted": "true",
                         "auto_merge_eligible": "false",
-                        "friction_action": "spawn_chore",
+                        "friction_action": "propose_review",
                         "friction_assignee": "vor",
                     }
                 ),
@@ -280,7 +280,7 @@ class TestJevShim(unittest.TestCase):
             self.assertEqual(mock_debrief.call_count, 1)
             self.assertTrue(gates["acceptance_gate"]["accepted"])
             self.assertFalse(gates["auto_merge_gate"]["auto_merge_eligible"])
-            self.assertEqual(gates["friction_gate"]["action"], "spawn_chore")
+            self.assertEqual(gates["friction_gate"]["action"], "propose_review")
             self.assertEqual(gates["friction_assignee"], "vor")
 
 

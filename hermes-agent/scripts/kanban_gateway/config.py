@@ -42,7 +42,7 @@ try:
 except Exception:
     MUNINN_API_URL = ""
 
-MUNINN_API_KEY = os.environ.get("MUNINN_MASTER_KEY", "")
+MUNINN_API_KEY = os.environ.get("MUNINN_MASTER_KEY") or os.environ.get("MUNINN_API_KEY", "")
 JEV_MODEL = os.environ.get("JEV_MODEL", "jev-decision")
 
 
