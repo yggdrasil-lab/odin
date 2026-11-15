@@ -116,7 +116,7 @@ ASSIGNEE_ALIASES = {
 
 SPECIALIST_MODELS = {
     "huginn": "gemini-4-hydrogen-high",
-    "sindri": "gemini-4-argon-high",
+    "sindri": "gemini-pro-orchestrator-g1-pro",
     "forseti": "gemini-4-hydrogen-high",
     "vor": "gemini-4-hydrogen-high",
     "saga": "gemini-4-hydrogen-high",

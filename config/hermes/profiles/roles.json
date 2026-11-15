@@ -30,7 +30,7 @@
       "aliases": ["scout", "researcher", "heimdall"],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -58,7 +58,7 @@
       "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
       "aliases": ["forge-builder", "builder", "coder"],
       "tier": "frontier_deep",
-      "model": "gemini-4-argon-high",
+      "model": "gemini-pro-orchestrator-g1-pro",
       "fallback_models": ["gemini-4-hydrogen-high", "claude-sonnet-5-5-high"],
       "mcps": [],
       "toolsets": [
@@ -91,7 +91,7 @@
       "aliases": ["qa-reviewer", "qa", "reviewer"],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": ["playwright"],
       "toolsets": [
         "file",
@@ -113,7 +113,7 @@
       "aliases": ["vault-curator", "curator"],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -138,7 +138,7 @@
       "aliases": ["journal-scribe", "journal", "scribe"],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": ["kratos"],
       "toolsets": [
         "file",
@@ -165,7 +165,7 @@
       "aliases": [],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
       "mcps": [],
       "toolsets": [
         "file",

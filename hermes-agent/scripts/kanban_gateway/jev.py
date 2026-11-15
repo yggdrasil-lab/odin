@@ -106,7 +106,7 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
         '      "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",\n'
         '      "criteria": {\n'
         '        "flash_fast": "Routine chores, documentation updates, log/web investigation, biometric/journal entries, QA checks, or minor script tweaks. Uses gemini-4-hydrogen-high.",\n'
-        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, or complex Forge PR implementation. Uses gemini-4-argon-high.",\n'
+        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, or complex Forge PR implementation. Uses gemini-pro-orchestrator-g1-pro.",\n'
         '        "human_pairing": "Architectural forks, destructive deletions, subjective product decisions, or fundamental infrastructure trade-offs requiring pairing with Raymund."\n'
         "      }\n"
         "    },\n"
@@ -157,7 +157,7 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
         if not recommended_assignee or recommended_assignee == "swarm-worker":
             recommended_assignee = _infer_specialist_from_text(title, body, tier)
         if tier == "frontier_deep":
-            recommended_model = "gemini-4-argon-high"
+            recommended_model = "gemini-pro-orchestrator-g1-pro"
         elif tier == "flash_fast":
             recommended_model = "gemini-4-hydrogen-high"
         else:
@@ -245,7 +245,7 @@ def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "
         if not recommended_assignee or recommended_assignee == "swarm-worker":
             recommended_assignee = _infer_specialist_from_text(title, event_text, tier)
         if tier == "frontier_deep":
-            recommended_model = "gemini-4-argon-high"
+            recommended_model = "gemini-pro-orchestrator-g1-pro"
         elif tier == "flash_fast":
             recommended_model = "gemini-4-hydrogen-high"
         else:

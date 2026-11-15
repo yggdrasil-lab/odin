@@ -67,11 +67,11 @@ def resolve_handoff_model(
     if resolved_assignee == "raymund":
         return None, None
     if clean_tier == "frontier_deep":
-        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
+        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
     if clean_tier == "flash_fast":
         return (recommended_model or "gemini-4-hydrogen-high"), "antigravity-subscription-directsdk"
     if resolved_assignee == "sindri":
-        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
+        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
     return (
         recommended_model or SPECIALIST_MODELS.get(resolved_assignee, "gemini-4-hydrogen-high"),
         "antigravity-subscription-directsdk",
@@ -90,7 +90,7 @@ def resolve_task_routing(
         resolved_tier = tier.strip().lower()
         comp["tier"] = resolved_tier
         comp["recommended_model"] = (
-            "gemini-4-argon-high" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high"
+            "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high"
         )
 
     if assignee and assignee != DEFAULT_ASSIGNEE:
@@ -144,11 +144,11 @@ def evaluate_two_way_recovery(
     max_retries: int,
     err_msg: str,
 ) -> RecoveryEscalationDecision:
-    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Argon) when a verification gate fails."""
+    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Orchestrator) when a verification gate fails."""
     next_assignee = "sindri"
-    model_override = "gemini-4-argon-high"
+    model_override = "gemini-pro-orchestrator-g1-pro"
     provider_override = "antigravity-subscription-directsdk"
-    escalated_from = prev_model if prev_model and prev_model != "gemini-4-argon-high" else None
+    escalated_from = prev_model if prev_model and prev_model != "gemini-pro-orchestrator-g1-pro" else None
     escalation_note = (
         f"\n**Two-Way Recovery Escalation:** Escalated model from `{escalated_from}` to `{model_override}`."
         if escalated_from
@@ -192,7 +192,7 @@ def create_kanban_task(
         base_complexity: Dict[str, Any] = {
             "tier": resolved_tier,
             "recommended_assignee": target_role,
-            "recommended_model": "gemini-4-argon-high" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high",
+            "recommended_model": "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high",
             "raw_verdict": f"explicit_tier:{resolved_tier}",
             "latency_seconds": 0.0,
         }
@@ -312,7 +312,7 @@ def create_improvement_proposal(
         resolved_target = "vor"
 
     recommended_model = (
-        "gemini-4-argon-high"
+        "gemini-pro-orchestrator-g1-pro"
         if resolved_target == "sindri"
         else SPECIALIST_MODELS.get(resolved_target, "gemini-4-hydrogen-high")
     )

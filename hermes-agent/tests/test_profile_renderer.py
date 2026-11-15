@@ -123,7 +123,7 @@ class TestProfileRenderer(unittest.TestCase):
                     self.assertNotIn("  playwright:", cfg_text)
 
                 if specialist == "sindri":
-                    self.assertIn('default: "gemini-4-argon-high"', cfg_text)
+                    self.assertIn('default: "gemini-pro-orchestrator-g1-pro"', cfg_text)
                 else:
                     self.assertIn('default: "gemini-4-hydrogen-high"', cfg_text)
 

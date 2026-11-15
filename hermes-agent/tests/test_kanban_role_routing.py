@@ -38,7 +38,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "frontier_deep")
         self.assertEqual(res["recommended_assignee"], "sindri")
-        self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
+        self.assertEqual(res["recommended_model"], "gemini-pro-orchestrator-g1-pro")
 
     @patch("kanban_gateway.jev.call_jev_raw")
     def test_sindri_flash_fast_routing(self, mock_jev):
@@ -167,10 +167,10 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     feedback="Unit test failed on header padding",
                 )
                 self.assertFalse(verify_fail_res["passed"])
-                self.assertEqual(verify_fail_res["model_override"], "gemini-4-argon-high")
+                self.assertEqual(verify_fail_res["model_override"], "gemini-pro-orchestrator-g1-pro")
                 self.assertEqual(verify_fail_res["escalated_from"], "gemini-4-hydrogen-high")
                 escalated_info = engine.show_kanban_task(sindri_fast_id, as_json=True)
-                self.assertEqual(escalated_info["model_override"], "gemini-4-argon-high")
+                self.assertEqual(escalated_info["model_override"], "gemini-pro-orchestrator-g1-pro")
                 self.assertIn("Two-Way Recovery Escalation", escalated_info["body"])
 
                 # Verify --await-approval parks task in 'in_review' with approval handoff command
@@ -185,7 +185,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 hitl_info = engine.show_kanban_task(hitl_id, as_json=True)
                 self.assertEqual(hitl_info["status"], "in_review")
                 self.assertEqual(hitl_info["assignee"], "sindri")
-                self.assertEqual(hitl_info["model_override"], "gemini-4-argon-high")
+                self.assertEqual(hitl_info["model_override"], "gemini-pro-orchestrator-g1-pro")
                 self.assertIn("Human-in-the-Loop (HITL) Approval Gate", hitl_info["body"])
                 self.assertIn(f"kanban-gateway handoff {hitl_id} --to sindri", hitl_info["body"])
 
@@ -204,7 +204,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     summary="Root cause: missing env var in poseidon compose. Ready for Forge fix.",
                 )
                 self.assertEqual(res["to_assignee"], "sindri")
-                self.assertEqual(res["model_override"], "gemini-4-argon-high")
+                self.assertEqual(res["model_override"], "gemini-pro-orchestrator-g1-pro")
 
                 conn = sqlite3.connect(db_path)
                 row = conn.execute(
@@ -214,7 +214,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 conn.close()
                 self.assertEqual(row[0], "sindri")
                 self.assertEqual(row[1], "ready")
-                self.assertEqual(row[2], "gemini-4-argon-high")
+                self.assertEqual(row[2], "gemini-pro-orchestrator-g1-pro")
                 self.assertIn("Root cause: missing env var", row[3])
                 self.assertEqual(row[4], 0)
                 self.assertIsNone(row[5])

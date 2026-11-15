@@ -51,7 +51,7 @@ auxiliary:
         context_length: 200000
         timeout: 120
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-argon-high"
+        model: "gemini-pro-orchestrator-g1-pro"
         context_length: 200000
         timeout: 120
       - provider: "custom"
@@ -72,7 +72,7 @@ auxiliary:
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-high"
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-argon-high"
+        model: "gemini-pro-orchestrator-g1-pro"
       - provider: "custom"
         model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
@@ -89,7 +89,7 @@ auxiliary:
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-high"
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-argon-high"
+        model: "gemini-pro-orchestrator-g1-pro"
       - provider: "custom"
         model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
@@ -122,7 +122,7 @@ fallback_providers:
   - provider: "antigravity-subscription-directsdk"
     model: "claude-sonnet-5-5-high"
   - provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-argon-high"
+    model: "gemini-pro-orchestrator-g1-pro"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
@@ -133,11 +133,11 @@ fallback_providers:
 # =============================================================================
 delegation:
   # Delegated subagents and complex tasks run on the flat-rate Antigravity subscription
-  # via the agy CLI, starting with Gemini 4 Argon for high-reasoning agentic coding,
+  # via the agy CLI, starting with Orchestrator (Argon) for high-reasoning agentic coding,
   # then rotating through Gemini 4 Hydrogen and Claude Sonnet 5.5 before falling back
   # to DeepSeek on muninn only when all flat-rate pools are exhausted.
   provider: "antigravity-subscription-directsdk"
-  model: "gemini-4-argon-high"
+  model: "gemini-pro-orchestrator-g1-pro"
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
       model: "gemini-4-hydrogen-high"
