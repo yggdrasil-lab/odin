@@ -98,7 +98,7 @@ def render_profile_config(
     )
 
     # 2. Update main fallback_providers chain for this specialist
-    fallback_models = role_cfg.get("fallback_models", ["gemini-3.8-flash-high", "claude-sonnet-5-5-high", "gemini-4-argon-high"])
+    fallback_models = role_cfg.get("fallback_models", ["claude-sonnet-5-5-high", "gemini-4-argon-high"])
     fallback_pattern = re.compile(
         r"^fallback_providers:\n(?:  - .*\n|    .*\n)+",
         re.MULTILINE,
