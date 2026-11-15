@@ -13,10 +13,10 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       # Main agent loop runs on the flat-rate Antigravity subscription first,
-      # starting with Gemini 3.8 Flash, rotating to Claude Sonnet 5.5, then
-      # Gemini 4 Argon, and falling back to DeepSeek via muninn only when all
-      # three flat-rate subscription pools are exhausted.
-      AGENT_MODEL: gemini-3.8-flash-high
+      # starting with Gemini 4 Hydrogen, rotating to Gemini 3.8 Flash, Claude Sonnet 5.5,
+      # then Gemini 4 Argon, and falling back to DeepSeek via muninn only when all
+      # flat-rate subscription pools are exhausted.
+      AGENT_MODEL: gemini-4-hydrogen-high
       CHAT_MODEL: local-model:latest
     
     steps:

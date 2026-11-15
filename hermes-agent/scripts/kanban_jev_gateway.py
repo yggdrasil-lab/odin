@@ -69,6 +69,8 @@ def main():
     p_create.add_argument("--body", required=True, help="Task description")
     p_create.add_argument("--priority", type=int, default=1, help="Task priority (0-3)")
     p_create.add_argument("--assignee", default=DEFAULT_ASSIGNEE, help="Assignee profile")
+    p_create.add_argument("--tier", choices=["flash_fast", "frontier_deep"], default=None, help="Optional complexity tier override")
+    p_create.add_argument("--await-approval", action="store_true", default=False, help="Park task in 'in_review' awaiting operator approval before execution")
 
     # Update command
     p_update = subparsers.add_parser("update", help="Update task lifecycle status and notify thread")
@@ -91,6 +93,7 @@ def main():
     p_handoff.add_argument("--to", required=True, dest="to_assignee", help="Target specialist (huginn, sindri, forseti, vor, saga)")
     p_handoff.add_argument("--summary", required=True, help="Compact state digest + file/PR paths for next specialist")
     p_handoff.add_argument("--pr-url", default="", help="Optional PR or branch reference")
+    p_handoff.add_argument("--tier", choices=["flash_fast", "frontier_deep"], default=None, help="Optional complexity tier override for target specialist")
 
     # Verify command (State-Machine Verification Gate)
     p_verify = subparsers.add_parser("verify", help="Evaluate verification gate and trigger state transition")
@@ -150,7 +153,14 @@ def main():
         res = triage_and_intake(args.text, title=args.title, context=args.context)
         print(json.dumps(res, indent=2))
     elif args.command == "create":
-        task_id, thread_id = create_kanban_task(args.title, args.body, priority=args.priority, assignee=args.assignee)
+        task_id, thread_id = create_kanban_task(
+            args.title,
+            args.body,
+            priority=args.priority,
+            assignee=args.assignee,
+            tier=args.tier,
+            await_approval=args.await_approval,
+        )
         print(f"Created task {task_id} with thread ID {thread_id}")
     elif args.command == "update":
         update_task_lifecycle(args.task_id, args.status, args.message)
@@ -183,7 +193,13 @@ def main():
     elif args.command == "show":
         show_kanban_task(args.task_id, as_json=args.json)
     elif args.command == "handoff":
-        res = handoff_kanban_task(args.task_id, args.to_assignee, args.summary, pr_url=args.pr_url)
+        res = handoff_kanban_task(
+            args.task_id,
+            args.to_assignee,
+            args.summary,
+            pr_url=args.pr_url,
+            tier=args.tier,
+        )
         print(f"Handed off {args.task_id} from '{res['from_assignee']}' to '{res['to_assignee']}' ({res['model_override']})")
     elif args.command == "verify":
         if not args.passed and not args.failed:

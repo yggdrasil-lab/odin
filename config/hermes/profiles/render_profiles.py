@@ -89,7 +89,7 @@ def render_profile_config(
     rendered = template_text
 
     # 1. Pin specialist default model
-    model_name = role_cfg.get("model", "gemini-3.8-flash-high")
+    model_name = role_cfg.get("model", "gemini-4-hydrogen-high")
     rendered = re.sub(
         r'default:\s*"\$\{AGENT_MODEL\}"',
         f'default: "{model_name}"',
@@ -98,7 +98,7 @@ def render_profile_config(
     )
 
     # 2. Update main fallback_providers chain for this specialist
-    fallback_models = role_cfg.get("fallback_models", ["claude-sonnet-5-5-high", "gemini-4-argon-high"])
+    fallback_models = role_cfg.get("fallback_models", ["gemini-3.8-flash-high", "claude-sonnet-5-5-high", "gemini-4-argon-high"])
     fallback_pattern = re.compile(
         r"^fallback_providers:\n(?:  - .*\n|    .*\n)+",
         re.MULTILINE,

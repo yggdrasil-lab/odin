@@ -25,11 +25,13 @@ RUN if [ ! -x "/opt/hermes/.venv/bin/pip" ]; then \
 # The vendor installer is non-interactive and takes its target directory via
 # --dir; it does NOT read AGY_INSTALL_DIR. `bash -s --` is required to pass the
 # flag through the curl pipe.
-ARG AGY_VERSION=1.5.5
+# Unpinned: agy self-updates in the background and entrypoint.sh persists/updates
+# the binary on /opt/data/home/.local/bin/agy across container restarts.
 RUN mkdir -p /opt/agy \
     && curl -fsSL --retry 3 https://antigravity.google/cli/install.sh \
       | bash -s -- --dir /opt/agy \
     && ln -sf /opt/agy/agy /usr/local/bin/agy \
+    && chown -R 1000:1000 /opt/agy \
     && chmod -R a+rX /opt/agy \
     && agy --version
 

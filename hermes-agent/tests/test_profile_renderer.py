@@ -80,7 +80,7 @@ class TestProfileRenderer(unittest.TestCase):
                 output_profiles_dir=profiles_dst,
                 skills_source_dir=skills_src,
                 env_vars={
-                    "AGENT_MODEL": "gemini-3.8-flash-high",
+                    "AGENT_MODEL": "gemini-4-hydrogen-high",
                     "DOMAIN_NAME": "tienzo.net",
                     "KRATOS_MCP_TOKEN": "test-token",
                 },
@@ -125,7 +125,7 @@ class TestProfileRenderer(unittest.TestCase):
                 if specialist == "sindri":
                     self.assertIn('default: "gemini-4-argon-high"', cfg_text)
                 else:
-                    self.assertIn('default: "gemini-3.8-flash-high"', cfg_text)
+                    self.assertIn('default: "gemini-4-hydrogen-high"', cfg_text)
 
                 # Verify SOUL.md contains pipeline handoff instruction
                 with open(os.path.join(prof_dir, "SOUL.md"), "r", encoding="utf-8") as sf:
@@ -161,7 +161,7 @@ class TestProfileRenderer(unittest.TestCase):
                 roles_path=roles_path,
                 output_profiles_dir=profiles_dst,
                 skills_source_dir=skills_src,
-                env_vars={"AGENT_MODEL": "gemini-3.8-flash-high", "DOMAIN_NAME": "tienzo.net"},
+                env_vars={"AGENT_MODEL": "gemini-4-hydrogen-high", "DOMAIN_NAME": "tienzo.net"},
             )
             with open(vor_soul, "r", encoding="utf-8") as sf:
                 self.assertIn("# Runtime wrap-up improvement", sf.read())

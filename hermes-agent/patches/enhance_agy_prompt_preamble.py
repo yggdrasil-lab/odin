@@ -29,8 +29,10 @@ import sys
 from pathlib import Path
 
 TARGET = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/prompt.py")
+TARGET_MODELS = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/models.py")
 TARGET_TESTS = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/tests/test_antigravity_plugin.py")
 MARKER = "# odin-patch: agy prompt preamble enhancements"
+MODELS_MARKER = "# odin-patch: gemini-4-hydrogen and argon catalog aliases"
 TEST_MARKER = "# odin-patch: test_prompt_preamble_operational_rules"
 
 ANCHOR = (
@@ -94,6 +96,32 @@ def main() -> int:
         src = src.replace(ANCHOR, INJECTION, 1)
         TARGET.write_text(src, encoding="utf-8")
         print(f"[odin-patch] patched {TARGET} (added output budget, tool discipline, Auckland timezone to _PROMPT_PREAMBLE)")
+
+    if TARGET_MODELS.is_file():
+        msrc = TARGET_MODELS.read_text(encoding="utf-8")
+        if MODELS_MARKER not in msrc:
+            old_aliases = (
+                '    "default": "gemini-3.8-flash",\n'
+                '    "flash": "gemini-3.8-flash",\n'
+            )
+            new_aliases = (
+                f"    {MODELS_MARKER}\n"
+                '    "default": "gemini-4-hydrogen-high",\n'
+                '    "hydrogen": "gemini-4-hydrogen-high",\n'
+                '    "gemini-4-hydrogen": "gemini-4-hydrogen-high",\n'
+                '    "argon": "gemini-4-argon-high",\n'
+                '    "gemini-4-argon": "gemini-4-argon-high",\n'
+                '    "orchestrator": "gemini-pro-orchestrator-g1-pro",\n'
+                '    "flash": "gemini-3.8-flash",\n'
+            )
+            if old_aliases in msrc:
+                msrc = msrc.replace(old_aliases, new_aliases, 1)
+            old_suffix_loop = 'for suffix, eff in (("-high", "high"), ("-medium", "medium"), ("-low", "low")):'
+            new_suffix_loop = 'for suffix, eff in (("-xhigh", "xhigh"), ("-high", "high"), ("-medium", "medium"), ("-low", "low")):'
+            if old_suffix_loop in msrc:
+                msrc = msrc.replace(old_suffix_loop, new_suffix_loop, 1)
+            TARGET_MODELS.write_text(msrc, encoding="utf-8")
+            print(f"[odin-patch] patched {TARGET_MODELS} (added gemini-4-hydrogen, argon, and xhigh support)")
 
     if TARGET_TESTS.is_file():
         tests_src = TARGET_TESTS.read_text(encoding="utf-8")
