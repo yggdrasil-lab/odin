@@ -59,10 +59,19 @@ class KanbanGatewayHTTPHandler(BaseHTTPRequestHandler):
             body = payload.get("body", "")
             priority = payload.get("priority", 1)
             assignee = payload.get("assignee", DEFAULT_ASSIGNEE)
+            tier = payload.get("tier")
+            await_approval = bool(payload.get("await_approval", False))
             if not title or not body:
                 self._send_json(400, {"error": "Missing title or body"})
                 return
-            task_id, thread_id = create_kanban_task(title, body, priority=priority, assignee=assignee)
+            task_id, thread_id = create_kanban_task(
+                title,
+                body,
+                priority=priority,
+                assignee=assignee,
+                tier=tier,
+                await_approval=await_approval,
+            )
             self._send_json(200, {"task_id": task_id, "thread_id": thread_id})
 
         elif self.path == "/debrief":

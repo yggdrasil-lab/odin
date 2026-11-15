@@ -1,7 +1,19 @@
-"""jev.py - TypeSafe Jev System One decision gating and model routing."""
+"""jev.py - TypeSafe Jev System One decision gating and model routing.
 
+Follows the 5-Section SOLID Newspaper Layout:
+1. Imports & Constants (Shared System One Question Schemas)
+2. Domain Models (Pure Data Contracts)
+3. Gateways / Adapters (Muninn HTTP Transport)
+4. Pure Business Logic & Verdict Evaluators (Zero I/O)
+5. Public Evaluation Facade (Backward-Compatible Entrypoints)
+"""
+
+# ============================================================================
+# 1. IMPORTS & CONSTANTS
+# ============================================================================
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import time
 import urllib.error
@@ -19,7 +31,73 @@ from .config import (
     resolve_muninn_endpoint,
 )
 
+COMPLEXITY_TIER_QUESTION: Dict[str, Any] = {
+    "type": "choice",
+    "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",
+    "criteria": {
+        "flash_fast": (
+            "Routine chores, documentation updates, log/web investigation, biometric/journal entries, "
+            "QA checks, or minor script tweaks. Uses gemini-4-hydrogen-high."
+        ),
+        "frontier_deep": (
+            "Architectural additions, multi-service Docker Swarm compose changes, database migrations, "
+            "security hardening, or complex Forge PR implementation. Uses gemini-pro-orchestrator-g1-pro."
+        ),
+        "human_pairing": (
+            "Architectural forks, destructive deletions, subjective product decisions, or fundamental "
+            "infrastructure trade-offs requiring pairing with Raymund."
+        ),
+    },
+}
 
+SPECIALIST_ROLE_QUESTION: Dict[str, Any] = {
+    "type": "choice",
+    "instructions": "Assign the task to the single best Court of Odin specialist: huginn, sindri, forseti, vor, or saga",
+    "criteria": {
+        "huginn": "Scout Raven: log triage, root-cause diagnostics, host/Swarm telemetry inspection, and web research.",
+        "sindri": "Forge Builder: code changes, Docker Swarm compose stacks, Dockerfile/CI updates, and PR creation in Forge/<repo>.",
+        "forseti": "QA & Visual Gate: Playwright visual verification (iPhone 14 / Pixel 7), PR diff invariant audits, and schema validation.",
+        "vor": "Vault & Memory Curator: session wrap-ups, skill maintenance, Mnemosyne hygiene, and Areas/90-Infrastructure documentation.",
+        "saga": "Journal & Health Scribe: Daily Journal stories, life areas (00-30), Eir biometrics analysis, and Kratos workout autoregulation.",
+    },
+}
+
+FRICTION_ACTION_QUESTION: Dict[str, Any] = {
+    "type": "choice",
+    "instructions": "Classify friction actionability into auto_fix_script, propose_review, ignore_transient, or alert_channel",
+    "criteria": {
+        "auto_fix_script": (
+            "A failing or broken existing script (Python/bash traceback, SyntaxError, FileNotFoundError, "
+            "broken path/symlink, missing CLI flag, unhandled exception) or a stale path/flag in an existing "
+            "skill doc that should be repaired directly and autonomously without waiting for human decision."
+        ),
+        "propose_review": (
+            "A brand-new skill, brand-new script, canonical rule change (AGENTS.md / .agents/rules/), "
+            "workflow redesign, or architectural friction that requires human review and decision in a "
+            "#info proposal thread before execution."
+        ),
+        "ignore_transient": (
+            "A one-off transient network retry, minor timing delay, benign warning, or non-actionable "
+            "observation (e.g. 0 frictions, clean execution). Safe to ignore without spawning a card."
+        ),
+        "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention.",
+    },
+}
+
+
+# ============================================================================
+# 2. DOMAIN MODELS (Pure Data Contracts - Zero I/O)
+# ============================================================================
+@dataclass(frozen=True)
+class ComplexityVerdict:
+    tier: str
+    recommended_assignee: str
+    recommended_model: str
+
+
+# ============================================================================
+# 3. GATEWAYS / ADAPTERS (Muninn HTTP Transport)
+# ============================================================================
 def call_jev_raw(
     system_prompt: str,
     user_content: str,
@@ -37,7 +115,7 @@ def call_jev_raw(
         "temperature": 0.0,
     }
     if not MUNINN_API_KEY:
-        logger.error("MUNINN_API_KEY (or LITELLM_MASTER_KEY) is not set in environment.")
+        logger.error("MUNINN_MASTER_KEY (or MUNINN_API_KEY) is not set in environment.")
         return "fallback_error: missing_muninn_api_key", 0.0
 
     req = urllib.request.Request(
@@ -63,69 +141,58 @@ def call_jev_raw(
         return f"fallback_error: {e}", elapsed
 
 
-def evaluate_jev_actionability(event_text: str, context: str = "") -> Tuple[bool, float, str]:
-    """Evaluates whether an event requires multi-step engineering follow-up via Muninn Jev."""
-    system_prompt = (
-        "Evaluate whether the following operational event, incident, or triage item "
-        "represents an actionable engineering task requiring Kanban tracking and asynchronous "
-        "worker execution. Answer 'true' if it is an actionable multi-step task, bugfix, "
-        "infrastructure repair, or maintenance job. Answer 'false' if it is routine telemetry, "
-        "a transient health ping, a one-off query, or non-actionable noise."
-    )
-    user_content = f"Context:\n{context}\n\nEvent to evaluate:\n{event_text}" if context else f"Event to evaluate:\n{event_text}"
-    content, elapsed = call_jev_raw(system_prompt, user_content)
-    is_actionable = "true" in content.lower() or "fallback_error" in content
-    logger.info("Jev System One evaluated event in %.2fs -> Actionable: %s (Raw: '%s')", elapsed, is_actionable, content)
-    return is_actionable, elapsed, content
-
-
+# ============================================================================
+# 4. PURE BUSINESS LOGIC & VERDICT EVALUATORS (Zero I/O)
+# ============================================================================
 def _infer_specialist_from_text(title: str, body: str, tier: str) -> str:
     """Infers canonical Court of Odin specialist when Jev response omits an explicit role."""
     combined = f"{title}\n{body}".lower()
-    if any(k in combined for k in ("eir", "kratos", "workout", "biometric", "hrv", "daily journal", "badminton", "00-health", "10-wealth", "20-career", "30-relationships")):
+    if any(
+        k in combined
+        for k in (
+            "eir",
+            "kratos",
+            "workout",
+            "biometric",
+            "hrv",
+            "daily journal",
+            "badminton",
+            "00-health",
+            "10-wealth",
+            "20-career",
+            "30-relationships",
+        )
+    ):
         return "saga"
-    if any(k in combined for k in ("wrap-up", "wrapup", "mnemosyne", "skill", "areas/90-infrastructure", "efforts/", "chore/friction", "address friction")):
+    if any(
+        k in combined
+        for k in (
+            "wrap-up",
+            "wrapup",
+            "mnemosyne",
+            "skill",
+            "areas/90-infrastructure",
+            "efforts/",
+            "chore/friction",
+            "address friction",
+        )
+    ):
         return "vor"
-    if any(k in combined for k in ("playwright", "visual gate", "visual review", "iphone 14", "pixel 7", "qa", "schema validation")):
+    if any(
+        k in combined
+        for k in ("playwright", "visual gate", "visual review", "iphone 14", "pixel 7", "qa", "schema validation")
+    ):
         return "forseti"
-    if any(k in combined for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml", "open a pr", "pull request")) or tier == "frontier_deep":
+    if (
+        any(k in combined for k in ("forge/", "docker-compose", "dockerfile", "deploy.yml", "open a pr", "pull request"))
+        or tier == "frontier_deep"
+    ):
         return "sindri"
     return "huginn"
 
 
-def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
-    """Evaluates task complexity and routes to Court of Odin specialist role and model tier."""
-    system_prompt = (
-        "Evaluate the technical complexity and specialist domain of the following task for the Court of Odin autonomous workers. "
-        "Classify both tier and role:\n"
-        "```json\n"
-        "{\n"
-        '  "questions": {\n'
-        '    "tier": {\n'
-        '      "type": "choice",\n'
-        '      "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",\n'
-        '      "criteria": {\n'
-        '        "flash_fast": "Routine chores, documentation updates, log/web investigation, biometric/journal entries, QA checks, or minor script tweaks. Uses gemini-4-hydrogen-high.",\n'
-        '        "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, security hardening, or complex Forge PR implementation. Uses gemini-pro-orchestrator-g1-pro.",\n'
-        '        "human_pairing": "Architectural forks, destructive deletions, subjective product decisions, or fundamental infrastructure trade-offs requiring pairing with Raymund."\n'
-        "      }\n"
-        "    },\n"
-        '    "role": {\n'
-        '      "type": "choice",\n'
-        '      "instructions": "Assign the task to the single best Court of Odin specialist: huginn, sindri, forseti, vor, or saga",\n'
-        '      "criteria": {\n'
-        '        "huginn": "Scout Raven: log triage, root-cause diagnostics, host/Swarm telemetry inspection, and web research.",\n'
-        '        "sindri": "Forge Builder: code changes, Docker Swarm compose stacks, Dockerfile/CI updates, and PR creation in Forge/<repo>.",\n'
-        '        "forseti": "QA & Visual Gate: Playwright visual verification (iPhone 14 / Pixel 7), PR diff invariant audits, and schema validation.",\n'
-        '        "vor": "Vault & Memory Curator: session wrap-ups, skill maintenance, Mnemosyne hygiene, and Areas/90-Infrastructure documentation.",\n'
-        '        "saga": "Journal & Health Scribe: Daily Journal stories, life areas (00-30), Eir biometrics analysis, and Kratos workout autoregulation."\n'
-        "      }\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
-        "```"
-    )
-    content, elapsed = call_jev_raw(system_prompt, f"Task Title: {title}\n\nTask Description:\n{body}")
+def _resolve_complexity_verdict(content: str, title: str, body: str) -> ComplexityVerdict:
+    """Pure parser resolving tier, specialist assignee, and model from raw Jev output."""
     content_lower = content.lower()
     tier = "flash_fast"
     recommended_assignee = ""
@@ -151,114 +218,27 @@ def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
                 break
 
     if tier == "human_pairing":
-        recommended_assignee = "raymund"
-        recommended_model = "human/raymund"
+        return ComplexityVerdict(
+            tier=tier,
+            recommended_assignee="raymund",
+            recommended_model="human/raymund",
+        )
+
+    if not recommended_assignee or recommended_assignee == "swarm-worker":
+        recommended_assignee = _infer_specialist_from_text(title, body, tier)
+
+    if tier == "frontier_deep":
+        recommended_model = "gemini-pro-orchestrator-g1-pro"
+    elif tier == "flash_fast":
+        recommended_model = "gemini-4-hydrogen-high"
     else:
-        if not recommended_assignee or recommended_assignee == "swarm-worker":
-            recommended_assignee = _infer_specialist_from_text(title, body, tier)
-        if tier == "frontier_deep":
-            recommended_model = "gemini-pro-orchestrator-g1-pro"
-        elif tier == "flash_fast":
-            recommended_model = "gemini-4-hydrogen-high"
-        else:
-            recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-4-hydrogen-high")
+        recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-4-hydrogen-high")
 
-    logger.info(
-        "Jev System One task complexity in %.2fs -> Tier: %s | Assignee: %s (%s)",
-        elapsed,
-        tier,
-        recommended_assignee,
-        recommended_model,
+    return ComplexityVerdict(
+        tier=tier,
+        recommended_assignee=recommended_assignee,
+        recommended_model=recommended_model,
     )
-    return {
-        "tier": tier,
-        "recommended_assignee": recommended_assignee,
-        "recommended_model": recommended_model,
-        "raw_verdict": content,
-        "latency_seconds": round(elapsed, 3),
-    }
-
-
-def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "") -> Dict[str, Any]:
-    """Batches event actionability, task complexity tier, and specialist role in 1 Jev round-trip."""
-    schema = {
-        "questions": {
-            "actionable": {
-                "type": "noul",
-                "instructions": (
-                    "True if the event represents an actionable multi-step engineering task, bugfix, "
-                    "infrastructure repair, or maintenance job requiring Kanban tracking; False if routine "
-                    "telemetry, transient health ping, or non-actionable noise."
-                ),
-            },
-            "tier": {
-                "type": "choice",
-                "instructions": "Classify task complexity tier into flash_fast, frontier_deep, or human_pairing",
-                "criteria": {
-                    "flash_fast": "Routine chores, documentation updates, log/web investigation, biometric/journal entries, QA checks, or minor script tweaks.",
-                    "frontier_deep": "Architectural additions, multi-service Docker Swarm compose changes, database migrations, or complex Forge PR implementation.",
-                    "human_pairing": "Architectural forks, destructive deletions, or fundamental trade-offs requiring pairing with Raymund.",
-                },
-            },
-            "role": {
-                "type": "choice",
-                "instructions": "Assign the task to the single best Court of Odin specialist: huginn, sindri, forseti, vor, or saga",
-                "criteria": {
-                    "huginn": "Scout Raven: log triage, root-cause diagnostics, host/Swarm telemetry inspection, and web research.",
-                    "sindri": "Forge Builder: code changes, Docker Swarm compose stacks, Dockerfile/CI updates, and PR creation in Forge/<repo>.",
-                    "forseti": "QA & Visual Gate: Playwright visual verification, PR diff invariant audits, and schema validation.",
-                    "vor": "Vault & Memory Curator: session wrap-ups, skill maintenance, Mnemosyne hygiene, and Areas/90-Infrastructure documentation.",
-                    "saga": "Journal & Health Scribe: Daily Journal stories, life areas (00-30), Eir biometrics analysis, and Kratos workout autoregulation.",
-                },
-            },
-        }
-    }
-    system_prompt = (
-        "Evaluate event actionability, complexity tier, and specialist role for the Court of Odin:\n"
-        f"```json\n{json.dumps(schema)}\n```"
-    )
-    user_content = (
-        f"Context:\n{context}\n\nTitle: {title}\n\nEvent:\n{event_text}"
-        if context
-        else f"Title: {title}\n\nEvent:\n{event_text}"
-    )
-    content, elapsed = call_jev_raw(system_prompt, user_content)
-
-    is_actionable = "fallback_error" in content
-    tier = "flash_fast"
-    recommended_assignee = ""
-    try:
-        parsed = json.loads(content)
-        if isinstance(parsed, dict):
-            is_actionable = str(parsed.get("actionable", "true")).lower() == "true"
-            if parsed.get("tier") in ("flash_fast", "frontier_deep", "human_pairing"):
-                tier = str(parsed["tier"])
-            if parsed.get("role"):
-                recommended_assignee = normalize_assignee(str(parsed["role"]))
-    except Exception:
-        is_actionable = "true" in content.lower() or "fallback_error" in content
-
-    if tier == "human_pairing":
-        recommended_assignee = "raymund"
-        recommended_model = "human/raymund"
-    else:
-        if not recommended_assignee or recommended_assignee == "swarm-worker":
-            recommended_assignee = _infer_specialist_from_text(title, event_text, tier)
-        if tier == "frontier_deep":
-            recommended_model = "gemini-pro-orchestrator-g1-pro"
-        elif tier == "flash_fast":
-            recommended_model = "gemini-4-hydrogen-high"
-        else:
-            recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-4-hydrogen-high")
-
-    return {
-        "actionable": is_actionable,
-        "tier": tier,
-        "recommended_assignee": recommended_assignee,
-        "recommended_model": recommended_model,
-        "raw_verdict": content,
-        "latency_seconds": round(elapsed, 3),
-    }
 
 
 def _classify_friction_tier_fallback(friction_text: str) -> str:
@@ -297,6 +277,102 @@ def _classify_friction_tier_fallback(friction_text: str) -> str:
     return "propose_review"
 
 
+# ============================================================================
+# 5. PUBLIC EVALUATION FACADE
+# ============================================================================
+def evaluate_jev_actionability(event_text: str, context: str = "") -> Tuple[bool, float, str]:
+    """Evaluates whether an event requires multi-step engineering follow-up via Muninn Jev."""
+    system_prompt = (
+        "Evaluate whether the following operational event, incident, or triage item "
+        "represents an actionable engineering task requiring Kanban tracking and asynchronous "
+        "worker execution. Answer 'true' if it is an actionable multi-step task, bugfix, "
+        "infrastructure repair, or maintenance job. Answer 'false' if it is routine telemetry, "
+        "a transient health ping, a one-off query, or non-actionable noise."
+    )
+    user_content = f"Context:\n{context}\n\nEvent to evaluate:\n{event_text}" if context else f"Event to evaluate:\n{event_text}"
+    content, elapsed = call_jev_raw(system_prompt, user_content)
+    is_actionable = "true" in content.lower() or "fallback_error" in content
+    logger.info("Jev System One evaluated event in %.2fs -> Actionable: %s (Raw: '%s')", elapsed, is_actionable, content)
+    return is_actionable, elapsed, content
+
+
+def evaluate_task_complexity(title: str, body: str) -> Dict[str, Any]:
+    """Evaluates task complexity and routes to Court of Odin specialist role and model tier."""
+    schema = {
+        "questions": {
+            "tier": COMPLEXITY_TIER_QUESTION,
+            "role": SPECIALIST_ROLE_QUESTION,
+        }
+    }
+    system_prompt = (
+        "Evaluate the technical complexity and specialist domain of the following task for the Court of Odin autonomous workers. "
+        "Classify both tier and role:\n"
+        f"```json\n{json.dumps(schema, indent=2)}\n```"
+    )
+    content, elapsed = call_jev_raw(system_prompt, f"Task Title: {title}\n\nTask Description:\n{body}")
+    verdict = _resolve_complexity_verdict(content, title, body)
+    logger.info(
+        "Jev System One task complexity in %.2fs -> Tier: %s | Assignee: %s (%s)",
+        elapsed,
+        verdict.tier,
+        verdict.recommended_assignee,
+        verdict.recommended_model,
+    )
+    return {
+        "tier": verdict.tier,
+        "recommended_assignee": verdict.recommended_assignee,
+        "recommended_model": verdict.recommended_model,
+        "raw_verdict": content,
+        "latency_seconds": round(elapsed, 3),
+    }
+
+
+def evaluate_triage_and_complexity(event_text: str, title: str, context: str = "") -> Dict[str, Any]:
+    """Batches event actionability, task complexity tier, and specialist role in 1 Jev round-trip."""
+    schema = {
+        "questions": {
+            "actionable": {
+                "type": "noul",
+                "instructions": (
+                    "True if the event represents an actionable multi-step engineering task, bugfix, "
+                    "infrastructure repair, or maintenance job requiring Kanban tracking; False if routine "
+                    "telemetry, transient health ping, or non-actionable noise."
+                ),
+            },
+            "tier": COMPLEXITY_TIER_QUESTION,
+            "role": SPECIALIST_ROLE_QUESTION,
+        }
+    }
+    system_prompt = (
+        "Evaluate event actionability, complexity tier, and specialist role for the Court of Odin:\n"
+        f"```json\n{json.dumps(schema)}\n```"
+    )
+    user_content = (
+        f"Context:\n{context}\n\nTitle: {title}\n\nEvent:\n{event_text}"
+        if context
+        else f"Title: {title}\n\nEvent:\n{event_text}"
+    )
+    content, elapsed = call_jev_raw(system_prompt, user_content)
+
+    is_actionable = "fallback_error" in content
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            is_actionable = str(parsed.get("actionable", "true")).lower() == "true"
+    except Exception:
+        is_actionable = "true" in content.lower() or "fallback_error" in content
+
+    verdict = _resolve_complexity_verdict(content, title, event_text)
+    return {
+        "actionable": is_actionable,
+        "tier": verdict.tier,
+        "recommended_assignee": verdict.recommended_assignee,
+        "recommended_model": verdict.recommended_model,
+        "raw_verdict": content,
+        "latency_seconds": round(elapsed, 3),
+    }
+
+
 def evaluate_debrief_gates_batch(
     task_title: str,
     task_body: str,
@@ -327,16 +403,7 @@ def evaluate_debrief_gates_batch(
             ),
         }
     if has_friction:
-        questions["friction_action"] = {
-            "type": "choice",
-            "instructions": "Classify friction actionability into auto_fix_script, propose_review, ignore_transient, or alert_channel",
-            "criteria": {
-                "auto_fix_script": "A failing or broken existing script (Python/bash traceback, SyntaxError, FileNotFoundError, broken path/symlink, missing CLI flag, unhandled exception) or a stale path/flag in an existing skill doc that should be repaired directly and autonomously without waiting for human decision.",
-                "propose_review": "A brand-new skill, brand-new script, canonical rule change (AGENTS.md / .agents/rules/), workflow redesign, or architectural friction that requires human review and decision in a #info proposal thread before execution.",
-                "ignore_transient": "A one-off transient network retry, minor timing delay, benign warning, or non-actionable observation. Safe to ignore.",
-                "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention.",
-            },
-        }
+        questions["friction_action"] = FRICTION_ACTION_QUESTION
         questions["friction_assignee"] = {
             "type": "choice",
             "instructions": "Assign the follow-up friction chore to vor or sindri",
@@ -424,45 +491,35 @@ def evaluate_debrief_gates_batch(
 
 def evaluate_debrief_acceptance(task_title: str, task_body: str, debrief_summary: str) -> Dict[str, Any]:
     """Verifies worker debrief against completion contract (Noul)."""
-    system_prompt = (
-        "You are an automated contract verification gate for an autonomous software agent. "
-        "Evaluate whether the worker's debrief summary demonstrates that the stated task acceptance criteria and deliverables were fulfilled. "
-        "```json\n"
-        "{\n"
-        '  "questions": {\n'
-        '    "accepted": {\n'
-        '      "type": "noul",\n'
-        '      "instructions": "True if the deliverable is completed and verified; False if the task was prematurely aborted, missing core deliverables, or failed its verification contract."\n'
-        "    }\n"
-        "  }\n"
-        "}\n"
-        "```"
+    res = evaluate_debrief_gates_batch(task_title=task_title, task_body=task_body, debrief_summary=debrief_summary)
+    gate = res["acceptance_gate"]
+    logger.info(
+        "Jev System One contract acceptance in %.2fs -> Accepted: %s (Raw: '%s')",
+        gate["latency_seconds"],
+        gate["accepted"],
+        gate["raw_verdict"],
     )
-    user_content = f"Task Title: {task_title}\n\nTask Contract / Description:\n{task_body}\n\nWorker Debrief Summary:\n{debrief_summary}"
-    content, elapsed = call_jev_raw(system_prompt, user_content)
-    is_accepted = "true" in content.lower() or "fallback_error" in content
-    logger.info("Jev System One contract acceptance in %.2fs -> Accepted: %s (Raw: '%s')", elapsed, is_accepted, content)
-    return {
-        "accepted": is_accepted,
-        "raw_verdict": content,
-        "latency_seconds": round(elapsed, 3),
-    }
+    return gate
 
 
 def evaluate_auto_merge_safety(task_title: str, debrief_summary: str, pr_url: str) -> Dict[str, Any]:
     """Evaluates whether a PR is safe for autonomous merging without human sign-off (Noul)."""
+    schema = {
+        "questions": {
+            "auto_merge_eligible": {
+                "type": "noul",
+                "instructions": (
+                    "True if the PR consists strictly of non-critical documentation, typo fixes, comment cleanups, "
+                    "minor chore scripts, or safe lint patches with passing tests. False if it alters core "
+                    "infrastructure, container entrypoints, compose network definitions, database schemas, "
+                    "secrets, or service runtime configurations that require human sign-off."
+                ),
+            }
+        }
+    }
     system_prompt = (
         "Evaluate whether this completed pull request is safe to auto-merge without human review. "
-        "```json\n"
-        "{\n"
-        '  "questions": {\n'
-        '    "auto_merge_eligible": {\n'
-        '      "type": "noul",\n'
-        '      "instructions": "True if the PR consists strictly of non-critical documentation, typo fixes, comment cleanups, minor chore scripts, or safe lint patches with passing tests. False if it alters core infrastructure, container entrypoints, compose network definitions, database schemas, secrets, or service runtime configurations that require human sign-off."\n'
-        "    }\n"
-        "  }\n"
-        "}\n"
-        "```"
+        f"```json\n{json.dumps(schema, indent=2)}\n```"
     )
     user_content = f"PR URL: {pr_url}\nTask: {task_title}\nDebrief: {debrief_summary}"
     content, elapsed = call_jev_raw(system_prompt, user_content)
@@ -477,24 +534,10 @@ def evaluate_auto_merge_safety(task_title: str, debrief_summary: str, pr_url: st
 
 def evaluate_friction_actionability(friction_text: str) -> Dict[str, Any]:
     """Classifies reported frictions into auto_fix_script (Tier 2), propose_review (Tier 3), ignore_transient, or alert_channel."""
+    schema = {"questions": {"action": FRICTION_ACTION_QUESTION}}
     system_prompt = (
         "Classify the reported task execution friction into exactly one category:\n"
-        "```json\n"
-        "{\n"
-        '  "questions": {\n'
-        '    "action": {\n'
-        '      "type": "choice",\n'
-        '      "instructions": "Classify friction actionability into auto_fix_script, propose_review, ignore_transient, or alert_channel",\n'
-        '      "criteria": {\n'
-        '        "auto_fix_script": "A failing or broken existing script (Python/bash traceback, SyntaxError, FileNotFoundError, broken path/symlink, missing CLI flag, unhandled exception) or a stale path/flag in an existing skill doc that should be repaired directly and autonomously without waiting for human decision.",\n'
-        '        "propose_review": "A brand-new skill, brand-new script, canonical rule change (AGENTS.md / .agents/rules/), workflow redesign, or architectural friction that requires human review and decision in a #info proposal thread before execution.",\n'
-        '        "ignore_transient": "A one-off transient network retry, minor timing delay, benign warning, or non-actionable observation (e.g. 0 frictions, clean execution). Safe to ignore without spawning a card.",\n'
-        '        "alert_channel": "A critical blocking outage, credential revocation, or fatal system error requiring immediate attention."\n'
-        "      }\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
-        "```"
+        f"```json\n{json.dumps(schema, indent=2)}\n```"
     )
     content, elapsed = call_jev_raw(system_prompt, f"Reported Friction:\n{friction_text}")
     content_lower = content.lower()

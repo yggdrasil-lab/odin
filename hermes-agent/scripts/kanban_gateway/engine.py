@@ -54,6 +54,7 @@ class RecoveryEscalationDecision:
     model_override: str
     provider_override: str
     escalated_from: Optional[str]
+    escalation_note: str
     retry_block: str
 
 
@@ -166,6 +167,7 @@ def evaluate_two_way_recovery(
         model_override=model_override,
         provider_override=provider_override,
         escalated_from=escalated_from,
+        escalation_note=escalation_note,
         retry_block=retry_block,
     )
 
@@ -186,14 +188,19 @@ def create_kanban_task(
     Returns:
         (task_id, discord_thread_id)
     """
-    if tier and not precomputed_complexity:
-        resolved_tier = tier.strip().lower()
-        target_role = normalize_assignee(assignee) if (assignee and assignee != DEFAULT_ASSIGNEE) else "sindri"
+    explicit_specialist = bool(assignee and assignee != DEFAULT_ASSIGNEE)
+    if (tier or explicit_specialist) and not precomputed_complexity:
+        target_role = normalize_assignee(assignee) if explicit_specialist else "sindri"
+        resolved_tier = (tier or ("frontier_deep" if target_role == "sindri" else "flash_fast")).strip().lower()
         base_complexity: Dict[str, Any] = {
             "tier": resolved_tier,
             "recommended_assignee": target_role,
-            "recommended_model": "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high",
-            "raw_verdict": f"explicit_tier:{resolved_tier}",
+            "recommended_model": (
+                "gemini-pro-orchestrator-g1-pro"
+                if resolved_tier == "frontier_deep"
+                else "gemini-4-hydrogen-high"
+            ),
+            "raw_verdict": f"explicit_routing:{target_role}:{resolved_tier}",
             "latency_seconds": 0.0,
         }
     else:
@@ -770,7 +777,7 @@ def verify_pipeline_stage(
                 post_thread_lifecycle_update(
                     thread_id=thread_id,
                     status="ready",
-                    message=f"⚠️ **Verification Gate Failed (Attempt {failures}/{max_retries}):**\nAutomatically bouncing task back to `{next_assignee}` (`{model_override}`) for remediation.{escalation_note}\n\n**Error Details:**\n```\n{err_msg[:500]}\n```",
+                    message=f"⚠️ **Verification Gate Failed (Attempt {failures}/{max_retries}):**\nAutomatically bouncing task back to `{next_assignee}` (`{model_override}`) for remediation.{recovery.escalation_note}\n\n**Error Details:**\n```\n{err_msg[:500]}\n```",
                     fields=fields,
                 )
 
@@ -1015,11 +1022,7 @@ def record_task_debrief(
             precomputed_complexity={
                 "tier": chore_tier,
                 "recommended_assignee": friction_assignee,
-                "recommended_model": (
-                    "gemini-4-argon-high"
-                    if friction_assignee == "sindri"
-                    else SPECIALIST_MODELS.get(friction_assignee, "gemini-4-hydrogen-high")
-                ),
+                "recommended_model": SPECIALIST_MODELS.get(friction_assignee, "gemini-4-hydrogen-high"),
                 "raw_verdict": friction_gate.get("raw_verdict", "auto_fix_script") if friction_gate else "auto_fix_script",
                 "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,
             },

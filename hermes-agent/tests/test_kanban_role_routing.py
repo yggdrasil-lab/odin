@@ -160,18 +160,42 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 self.assertEqual(sindri_fast_info["status"], "ready")
                 self.assertEqual(sindri_fast_info["model_override"], "gemini-4-hydrogen-high")
 
-                # Simulate verification failure on flash_fast Sindri task -> Two-Way Recovery escalates to gemini-4-argon-high
-                verify_fail_res = engine.verify_pipeline_stage(
-                    task_id=sindri_fast_id,
-                    passed=False,
-                    feedback="Unit test failed on header padding",
+                # Simulate verification failure on flash_fast Sindri task with Discord thread subscription -> Two-Way Recovery escalates to gemini-pro-orchestrator-g1-pro
+                conn = sqlite3.connect(db_path)
+                conn.execute(
+                    "INSERT INTO kanban_notify_subs (task_id, platform, chat_id, thread_id, user_id, notifier_profile, created_at, last_event_id, delivery_mode) VALUES (?, 'discord', 'c1', 't-fast-1', 'u1', 'huginn', 1, 0, 'thread')",
+                    (sindri_fast_id,),
                 )
-                self.assertFalse(verify_fail_res["passed"])
-                self.assertEqual(verify_fail_res["model_override"], "gemini-pro-orchestrator-g1-pro")
-                self.assertEqual(verify_fail_res["escalated_from"], "gemini-4-hydrogen-high")
+                conn.commit()
+                conn.close()
+
+                with patch("kanban_gateway.engine.post_thread_lifecycle_update") as mock_thread_post:
+                    verify_fail_res = engine.verify_pipeline_stage(
+                        task_id=sindri_fast_id,
+                        passed=False,
+                        feedback="Unit test failed on header padding",
+                    )
+                    self.assertFalse(verify_fail_res["passed"])
+                    self.assertEqual(verify_fail_res["model_override"], "gemini-pro-orchestrator-g1-pro")
+                    self.assertEqual(verify_fail_res["escalated_from"], "gemini-4-hydrogen-high")
+                    mock_thread_post.assert_called_once()
+                    self.assertIn("**Two-Way Recovery Escalation:** Escalated model from `gemini-4-hydrogen-high` to `gemini-pro-orchestrator-g1-pro`", mock_thread_post.call_args.kwargs["message"])
                 escalated_info = engine.show_kanban_task(sindri_fast_id, as_json=True)
                 self.assertEqual(escalated_info["model_override"], "gemini-pro-orchestrator-g1-pro")
                 self.assertIn("Two-Way Recovery Escalation", escalated_info["body"])
+
+                # Verify explicit specialist without --tier bypasses evaluate_task_complexity over aether-net
+                with patch("kanban_gateway.engine.evaluate_task_complexity") as mock_eval_explicit:
+                    vor_id, _ = engine.create_kanban_task(
+                        title="Sync Odin Stack docs",
+                        body="Update second-brain/Areas/90-Infrastructure/Odin/Odin Stack.md.",
+                        assignee="vor",
+                        notify_discord=False,
+                    )
+                    mock_eval_explicit.assert_not_called()
+                    vor_info = engine.show_kanban_task(vor_id, as_json=True)
+                    self.assertEqual(vor_info["assignee"], "vor")
+                    self.assertEqual(vor_info["model_override"], "gemini-4-hydrogen-high")
 
                 # Verify --await-approval parks task in 'in_review' with approval handoff command
                 hitl_id, _ = engine.create_kanban_task(
@@ -260,8 +284,29 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     autofix_info = engine.show_kanban_task(autofix_id, as_json=True)
                     self.assertEqual(autofix_info["status"], "ready")
                     self.assertEqual(autofix_info["assignee"], "vor")
+                    self.assertEqual(autofix_info["model_override"], "gemini-4-hydrogen-high")
                     self.assertIn("[Auto-Fix] Fix FileNotFoundError in check_poseidon.py", autofix_info["title"])
                     self.assertIsNone(engine.trigger_session_wrapup_chore(autofix_id, autofix_info["title"]))
+
+                # Test Tier 2 failing script friction routed to sindri uses gemini-pro-orchestrator-g1-pro
+                with patch.object(engine, "DISCORD_BOT_TOKEN", ""), patch.object(engine, "DISCORD_CHANNEL_ID", ""), patch(
+                    "kanban_gateway.engine.evaluate_debrief_gates_batch",
+                    return_value={
+                        "acceptance_gate": {"accepted": True, "raw_verdict": "accepted"},
+                        "auto_merge_gate": {"auto_merge_eligible": False, "raw_verdict": "no_pr"},
+                        "friction_gate": {"action": "auto_fix_script", "assignee": "sindri", "raw_verdict": "auto_fix_script"},
+                        "friction_assignee": "sindri",
+                    },
+                ):
+                    sindri_debrief_res = engine.record_task_debrief(
+                        task_id=task_id,
+                        summary="Completed stack check.",
+                        frictions="Forge/odin/hermes-agent/scripts/kanban_gateway/engine.py failed with NameError.",
+                        chore_title="Fix NameError in engine.py",
+                    )
+                    sindri_autofix_info = engine.show_kanban_task(sindri_debrief_res["chore_id"], as_json=True)
+                    self.assertEqual(sindri_autofix_info["assignee"], "sindri")
+                    self.assertEqual(sindri_autofix_info["model_override"], "gemini-pro-orchestrator-g1-pro")
 
                     # Test session wrap-up chore auto-spawn passes precomputed_complexity (bypassing Jev/Muninn evaluation)
                     with patch("kanban_gateway.engine.evaluate_task_complexity") as mock_eval_complexity:
