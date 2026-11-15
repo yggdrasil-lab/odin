@@ -8,7 +8,7 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a model exposed by the Antigravity subscription plugin
-  # (e.g. claude-sonnet-5-5-high, gemini-3.8-flash-high, gemini-4-argon-high) rather than a muninn alias:
+  # (e.g. gemini-4-hydrogen-high, gemini-4-argon-high, gemini-pro-orchestrator-g1-pro, claude-sonnet-5-5-high) rather than a muninn alias:
   # the main agent loop runs on the subscription first, because it is a fixed
   # monthly fee that would otherwise go unused.
   default: "${AGENT_MODEL}"

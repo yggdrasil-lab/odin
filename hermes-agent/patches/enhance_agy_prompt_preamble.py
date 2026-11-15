@@ -112,7 +112,6 @@ def main() -> int:
                 '    "argon": "gemini-4-argon-high",\n'
                 '    "gemini-4-argon": "gemini-4-argon-high",\n'
                 '    "orchestrator": "gemini-pro-orchestrator-g1-pro",\n'
-                '    "flash": "gemini-3.8-flash",\n'
             )
             if old_aliases in msrc:
                 msrc = msrc.replace(old_aliases, new_aliases, 1)
@@ -120,6 +119,15 @@ def main() -> int:
             new_suffix_loop = 'for suffix, eff in (("-xhigh", "xhigh"), ("-high", "high"), ("-medium", "medium"), ("-low", "low")):'
             if old_suffix_loop in msrc:
                 msrc = msrc.replace(old_suffix_loop, new_suffix_loop, 1)
+            old_return = "    else:\n        return m, effort"
+            new_return = (
+                '    elif m == "gemini-pro-orchestrator-g1-pro":\n'
+                "        return m, None\n"
+                "    else:\n"
+                "        return m, effort"
+            )
+            if old_return in msrc:
+                msrc = msrc.replace(old_return, new_return, 1)
             TARGET_MODELS.write_text(msrc, encoding="utf-8")
             print(f"[odin-patch] patched {TARGET_MODELS} (added gemini-4-hydrogen, argon, and xhigh support)")
 

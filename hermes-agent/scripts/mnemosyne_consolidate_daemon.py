@@ -3,7 +3,7 @@
 
 Pillar 1 of the Yggdrasil Autonomous Expansion Roadmap:
 1. Batches un-consolidated working memories (consolidated_at IS NULL).
-2. Calls the host LLM backend on task 'memory' (gemini-3.8-flash-high via Antigravity subscription)
+2. Calls the host LLM backend on task 'memory' (gemini-4-hydrogen-high via Antigravity subscription)
    to extract structured entity triples (subject, predicate, object).
 3. Upserts extracted facts into consolidated_facts and builds bidirectional graph_edges.
 4. Executes temporal hygiene repairs via mnemosyne_temporal_hygiene to close expired validity
@@ -88,7 +88,7 @@ class LLMCaller:
             from mnemosyne_hermes.hermes_llm_adapter import HermesAuxLLMBackend
             self._backend = HermesAuxLLMBackend()
             self._mode = "hermes_aux"
-            logger.info("Initialized HermesAuxLLMBackend (task: memory, gemini-3.8-flash-high)")
+            logger.info("Initialized HermesAuxLLMBackend (task: memory, gemini-4-hydrogen-high)")
             return
         except Exception:
             pass
@@ -154,7 +154,7 @@ class LLMCaller:
                 import json as py_json
                 url = os.environ.get("MUNINN_API_URL") or "http://muninn:4000/v1/chat/completions"
                 payload = {
-                    "model": "gemini-3.8-flash-high",
+                    "model": "app-synthesize",
                     "messages": [
                         {
                             "role": "system",
