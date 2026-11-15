@@ -168,6 +168,14 @@ class TestProfileRenderer(unittest.TestCase):
             self.assertIn("custom/learned-skill", re_rendered["vor"]["linked_skills"])
             self.assertFalse(os.path.lexists(os.path.join(vor_custom_dir, "broken-skill")))
 
+    def test_entrypoint_nonroot_agy_persistence_hygiene(self):
+        vault_root = os.environ.get("VAULT", "/opt/atlas/vault" if os.path.exists("/opt/atlas/vault") else "/app/vault")
+        entrypoint_path = os.path.join(vault_root, "Forge/odin/hermes-agent/entrypoint.sh")
+        with open(entrypoint_path, "r", encoding="utf-8") as f:
+            entrypoint_text = f.read()
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"', entrypoint_text)
+        self.assertNotIn("ln -sf \"$HOME/.local/bin/agy\" /usr/local/bin/agy", entrypoint_text)
+
 
 if __name__ == "__main__":
     unittest.main()
