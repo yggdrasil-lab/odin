@@ -59,7 +59,7 @@
       "aliases": ["forge-builder", "builder", "coder"],
       "tier": "frontier_deep",
       "model": "gemini-pro-orchestrator-g1-pro",
-      "fallback_models": ["gemini-4-hydrogen-high", "claude-sonnet-5-5-high"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-hydrogen-high"],
       "mcps": [],
       "toolsets": [
         "file",

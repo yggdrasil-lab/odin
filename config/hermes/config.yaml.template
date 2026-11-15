@@ -134,15 +134,15 @@ fallback_providers:
 delegation:
   # Delegated subagents and complex tasks run on the flat-rate Antigravity subscription
   # via the agy CLI, starting with Orchestrator (Argon) for high-reasoning agentic coding,
-  # then rotating through Gemini 4 Hydrogen and Claude Sonnet 5.5 before falling back
+  # then rotating through Claude Sonnet 5.5 and Gemini 4 Hydrogen before falling back
   # to DeepSeek on muninn only when all flat-rate pools are exhausted.
   provider: "antigravity-subscription-directsdk"
   model: "gemini-pro-orchestrator-g1-pro"
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
-      model: "gemini-4-hydrogen-high"
-    - provider: "antigravity-subscription-directsdk"
       model: "claude-sonnet-5-5-high"
+    - provider: "antigravity-subscription-directsdk"
+      model: "gemini-4-hydrogen-high"
     - provider: "custom"
       model: "agent-loop"
       base_url: "http://muninn:4000/v1"
