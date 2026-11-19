@@ -29,8 +29,8 @@
       "title": "Huginn (Odin's Scout Raven - Research & Infra Diagnostics)",
       "aliases": ["scout", "researcher", "heimdall"],
       "tier": "flash_fast",
-      "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
+      "model": "gemini-4-neon-high",
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -58,8 +58,8 @@
       "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
       "aliases": ["forge-builder", "builder", "coder"],
       "tier": "frontier_deep",
-      "model": "gemini-pro-orchestrator-g1-pro",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-hydrogen-high"],
+      "model": "gemini-4-argon-high",
+      "fallback_models": ["gemini-4-neon-high", "claude-opus-5-5-high"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -90,8 +90,8 @@
       "title": "Forseti (God of Truth & Judgment - QA, Invariant & Visual Gate)",
       "aliases": ["qa-reviewer", "qa", "reviewer"],
       "tier": "flash_fast",
-      "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
+      "model": "claude-sonnet-5-5-high",
+      "fallback_models": ["gemini-4-neon-high", "gemini-4-argon-high"],
       "mcps": ["playwright"],
       "toolsets": [
         "file",
@@ -112,8 +112,8 @@
       "title": "Vor (Goddess of Deep Inquiry - Vault, Skills & Memory Curator)",
       "aliases": ["vault-curator", "curator"],
       "tier": "flash_fast",
-      "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
+      "model": "claude-sonnet-5-5-high",
+      "fallback_models": ["gemini-4-hydrogen-high", "gemini-4-argon-high"],
       "mcps": [],
       "toolsets": [
         "file",
@@ -137,8 +137,8 @@
       "title": "Saga (Goddess of History & Chronicles - Journal, Life & Eir/Kratos Health)",
       "aliases": ["journal-scribe", "journal", "scribe"],
       "tier": "flash_fast",
-      "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
+      "model": "claude-sonnet-5-5-high",
+      "fallback_models": ["gemini-4-hydrogen-high", "gemini-4-argon-high"],
       "mcps": ["kratos"],
       "toolsets": [
         "file",
@@ -165,7 +165,7 @@
       "aliases": [],
       "tier": "flash_fast",
       "model": "gemini-4-hydrogen-high",
-      "fallback_models": ["claude-sonnet-5-5-high", "gemini-pro-orchestrator-g1-pro"],
+      "fallback_models": ["claude-sonnet-5-5-high", "gemini-4-argon-high"],
       "mcps": [],
       "toolsets": [
         "file",

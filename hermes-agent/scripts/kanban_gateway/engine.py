@@ -19,6 +19,7 @@ from .config import (
     STATUS_CANONICAL,
     logger,
     normalize_assignee,
+    resolve_flash_fast_model,
 )
 from .discord import (
     post_discord_thread,
@@ -68,11 +69,11 @@ def resolve_handoff_model(
     if resolved_assignee == "raymund":
         return None, None
     if clean_tier == "frontier_deep":
-        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
+        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
     if clean_tier == "flash_fast":
-        return (recommended_model or "gemini-4-hydrogen-high"), "antigravity-subscription-directsdk"
+        return (recommended_model or resolve_flash_fast_model(resolved_assignee)), "antigravity-subscription-directsdk"
     if resolved_assignee == "sindri":
-        return "gemini-pro-orchestrator-g1-pro", "antigravity-subscription-directsdk"
+        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
     return (
         recommended_model or SPECIALIST_MODELS.get(resolved_assignee, "gemini-4-hydrogen-high"),
         "antigravity-subscription-directsdk",
@@ -87,17 +88,17 @@ def resolve_task_routing(
 ) -> TaskRoutingResolution:
     """Pure evaluator resolving task assignee, tier, model override, and initial status."""
     comp = dict(complexity)
-    if tier:
-        resolved_tier = tier.strip().lower()
-        comp["tier"] = resolved_tier
-        comp["recommended_model"] = (
-            "gemini-pro-orchestrator-g1-pro" if resolved_tier == "frontier_deep" else "gemini-4-hydrogen-high"
-        )
-
     if assignee and assignee != DEFAULT_ASSIGNEE:
         resolved_assignee = normalize_assignee(assignee)
     else:
         resolved_assignee = normalize_assignee(comp.get("recommended_assignee") or DEFAULT_ASSIGNEE)
+
+    if tier:
+        resolved_tier = tier.strip().lower()
+        comp["tier"] = resolved_tier
+        comp["recommended_model"] = (
+            "gemini-4-argon-high" if resolved_tier == "frontier_deep" else resolve_flash_fast_model(resolved_assignee)
+        )
 
     if comp["tier"] == "human_pairing" and (not assignee or assignee == DEFAULT_ASSIGNEE):
         resolved_assignee = "raymund"
@@ -145,11 +146,11 @@ def evaluate_two_way_recovery(
     max_retries: int,
     err_msg: str,
 ) -> RecoveryEscalationDecision:
-    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Orchestrator) when a verification gate fails."""
+    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Argon) when a verification gate fails."""
     next_assignee = "sindri"
-    model_override = "gemini-pro-orchestrator-g1-pro"
+    model_override = "gemini-4-argon-high"
     provider_override = "antigravity-subscription-directsdk"
-    escalated_from = prev_model if prev_model and prev_model != "gemini-pro-orchestrator-g1-pro" else None
+    escalated_from = prev_model if prev_model and prev_model != "gemini-4-argon-high" else None
     escalation_note = (
         f"\n**Two-Way Recovery Escalation:** Escalated model from `{escalated_from}` to `{model_override}`."
         if escalated_from
@@ -196,9 +197,9 @@ def create_kanban_task(
             "tier": resolved_tier,
             "recommended_assignee": target_role,
             "recommended_model": (
-                "gemini-pro-orchestrator-g1-pro"
+                "gemini-4-argon-high"
                 if resolved_tier == "frontier_deep"
-                else "gemini-4-hydrogen-high"
+                else resolve_flash_fast_model(target_role)
             ),
             "raw_verdict": f"explicit_routing:{target_role}:{resolved_tier}",
             "latency_seconds": 0.0,
@@ -319,7 +320,7 @@ def create_improvement_proposal(
         resolved_target = "vor"
 
     recommended_model = (
-        "gemini-pro-orchestrator-g1-pro"
+        "gemini-4-argon-high"
         if resolved_target == "sindri"
         else SPECIALIST_MODELS.get(resolved_target, "gemini-4-hydrogen-high")
     )
@@ -495,7 +496,7 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
             precomputed_complexity={
                 "tier": "flash_fast",
                 "recommended_assignee": "vor",
-                "recommended_model": "gemini-4-hydrogen-high",
+                "recommended_model": resolve_flash_fast_model("vor"),
                 "raw_verdict": "auto_spawn_session_wrapup",
                 "latency_seconds": 0.0,
             },

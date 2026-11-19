@@ -24,26 +24,27 @@ Bake explicit operational rules into ``_PROMPT_PREAMBLE`` in ``prompt.py``:
 """
 from __future__ import annotations
 
+import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-TARGET = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/prompt.py")
-TARGET_MODELS = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/models.py")
-TARGET_TESTS = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk/tests/test_antigravity_plugin.py")
+DEFAULT_PLUGIN_DIR = Path("/opt/hermes/plugins/model-providers/antigravity-subscription-directsdk")
 MARKER = "# odin-patch: agy prompt preamble enhancements"
-MODELS_MARKER = "# odin-patch: gemini-4-hydrogen and argon catalog aliases"
 TEST_MARKER = "# odin-patch: test_prompt_preamble_operational_rules"
 
 ANCHOR = (
     "    \"- After emitting tool calls, STOP generating immediately. Do NOT generate results, execution output, or commentary after tool calls.\",\n"
     "    \"- If no tool is needed, respond naturally with standard text.\",\n"
+    "    \"- When the user's latest message introduces a new question or task, do NOT continue prior completed tasks or tool loops. Address the user's latest request directly.\",\n"
     ")\n"
 )
 
 INJECTION = (
     "    \"- After emitting tool calls, STOP generating immediately. Do NOT generate results, execution output, or commentary after tool calls.\",\n"
     "    \"- If no tool is needed, respond naturally with standard text.\",\n"
+    "    \"- When the user's latest message introduces a new question or task, do NOT continue prior completed tasks or tool loops. Address the user's latest request directly.\",\n"
     f"    {MARKER}\n"
     "    \"OUTPUT BUDGET & BREVITY:\",\n"
     "    \"- Each response has a hard per-turn completion token limit covering both visible text and hidden reasoning tokens.\",\n"
@@ -80,12 +81,23 @@ TEST_INJECTION = f"""
 """
 
 
-def main() -> int:
-    if not TARGET.is_file():
-        print(f"[odin-patch] ERROR: {TARGET} not found", file=sys.stderr)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Patch agy plugin _PROMPT_PREAMBLE and verify tests.")
+    parser.add_argument(
+        "--plugin-dir",
+        default=str(DEFAULT_PLUGIN_DIR),
+        help="Path to antigravity-subscription-directsdk directory",
+    )
+    args = parser.parse_args(argv)
+    plugin_dir = Path(args.plugin_dir)
+    target = plugin_dir / "prompt.py"
+    target_tests = plugin_dir / "tests" / "test_antigravity_plugin.py"
+
+    if not target.is_file():
+        print(f"[odin-patch] ERROR: {target} not found", file=sys.stderr)
         return 1
 
-    src = TARGET.read_text(encoding="utf-8")
+    src = target.read_text(encoding="utf-8")
     if MARKER in src:
         print("[odin-patch] agy prompt preamble enhancements already applied; skipping prompt.py")
     else:
@@ -94,45 +106,11 @@ def main() -> int:
             return 1
 
         src = src.replace(ANCHOR, INJECTION, 1)
-        TARGET.write_text(src, encoding="utf-8")
-        print(f"[odin-patch] patched {TARGET} (added output budget, tool discipline, Auckland timezone to _PROMPT_PREAMBLE)")
+        target.write_text(src, encoding="utf-8")
+        print(f"[odin-patch] patched {target} (added output budget, tool discipline, Auckland timezone to _PROMPT_PREAMBLE)")
 
-    if TARGET_MODELS.is_file():
-        msrc = TARGET_MODELS.read_text(encoding="utf-8")
-        if MODELS_MARKER not in msrc:
-            old_aliases = (
-                '    "default": "gemini-3.8-flash",\n'
-                '    "flash": "gemini-3.8-flash",\n'
-            )
-            new_aliases = (
-                f"    {MODELS_MARKER}\n"
-                '    "default": "gemini-4-hydrogen-high",\n'
-                '    "hydrogen": "gemini-4-hydrogen-high",\n'
-                '    "gemini-4-hydrogen": "gemini-4-hydrogen-high",\n'
-                '    "argon": "gemini-4-argon-high",\n'
-                '    "gemini-4-argon": "gemini-4-argon-high",\n'
-                '    "orchestrator": "gemini-pro-orchestrator-g1-pro",\n'
-            )
-            if old_aliases in msrc:
-                msrc = msrc.replace(old_aliases, new_aliases, 1)
-            old_suffix_loop = 'for suffix, eff in (("-high", "high"), ("-medium", "medium"), ("-low", "low")):'
-            new_suffix_loop = 'for suffix, eff in (("-xhigh", "xhigh"), ("-high", "high"), ("-medium", "medium"), ("-low", "low")):'
-            if old_suffix_loop in msrc:
-                msrc = msrc.replace(old_suffix_loop, new_suffix_loop, 1)
-            old_return = "    else:\n        return m, effort"
-            new_return = (
-                '    elif m == "gemini-pro-orchestrator-g1-pro":\n'
-                "        return m, None\n"
-                "    else:\n"
-                "        return m, effort"
-            )
-            if old_return in msrc:
-                msrc = msrc.replace(old_return, new_return, 1)
-            TARGET_MODELS.write_text(msrc, encoding="utf-8")
-            print(f"[odin-patch] patched {TARGET_MODELS} (added gemini-4-hydrogen, argon, and xhigh support)")
-
-    if TARGET_TESTS.is_file():
-        tests_src = TARGET_TESTS.read_text(encoding="utf-8")
+    if target_tests.is_file():
+        tests_src = target_tests.read_text(encoding="utf-8")
         if TEST_MARKER in tests_src:
             print("[odin-patch] test_prompt_preamble_operational_rules already present; skipping test injection")
         else:
@@ -141,15 +119,25 @@ def main() -> int:
                 print("[odin-patch] ERROR: if __name__ == '__main__' anchor not found in test_antigravity_plugin.py", file=sys.stderr)
                 return 1
             tests_src = tests_src.replace(main_anchor, TEST_INJECTION + "\n" + main_anchor, 1)
-            TARGET_TESTS.write_text(tests_src, encoding="utf-8")
-            print(f"[odin-patch] added test_prompt_preamble_operational_rules to {TARGET_TESTS}")
+            target_tests.write_text(tests_src, encoding="utf-8")
+            print(f"[odin-patch] added test_prompt_preamble_operational_rules to {target_tests}")
 
         # Run tests to verify all tests pass
         print("[odin-patch] Running test suite to verify patch...")
+        env = os.environ.copy()
+        existing_pp = env.get("PYTHONPATH", "")
+        pp_parts = [str(plugin_dir)]
+        if Path("/opt/hermes").is_dir():
+            pp_parts.append("/opt/hermes")
+        if existing_pp:
+            pp_parts.append(existing_pp)
+        env["PYTHONPATH"] = os.pathsep.join(pp_parts)
         test_run = subprocess.run(
-            [sys.executable, "-m", "unittest", "discover", "-s", str(TARGET_TESTS.parent)],
+            [sys.executable, str(target_tests)],
             capture_output=True,
             text=True,
+            cwd=str(plugin_dir),
+            env=env,
         )
         if test_run.returncode != 0:
             print(f"[odin-patch] ERROR: Tests failed after patching:\n{test_run.stdout}\n{test_run.stderr}", file=sys.stderr)

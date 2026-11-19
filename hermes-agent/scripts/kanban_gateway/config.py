@@ -115,14 +115,21 @@ ASSIGNEE_ALIASES = {
 }
 
 SPECIALIST_MODELS = {
-    "huginn": "gemini-4-hydrogen-high",
-    "sindri": "gemini-pro-orchestrator-g1-pro",
-    "forseti": "gemini-4-hydrogen-high",
-    "vor": "gemini-4-hydrogen-high",
-    "saga": "gemini-4-hydrogen-high",
+    "huginn": "gemini-4-neon-high",
+    "sindri": "gemini-4-argon-high",
+    "forseti": "claude-sonnet-5-5-high",
+    "vor": "claude-sonnet-5-5-high",
+    "saga": "claude-sonnet-5-5-high",
     "swarm-worker": "gemini-4-hydrogen-high",
     "raymund": "human/raymund",
 }
+
+
+def resolve_flash_fast_model(assignee: str) -> str:
+    """Resolves the fast-tier direct model for a specialist, keeping simple Sindri chores on Hydrogen."""
+    if assignee == "sindri":
+        return "gemini-4-hydrogen-high"
+    return SPECIALIST_MODELS.get(assignee, "gemini-4-hydrogen-high")
 
 
 def normalize_assignee(assignee: str | None) -> str:

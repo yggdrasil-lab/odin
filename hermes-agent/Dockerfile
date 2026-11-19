@@ -41,7 +41,7 @@ RUN mkdir -p /opt/agy \
 # time. Model-provider plugins are instead discovered unconditionally from the
 # bundled image path (<repo>/plugins/model-providers/<name>/), so pin-install the
 # plugin there. The sha is the one pinned by the official plugin catalog.
-ARG ANTIGRAVITY_PLUGIN_SHA=d6c8ea5fe45da38abf2e26f30156123a1a3caab6
+ARG ANTIGRAVITY_PLUGIN_SHA=f1c1a8ccc5a560b8d5926e2b7e4b544d272d2dd2
 RUN git clone --quiet https://github.com/soyelmismo/hermes-antigravity-subscription /tmp/agy-plugin \
     && git -C /tmp/agy-plugin checkout --quiet "${ANTIGRAVITY_PLUGIN_SHA}" \
     && mkdir -p /opt/hermes/plugins/model-providers/antigravity-subscription-directsdk \
@@ -69,20 +69,13 @@ RUN git clone --quiet https://github.com/anpicasso/hermes-jev-approvals /tmp/jev
 # See patches/fix_agy_output_cap_detection.py for details. Fails the build if the
 # upstream anchor moves so the fix is never silently dropped.
 #
-# Also patch the Antigravity plugin so worker-mode usage accounting calculates
-# request-scoped token deltas instead of accumulating raw CLI session totals,
-# which otherwise inflates prompt_tokens to >1.6M and forces an auto-reset.
-# See patches/fix_agy_worker_usage_accumulation.py for details.
-#
 # Also patch ContextCompressor to trigger an automated pre-compression wrapup checkpoint
 # that preserves dialogue snapshots, key decisions, and context usage in the Auckland
 # daily Obsidian journal (/app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md).
 # See patches/hook_pre_compress_wrapup.py for details.
 COPY patches/ /tmp/odin-patches/
 RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_worker_usage_accumulation.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/prune_agy_prompt_historical_tools.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_gateway_retry_and_single_query_safety.py \

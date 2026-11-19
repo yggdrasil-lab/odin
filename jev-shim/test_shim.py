@@ -253,7 +253,7 @@ class TestJevShim(unittest.TestCase):
             self.assertTrue(res["actionable"])
             self.assertEqual(res["tier"], "frontier_deep")
             self.assertEqual(res["recommended_assignee"], "sindri")
-            self.assertEqual(res["recommended_model"], "gemini-pro-orchestrator-g1-pro")
+            self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
 
         with patch.object(
             kg_jev,

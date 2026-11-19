@@ -28,6 +28,8 @@ MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
 MODEL_ALIASES = {
     "gemini-4-hydrogen": "gemini-4-hydrogen-high",
     "hydrogen": "gemini-4-hydrogen-high",
+    "gemini-4-neon": "gemini-4-neon-high",
+    "neon": "gemini-4-neon-high",
 }
 
 MIME_EXTENSIONS = {
