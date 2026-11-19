@@ -117,12 +117,12 @@ services:
   agy-vision:
     image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
     user: "1000:1000"
-    entrypoint: ["/opt/hermes/.venv/bin/python", "/usr/local/bin/agy_vision_proxy.py"]
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /tmp/agy-home/.gemini && ln -sfn /agy-auth /tmp/agy-home/.gemini/antigravity-cli && exec /opt/hermes/.venv/bin/python /usr/local/bin/agy_vision_proxy.py"]
     volumes:
-      - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
+      - ${HOST_AGY_CONFIG_DIR}:/agy-auth
     environment:
-      - HOME=/opt/data/home
-      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
+      - HOME=/tmp/agy-home
+      - ANTIGRAVITY_CONFIG_DIR=/tmp/agy-home/.gemini/antigravity-cli
       - API_SERVER_KEY=${API_SERVER_KEY}
       - AGY_VISION_PORT=8643
     networks:
