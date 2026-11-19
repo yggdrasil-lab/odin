@@ -28,6 +28,7 @@ from .config import (
     USER_AGENT,
     logger,
     normalize_assignee,
+    resolve_flash_fast_model,
     resolve_muninn_endpoint,
 )
 
@@ -37,11 +38,11 @@ COMPLEXITY_TIER_QUESTION: Dict[str, Any] = {
     "criteria": {
         "flash_fast": (
             "Routine chores, documentation updates, log/web investigation, biometric/journal entries, "
-            "QA checks, or minor script tweaks. Uses gemini-4-hydrogen-high."
+            "QA checks, or minor script tweaks. Uses specialist fast-tier direct models (Hydrogen / Neon / Claude Sonnet)."
         ),
         "frontier_deep": (
             "Architectural additions, multi-service Docker Swarm compose changes, database migrations, "
-            "security hardening, or complex Forge PR implementation. Uses gemini-pro-orchestrator-g1-pro."
+            "security hardening, or complex Forge PR implementation. Uses gemini-4-argon-high."
         ),
         "human_pairing": (
             "Architectural forks, destructive deletions, subjective product decisions, or fundamental "
@@ -228,9 +229,9 @@ def _resolve_complexity_verdict(content: str, title: str, body: str) -> Complexi
         recommended_assignee = _infer_specialist_from_text(title, body, tier)
 
     if tier == "frontier_deep":
-        recommended_model = "gemini-pro-orchestrator-g1-pro"
+        recommended_model = "gemini-4-argon-high"
     elif tier == "flash_fast":
-        recommended_model = "gemini-4-hydrogen-high"
+        recommended_model = resolve_flash_fast_model(recommended_assignee)
     else:
         recommended_model = SPECIALIST_MODELS.get(recommended_assignee, "gemini-4-hydrogen-high")
 

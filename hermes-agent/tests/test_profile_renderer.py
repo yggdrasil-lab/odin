@@ -20,10 +20,14 @@ class TestProfileRenderer(unittest.TestCase):
         template_path = os.path.join(vault_root, "Forge/odin/config/hermes/config.yaml.template")
         spec = load_roles_spec(roles_path)
 
-        # Verify main coordinator template has 0 MCP servers and lean toolsets
+        # Verify main coordinator template has 0 MCP servers, lean toolsets, and zero orchestrator models
         with open(template_path, "r", encoding="utf-8") as f:
             main_cfg = f.read()
         self.assertIn("mcp_servers: {}", main_cfg)
+        self.assertNotIn("gemini-pro-orchestrator", main_cfg)
+        self.assertIn('model: "gemini-4-hydrogen-medium"', main_cfg)
+        self.assertIn('model: "claude-sonnet-5-5-medium"', main_cfg)
+        self.assertIn('model: "gemini-4-neon-high"', main_cfg)
         self.assertEqual(
             _parse_toolsets(main_cfg),
             {"delegation", "terminal", "file", "memory", "discord", "clarify", "cronjob", "skills"},
@@ -122,10 +126,20 @@ class TestProfileRenderer(unittest.TestCase):
                     self.assertIn("https://kratos.tienzo.net/mcp", cfg_text)
                     self.assertNotIn("  playwright:", cfg_text)
 
+                self.assertNotIn("gemini-pro-orchestrator", cfg_text)
+                aux_block = cfg_text.split("# Fallback chain (main agent loop)", 1)[0].split("auxiliary:", 1)[1]
+                self.assertIn('model: "gemini-4-hydrogen-medium"', aux_block)
+                self.assertIn('model: "claude-sonnet-5-5-medium"', aux_block)
+                self.assertNotIn("gemini-4-argon-high", aux_block)
+
                 if specialist == "sindri":
-                    self.assertIn('default: "gemini-pro-orchestrator-g1-pro"', cfg_text)
+                    self.assertIn('default: "gemini-4-argon-high"', cfg_text)
+                    self.assertIn('model: "gemini-4-neon-high"', cfg_text)
+                    self.assertIn('model: "claude-opus-5-5-high"', cfg_text)
+                elif specialist == "huginn":
+                    self.assertIn('default: "gemini-4-neon-high"', cfg_text)
                 else:
-                    self.assertIn('default: "gemini-4-hydrogen-high"', cfg_text)
+                    self.assertIn('default: "claude-sonnet-5-5-high"', cfg_text)
 
                 # Verify SOUL.md contains pipeline handoff instruction
                 with open(os.path.join(prof_dir, "SOUL.md"), "r", encoding="utf-8") as sf:
@@ -163,6 +177,11 @@ class TestProfileRenderer(unittest.TestCase):
                 skills_source_dir=skills_src,
                 env_vars={"AGENT_MODEL": "gemini-4-hydrogen-high", "DOMAIN_NAME": "tienzo.net"},
             )
+            with open(os.path.join(profiles_dst, "swarm-worker", "config.yaml"), "r", encoding="utf-8") as swf:
+                sw_cfg = swf.read()
+                self.assertIn('default: "gemini-4-hydrogen-high"', sw_cfg)
+                self.assertNotIn("gemini-pro-orchestrator", sw_cfg)
+
             with open(vor_soul, "r", encoding="utf-8") as sf:
                 self.assertIn("# Runtime wrap-up improvement", sf.read())
             self.assertIn("custom/learned-skill", re_rendered["vor"]["linked_skills"])

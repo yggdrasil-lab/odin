@@ -96,26 +96,28 @@ Live model switching via `/model` command in any chat interface.
 
 ### Primary model and fallback (`model:` + `fallback_providers:`)
 
-The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI, and rotates to **DeepSeek through Muninn** when the subscription usage limit is hit. The subscription is a fixed monthly fee, so it is used first and the metered DeepSeek API is only touched once the subscription wall is reached.
+The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI (`antigravity-subscription-directsdk`), and rotates to **DeepSeek through Muninn** when all three flat-rate subscription pools are exhausted. Hermes intentionally uses **direct models** (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `gemini-4-argon-high`, `claude-sonnet-5-5-high`, `claude-opus-5-5-high`) rather than `gemini-pro-orchestrator-*`, because Hermes manages its own `<tool_call>` loop externally and Orchestrator models re-enter Plan Mode on every incoming turn.
 
 ```
-main agent loop → Antigravity subscription (agy CLI, gemini-3.8-flash-high)
-                ↘ quota reached → agy (claude-sonnet-5-5-high)
-                ↘ quota reached → agy (gemini-4-argon-high)
+main agent loop → Antigravity Pool 1 (agy CLI, gemini-4-hydrogen-high)
+                ↘ quota reached → Pool 2 (claude-sonnet-5-5-high)
+                ↘ quota reached → Pool 3 (gemini-4-argon-high)
                 ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a model the `agy` plugin exposes (`gemini-3.8-flash-high`, `claude-sonnet-5-5-high`, `gemini-4-argon-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a direct model exposed by the `agy` plugin (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `claude-sonnet-5-5-high`, `gemini-4-argon-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
-This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly through each subscription pool before finally hitting Muninn.
+This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly through each distinct subscription pool before finally hitting Muninn.
 
-Compression rides the subscription on `gemini-3.8-flash-high` (`auxiliary.compression.provider: antigravity-subscription-directsdk`, fallback to Muninn `compress`), preserving Claude and Argon quotas for agent conversations.
+Compression, memory consolidation, and background review ride medium-effort 5-hour pools first (`gemini-4-hydrogen-medium` -> `claude-sonnet-5-5-medium`), skipping the weekly Argon reserve (`Pool 3`) completely before falling back to Muninn (`compress` / `app-synthesize`).
 
-Memory consolidation and structured fact extraction (Mnemosyne) ride the subscription on `gemini-3.8-flash-high` (`auxiliary.memory.provider: antigravity-subscription-directsdk`), following the exact same fallback chain as the main agent loop (`claude-sonnet-5-5-high` -> `gemini-4-argon-high` -> DeepSeek V4-Flash `agent-loop` via Muninn).
+Specialist profiles (`config/hermes/profiles/roles.json`) balance load across all 3 pools:
+- `sindri` (`frontier_deep`): `gemini-4-argon-high` (Pool 3) -> `gemini-4-neon-high` (Pool 1) -> `claude-opus-5-5-high` (Pool 2) -> Muninn.
+- `huginn` & `delegation`: `gemini-4-neon-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-argon-high` (Pool 3) -> Muninn.
+- `forseti`, `vor`, `saga`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-neon-high`/`gemini-4-hydrogen-high` (Pool 1) -> `gemini-4-argon-high` (Pool 3) -> Muninn.
+- `odin` & `swarm-worker` / `flash_fast` Sindri chores: `gemini-4-hydrogen-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-argon-high` (Pool 3) -> Muninn (with Two-Way Recovery escalating failed verification gates to `sindri` on `gemini-4-argon-high`).
 
-Delegated subagents run on the subscription (`delegation.provider: antigravity-subscription-directsdk`, model `gemini-4-argon-high`), utilizing Gemini 4 Argon for high-reasoning coding and task execution, with fallback (`claude-sonnet-5-5-high` -> `gemini-3.8-flash-high` -> DeepSeek V4-Flash `agent-loop` via Muninn) when subscription quotas are hit. There is deliberately no `GEMINI_API_KEY` dependency anywhere in either chain.
-
-Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's own Gemini 3.8 Flash is a fixed-fee model and is the primary here; the metered Gemini API flash is the one whose quota burned out too fast to be worth a chain slot.
+Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's fixed-fee Gemini, Claude, and Argon pools are exhausted before any metered API is touched.
 
 Two prerequisites, both wired in this repo and easy to break:
 

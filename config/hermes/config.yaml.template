@@ -7,10 +7,10 @@
 # =============================================================================
 model:
   # Default model to use (can be overridden with --model flag).
-  # AGENT_MODEL names a model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-4-hydrogen-high, gemini-4-argon-high, gemini-pro-orchestrator-g1-pro, claude-sonnet-5-5-high) rather than a muninn alias:
-  # the main agent loop runs on the subscription first, because it is a fixed
-  # monthly fee that would otherwise go unused.
+  # AGENT_MODEL names a direct model exposed by the Antigravity subscription plugin
+  # (e.g. gemini-4-hydrogen-high, gemini-4-neon-high, gemini-4-argon-high, claude-sonnet-5-5-high, claude-opus-5-5-high)
+  # rather than a muninn alias. Orchestrator models are intentionally avoided inside Hermes because
+  # external <tool_call> turns trigger Plan-Mode overhead on every step.
   default: "${AGENT_MODEL}"
 
   # Inference provider selection: the bundled Antigravity plugin, which shells
@@ -38,20 +38,16 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression rides distinct flat-rate Antigravity subscription pools first
-    # (Gemini 4 Hydrogen -> Claude Sonnet 5.5 -> Gemini 4 Argon),
-    # falling back to Muninn (compress) only if all subscription pools are exhausted.
+    # Compression rides medium-effort 5h Antigravity subscription pools first
+    # (Gemini 4 Hydrogen Medium -> Claude Sonnet 5.5 Medium), skipping Pool 3 (Argon weekly)
+    # and falling back to Muninn (compress) if both 5h pools are exhausted.
     provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-high"
+    model: "gemini-4-hydrogen-medium"
     context_length: 200000
     timeout: 120
     fallback_providers:
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-high"
-        context_length: 200000
-        timeout: 120
-      - provider: "antigravity-subscription-directsdk"
-        model: "gemini-pro-orchestrator-g1-pro"
+        model: "claude-sonnet-5-5-medium"
         context_length: 200000
         timeout: 120
       - provider: "custom"
@@ -62,17 +58,15 @@ auxiliary:
         timeout: 60
 
   memory:
-    # Mnemosyne memory consolidation and structured fact extraction ride flat-rate
-    # Antigravity subscription pools first, falling back to Muninn app-synthesize (Gemini 2.5 Flash-Lite
-    # -> DeepSeek V4-Flash) only on full subscription quota exhaustion.
+    # Mnemosyne memory consolidation and structured fact extraction ride medium-effort 5h
+    # Antigravity subscription pools first, skipping Pool 3 (Argon weekly) and falling back
+    # to Muninn app-synthesize (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash).
     provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-high"
+    model: "gemini-4-hydrogen-medium"
     timeout: 120
     fallback_chain: &memory_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-high"
-      - provider: "antigravity-subscription-directsdk"
-        model: "gemini-pro-orchestrator-g1-pro"
+        model: "claude-sonnet-5-5-medium"
       - provider: "custom"
         model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
@@ -80,16 +74,13 @@ auxiliary:
     fallback_providers: *memory_fallbacks
 
   background_review:
-    # Background skill reviews rotate through flat-rate Antigravity subscription
-    # pools first, falling back to Muninn app-synthesize (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash)
-    # only if all subscription pools are exhausted.
+    # Background skill reviews rotate through medium-effort 5h Antigravity subscription
+    # pools first, skipping Pool 3 (Argon weekly) and falling back to Muninn app-synthesize.
     provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-high"
+    model: "gemini-4-hydrogen-medium"
     fallback_providers:
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-high"
-      - provider: "antigravity-subscription-directsdk"
-        model: "gemini-pro-orchestrator-g1-pro"
+        model: "claude-sonnet-5-5-medium"
       - provider: "custom"
         model: "app-synthesize"
         base_url: "http://muninn:4000/v1"
@@ -122,7 +113,7 @@ fallback_providers:
   - provider: "antigravity-subscription-directsdk"
     model: "claude-sonnet-5-5-high"
   - provider: "antigravity-subscription-directsdk"
-    model: "gemini-pro-orchestrator-g1-pro"
+    model: "gemini-4-argon-high"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
@@ -132,17 +123,17 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents and complex tasks run on the flat-rate Antigravity subscription
-  # via the agy CLI, starting with Orchestrator (Argon) for high-reasoning agentic coding,
-  # then rotating through Claude Sonnet 5.5 and Gemini 4 Hydrogen before falling back
-  # to DeepSeek on muninn only when all flat-rate pools are exhausted.
+  # Delegated subagents run on the flat-rate Antigravity subscription via agy CLI,
+  # starting with Gemini 4 Neon (Pool 1) for strong reasoning without consuming sindri's
+  # dedicated Argon weekly pool, then rotating through Claude Sonnet 5.5 (Pool 2) and
+  # Gemini 4 Argon (Pool 3) before falling back to DeepSeek on muninn.
   provider: "antigravity-subscription-directsdk"
-  model: "gemini-pro-orchestrator-g1-pro"
+  model: "gemini-4-neon-high"
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
       model: "claude-sonnet-5-5-high"
     - provider: "antigravity-subscription-directsdk"
-      model: "gemini-4-hydrogen-high"
+      model: "gemini-4-argon-high"
     - provider: "custom"
       model: "agent-loop"
       base_url: "http://muninn:4000/v1"

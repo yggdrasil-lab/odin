@@ -69,6 +69,10 @@ class TestAgyVisionProxy(unittest.TestCase):
             '{"merchant": "Costco", "total_amount": 154.93}',
         )
 
+    def test_neon_model_aliases_resolve_to_high(self) -> None:
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-neon"), "gemini-4-neon-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("neon"), "gemini-4-neon-high")
+
 
 if __name__ == "__main__":
     unittest.main()
