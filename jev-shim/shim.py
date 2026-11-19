@@ -38,6 +38,48 @@ logger = logging.getLogger("jev-shim")
 TYPESAFE_ENDPOINT = os.environ.get("TYPESAFE_ENDPOINT", "https://api.typesafe.ai/v1/systemone")
 DEFAULT_MODEL = os.environ.get("TYPESAFE_DEFAULT_MODEL", "jev-latest")
 
+VALID_QUESTION_TYPES = frozenset({"choice", "noul", "score", "box"})
+MAX_CHOICE_OPTIONS = 255
+
+
+class SchemaValidationError(ValueError):
+    """Raised when a Jev System One questions schema fails preflight validation."""
+
+
+class TypeSafeAPIError(RuntimeError):
+    """Raised when the upstream TypeSafe System One API returns a non-2xx HTTP status."""
+
+    def __init__(self, status_code: int, body: str) -> None:
+        self.status_code = status_code
+        self.body = body
+        super().__init__(f"TypeSafe API HTTP {status_code}: {body}")
+
+
+def validate_questions_schema(questions: Dict[str, Any]) -> None:
+    """Validates Jev System One question specs before sending upstream."""
+    if not isinstance(questions, dict) or not questions:
+        raise SchemaValidationError("Questions schema must be a non-empty dictionary.")
+
+    for key, spec in questions.items():
+        if not isinstance(spec, dict):
+            raise SchemaValidationError(f"Question '{key}' specification must be a dictionary.")
+
+        q_type = spec.get("type")
+        if not isinstance(q_type, str) or q_type not in VALID_QUESTION_TYPES:
+            raise SchemaValidationError(
+                f"Unsupported Jev question type '{q_type}' for '{key}'. "
+                f"Must be one of: {', '.join(sorted(VALID_QUESTION_TYPES))}."
+            )
+
+        if q_type == "choice":
+            criteria = spec.get("criteria")
+            if not isinstance(criteria, (dict, list)) or not (1 <= len(criteria) <= MAX_CHOICE_OPTIONS):
+                count = len(criteria) if isinstance(criteria, (dict, list)) else 0
+                raise SchemaValidationError(
+                    f"Choice question '{key}' must define 'criteria' as a non-empty dict or list "
+                    f"with 1 to {MAX_CHOICE_OPTIONS} options (got {type(criteria).__name__} of length {count})."
+                )
+
 
 def call_typesafe_systemone(
     state: str,
@@ -68,7 +110,7 @@ def call_typesafe_systemone(
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         logger.error("TypeSafe HTTP %d: %s", e.code, body)
-        raise RuntimeError(f"TypeSafe API HTTP {e.code}: {body}") from e
+        raise TypeSafeAPIError(e.code, body) from e
     except Exception as e:
         logger.error("TypeSafe connection error: %s", e)
         raise RuntimeError(f"TypeSafe connection error: {e}") from e
@@ -274,16 +316,16 @@ def format_openai_completion(
 class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
     api_key: str = ""
 
+    def _send_json(self, status_code: int, payload: Dict[str, Any]) -> None:
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
+
     def do_GET(self):
         if self.path == "/health" or self.path == "/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "service": "jev-openai-shim"}).encode("utf-8"))
+            self._send_json(200, {"status": "ok", "service": "jev-openai-shim"})
         elif self.path == "/v1/models":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
             models_data = {
                 "object": "list",
                 "data": [
@@ -292,17 +334,14 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
                     {"id": "agent-monitor", "object": "model", "owned_by": "yggdrasil"},
                 ],
             }
-            self.wfile.write(json.dumps(models_data).encode("utf-8"))
+            self._send_json(200, models_data)
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
         if self.path not in ("/v1/chat/completions", "/chat/completions"):
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": f"Endpoint {self.path} not supported"}).encode("utf-8"))
+            self._send_json(404, {"error": f"Endpoint {self.path} not supported"})
             return
 
         content_length = int(self.headers.get("Content-Length", 0))
@@ -311,10 +350,7 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
         try:
             body = json.loads(post_data.decode("utf-8"))
         except Exception as e:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": f"Invalid JSON payload: {e}"}).encode("utf-8"))
+            self._send_json(400, {"error": f"Invalid JSON payload: {e}"})
             return
 
         messages = body.get("messages", [])
@@ -332,16 +368,21 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
                 api_key = extracted
 
         if not api_key:
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "TYPESAFE_API_KEY is not configured on shim or request header"}).encode("utf-8"))
+            self._send_json(401, {"error": "TYPESAFE_API_KEY is not configured on shim or request header"})
             return
 
         state, questions = infer_question_from_messages(messages)
         explicit_questions = _extract_questions_dict(body.get("questions"))
         if explicit_questions:
             questions = explicit_questions
+
+        try:
+            validate_questions_schema(questions)
+        except SchemaValidationError as e:
+            logger.warning("Invalid Jev questions schema: %s", e)
+            self._send_json(400, {"error": str(e)})
+            return
+
         logger.info("Routing request to Jev. Questions: %s", list(questions.keys()))
 
         try:
@@ -353,16 +394,14 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
                 jev_res,
                 response_format=response_format,
             )
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(completion).encode("utf-8"))
+            self._send_json(200, completion)
+        except TypeSafeAPIError as e:
+            status = e.status_code if 400 <= e.status_code < 500 else 502
+            logger.error("TypeSafe API error (returning HTTP %d): %s", status, e)
+            self._send_json(status, {"error": str(e)})
         except Exception as e:
             logger.error("Error processing completion: %s", e)
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            self._send_json(502, {"error": str(e)})
 
 
 def main():
