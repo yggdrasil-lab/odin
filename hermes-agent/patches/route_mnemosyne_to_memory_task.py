@@ -270,12 +270,8 @@ def patch_pm_base_venv_bridge() -> bool:
             return False
         pkg_src = pkg_src.replace(old_stamp, new_stamp, 1)
 
-        old_check = (
-            "            resolved_lock = generation / \"workspace\" / \"uv.lock\"\n"
-            "            environment.check(resolved_lock)\n"
-        )
+        old_check = "            environment.check(resolved_lock)\n"
         new_check = (
-            "            resolved_lock = generation / \"workspace\" / \"uv.lock\"\n"
             "            environment.check(resolved_lock)\n"
             "            from pm.environments import base_venv, site_packages\n"
             "            base_site = site_packages(base_venv(project))\n"
