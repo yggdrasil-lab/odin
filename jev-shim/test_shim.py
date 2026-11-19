@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import http.client
 import http.server
+import io
 import json
 import os
 import sys
 import threading
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -282,6 +284,224 @@ class TestJevShim(unittest.TestCase):
             self.assertFalse(gates["auto_merge_gate"]["auto_merge_eligible"])
             self.assertEqual(gates["friction_gate"]["action"], "propose_review")
             self.assertEqual(gates["friction_assignee"], "vor")
+
+
+class TestJevSchemaValidation(unittest.TestCase):
+    """Tests preflight schema validation and upstream TypeSafe error classification."""
+
+    def test_validate_questions_schema_accepts_all_valid_primitives(self) -> None:
+        questions = {
+            "category": {
+                "type": "choice",
+                "criteria": {"FOOD": "Groceries and dining", "RENT": "Housing"},
+            },
+            "category_list": {
+                "type": "choice",
+                "criteria": ["A", "B"],
+            },
+            "is_subscription": {
+                "type": "noul",
+                "instructions": "True if recurring subscription charge.",
+            },
+            "urgency_score": {
+                "type": "score",
+                "criteria": ["Low", "Medium", "High"],
+            },
+            "receipt_total_box": {
+                "type": "box",
+                "instructions": "Locate the total amount on the receipt.",
+            },
+        }
+        shim.validate_questions_schema(questions)
+
+    def test_validate_questions_schema_accepts_max_choice_options(self) -> None:
+        questions = {
+            "many_choices": {
+                "type": "choice",
+                "criteria": {f"opt_{i}": f"Option {i}" for i in range(shim.MAX_CHOICE_OPTIONS)},
+            }
+        }
+        shim.validate_questions_schema(questions)
+
+    def test_validate_questions_schema_rejects_unsupported_type_naming_key_and_type(self) -> None:
+        questions = {
+            "merchant_tags": {
+                "type": "list",
+                "instructions": "Return a list of tags.",
+            }
+        }
+        with self.assertRaises(shim.SchemaValidationError) as ctx:
+            shim.validate_questions_schema(questions)
+        msg = str(ctx.exception)
+        self.assertIn("merchant_tags", msg)
+        self.assertIn("list", msg)
+
+    def test_validate_questions_schema_rejects_empty_or_missing_choice_criteria(self) -> None:
+        for bad_criteria in ({}, [], None):
+            spec = {"type": "choice"}
+            if bad_criteria is not None:
+                spec["criteria"] = bad_criteria
+            with self.assertRaises(shim.SchemaValidationError) as ctx:
+                shim.validate_questions_schema({"bucket": spec})
+            self.assertIn("bucket", str(ctx.exception))
+
+    def test_validate_questions_schema_rejects_choice_criteria_over_255_options(self) -> None:
+        questions = {
+            "too_many": {
+                "type": "choice",
+                "criteria": {f"opt_{i}": f"Option {i}" for i in range(shim.MAX_CHOICE_OPTIONS + 1)},
+            }
+        }
+        with self.assertRaises(shim.SchemaValidationError) as ctx:
+            shim.validate_questions_schema(questions)
+        msg = str(ctx.exception)
+        self.assertIn("too_many", msg)
+        self.assertIn("255", msg)
+
+    def test_validate_questions_schema_rejects_empty_or_non_dict_inputs(self) -> None:
+        for bad in ({}, None, [], {"q1": "not-a-dict"}):
+            with self.assertRaises(shim.SchemaValidationError):
+                shim.validate_questions_schema(bad)  # type: ignore[arg-type]
+
+    def test_call_typesafe_systemone_raises_typesafe_api_error_on_http_error(self) -> None:
+        http_err = urllib.error.HTTPError(
+            url="https://api.typesafe.ai/v1/systemone",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=io.BytesIO(b'{"detail":{"message":"Invalid request."}}'),
+        )
+        with patch.object(shim.urllib.request, "urlopen", side_effect=http_err):
+            with self.assertRaises(shim.TypeSafeAPIError) as ctx:
+                shim.call_typesafe_systemone(
+                    "state",
+                    {"is_ok": {"type": "noul"}},
+                    "ts-key",
+                )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Invalid request.", ctx.exception.body)
+
+    def test_call_typesafe_systemone_raises_runtime_error_on_network_failure(self) -> None:
+        with patch.object(shim.urllib.request, "urlopen", side_effect=urllib.error.URLError("dns failure")):
+            with self.assertRaises(RuntimeError) as ctx:
+                shim.call_typesafe_systemone(
+                    "state",
+                    {"is_ok": {"type": "noul"}},
+                    "ts-key",
+                )
+        self.assertNotIsInstance(ctx.exception, shim.TypeSafeAPIError)
+
+
+class TestJevOpenAIHandlerValidationAnd4xx(unittest.TestCase):
+    """Tests HTTP 400 schema fail-fast and 4xx/502 forwarding on JevOpenAIHandler."""
+
+    def setUp(self) -> None:
+        shim.JevOpenAIHandler.api_key = "ts-test-key"
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), shim.JevOpenAIHandler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def _post_chat_completion(self, payload: dict) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer dummy",
+                },
+            )
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode("utf-8"))
+            return resp.status, data
+        finally:
+            conn.close()
+
+    def test_invalid_schema_returns_400_without_calling_upstream(self) -> None:
+        schema = {
+            "questions": {
+                "merchant_tags": {
+                    "type": "list",
+                    "instructions": "Extract tags",
+                }
+            }
+        }
+        payload = {
+            "model": "jev-decision",
+            "messages": [
+                {"role": "system", "content": f"```json\n{json.dumps(schema)}\n```"},
+                {"role": "user", "content": "Coffee shop $5.00"},
+            ],
+        }
+        with patch.object(shim, "call_typesafe_systemone") as mock_call:
+            status, data = self._post_chat_completion(payload)
+        self.assertEqual(status, 400)
+        self.assertIn("merchant_tags", data["error"])
+        self.assertIn("list", data["error"])
+        mock_call.assert_not_called()
+
+    def test_upstream_400_and_422_forward_4xx_status(self) -> None:
+        valid_payload = {
+            "model": "jev-decision",
+            "messages": [
+                {"role": "user", "content": "Is this actionable?"},
+            ],
+        }
+        for upstream_code in (400, 422):
+            with self.subTest(upstream_code=upstream_code):
+                err = shim.TypeSafeAPIError(upstream_code, '{"detail":"bad client payload"}')
+                with patch.object(shim, "call_typesafe_systemone", side_effect=err):
+                    status, data = self._post_chat_completion(valid_payload)
+                self.assertEqual(status, upstream_code)
+                self.assertIn(f"HTTP {upstream_code}", data["error"])
+
+    def test_upstream_500_and_runtime_error_return_502(self) -> None:
+        valid_payload = {
+            "model": "jev-decision",
+            "messages": [
+                {"role": "user", "content": "Is this actionable?"},
+            ],
+        }
+        for exc in (
+            shim.TypeSafeAPIError(500, '{"detail":"upstream internal error"}'),
+            RuntimeError("TypeSafe connection error: timed out"),
+        ):
+            with self.subTest(exc=type(exc).__name__):
+                with patch.object(shim, "call_typesafe_systemone", side_effect=exc):
+                    status, data = self._post_chat_completion(valid_payload)
+                self.assertEqual(status, 502)
+                self.assertIn("error", data)
+
+    def test_valid_request_returns_200_openai_completion(self) -> None:
+        schema = {
+            "questions": {
+                "category": {
+                    "type": "choice",
+                    "criteria": {"DINING": "Restaurants and cafes", "GROCERIES": "Supermarkets"},
+                }
+            }
+        }
+        payload = {
+            "model": "jev-decision",
+            "messages": [
+                {"role": "system", "content": f"```json\n{json.dumps(schema)}\n```"},
+                {"role": "user", "content": "Flat white at coffee roaster"},
+            ],
+        }
+        mock_response = {"answers": {"category": {"choice": "DINING", "confidence": 0.96}}}
+        with patch.object(shim, "call_typesafe_systemone", return_value=mock_response) as mock_call:
+            status, data = self._post_chat_completion(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(mock_call.call_count, 1)
+        self.assertEqual(data["object"], "chat.completion")
+        self.assertEqual(data["choices"][0]["message"]["content"], "DINING")
 
 
 if __name__ == "__main__":
