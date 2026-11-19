@@ -67,11 +67,11 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
-  # Vision & receipt parsing tier - Gemini 4 Hydrogen via Huginn Gateway (Antigravity subscription).
+  # Vision & receipt parsing tier - Gemini 4 Hydrogen via stateless agy-vision proxy (Antigravity subscription).
   - model_name: gemini-4-hydrogen
     litellm_params:
       model: openai/gemini-4-hydrogen-high
-      api_base: http://huginn-gateway:8642/v1
+      api_base: http://agy-vision:8643/v1
       api_key: os.environ/API_SERVER_KEY
       timeout: 120
 
