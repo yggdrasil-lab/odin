@@ -114,6 +114,30 @@ services:
       restart_policy:
         condition: on-failure
 
+  agy-vision:
+    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
+    user: "1000:1000"
+    entrypoint: ["/opt/hermes/.venv/bin/python", "/usr/local/bin/agy_vision_proxy.py"]
+    volumes:
+      - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
+    environment:
+      - HOME=/opt/data/home
+      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
+      - API_SERVER_KEY=${API_SERVER_KEY}
+      - AGY_VISION_PORT=8643
+    networks:
+      - internal
+    labels:
+      - "com.docker.compose.project=${STACK_NAME}"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
   open-webui:
 
     image: ghcr.io/open-webui/open-webui:main
