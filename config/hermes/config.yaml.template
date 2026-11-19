@@ -110,6 +110,14 @@ auxiliary:
     key_env: "MUNINN_MASTER_KEY"
     timeout: 30
 
+  vision:
+    # Image analysis (Discord attachments, receipts, screenshots) via Muninn -> agy-vision (Gemini 4 Hydrogen)
+    provider: "custom"
+    model: "gemini-4-hydrogen"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
+    timeout: 90
+
 
 # =============================================================================
 # Fallback chain (main agent loop)
