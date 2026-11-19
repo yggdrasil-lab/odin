@@ -62,6 +62,7 @@ services:
       - LITELLM_SALT_KEY=muninn_salt_secret_key_hash
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - API_SERVER_KEY=${API_SERVER_KEY}
     command: ["--config", "/app/config.yaml"]
     networks:
       - internal
