@@ -27,8 +27,8 @@ model_list:
   # agent-delegate        reasoning tier - Delegation overflow on Gemini 3.8 Flash -> DeepSeek
   # agent-loop-deepseek   safety net     - Direct DeepSeek V4-Flash fallback
   # agent-delegate-deepseek safety net   - Direct DeepSeek V4-Pro fallback
-  # memory-extract        fast tier      - Mnemosyne memory consolidation (Gemini 2.5 Flash-Lite)
-  # compress              fast tier      - Hermes context compression summarizer (Gemini 2.5 Flash-Lite)
+  # memory-extract        fast tier      - Mnemosyne memory consolidation (Gemini 3.5 Flash-Lite)
+  # compress              fast tier      - Hermes context compression summarizer (Gemini 3.5 Flash-Lite)
   # app-synthesize        fast tier      - Homelab app synthesis (Gemini 3.5 Flash-Lite)
   # agent-auto            complexity router (dormant)
 
@@ -59,19 +59,20 @@ model_list:
       timeout: 600
 
   # Fast tier - Mnemosyne memory consolidation.
-  # Routed to Gemini 2.5 Flash-Lite using GEMINI_API_KEY, with fallback to agent-loop-deepseek.
+  # Routed to Gemini 3.5 Flash-Lite using GEMINI_API_KEY, with fallback to agent-loop-deepseek
+  # (Google returns HTTP 404 on retired gemini-2.5-flash-lite for new Google API projects).
   - model_name: memory-extract
     litellm_params:
-      model: &gemini_flash_lite gemini/gemini-2.5-flash-lite
+      model: &gemini_35_flash_lite gemini/gemini-3.5-flash-lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
   # Fast tier - Hermes context compression summarizer.
-  # Routed to Gemini 2.5 Flash-Lite on Google API (1M context, ~2s latency, zero hidden
+  # Routed to Gemini 3.5 Flash-Lite on Google API (1M context, ~2s latency, zero hidden
   # thinking token drain) using GEMINI_API_KEY, with fallback to agent-loop-deepseek.
   - model_name: compress
     litellm_params:
-      model: *gemini_flash_lite
+      model: *gemini_35_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
@@ -80,7 +81,7 @@ model_list:
   # agent-loop-deepseek (DeepSeek V4-Flash).
   - model_name: app-synthesize
     litellm_params:
-      model: &gemini_35_flash_lite gemini/gemini-3.5-flash-lite
+      model: *gemini_35_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
@@ -125,22 +126,24 @@ model_list:
       complexity_router_default_model: agent-loop
 
   # Google Gemini Models (API key read from GEMINI_API_KEY environment variable)
+  # Legacy compatibility alias: Google returns HTTP 404 on gemini-2.5-flash-lite for new Google API projects.
   - model_name: gemini-2.5-flash-lite
     litellm_params:
-      model: *gemini_flash_lite
+      model: *gemini_35_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
-  # Redirected from deprecated gemini-2.5-flash (Dec 1, 2026 shutdown) to Gemini 3.5 Flash-Lite
+  # Legacy compatibility alias redirected from deprecated gemini-2.5-flash (Dec 1, 2026 shutdown) to Gemini 3.5 Flash-Lite
   - model_name: gemini-2.5-flash
     litellm_params:
       model: *gemini_35_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
+  # Legacy compatibility alias: Google returns HTTP 404 on gemini-2.5-pro for new Google API projects.
   - model_name: gemini-2.5-pro
     litellm_params:
-      model: gemini/gemini-2.5-pro
+      model: *gemini_38_flash
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 

@@ -225,7 +225,8 @@ class TestJevShim(unittest.TestCase):
             content = f.read()
 
         self.assertIn("- model_name: app-synthesize", content)
-        self.assertIn("gemini/gemini-2.5-flash-lite", content)
+        self.assertNotIn("gemini/gemini-2.5-flash-lite", content)
+        self.assertNotIn("gemini/gemini-2.5-pro", content)
         self.assertIn("gemini/gemini-3.5-flash-lite", content)
         self.assertIn("gemini/gemini-3.8-flash", content)
         self.assertIn("os.environ/GEMINI_API_KEY", content)
