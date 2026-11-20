@@ -2,7 +2,7 @@
   "coordinator": {
     "id": "odin",
     "title": "Odin (The Allfather - Top-Level Coordinator)",
-    "model": "gemini-4-hydrogen-high",
+    "model": "claude-sonnet-5-5-high",
     "mcps": [],
     "toolsets": [
       "clarify",

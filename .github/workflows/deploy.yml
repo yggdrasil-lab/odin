@@ -12,11 +12,11 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      # Main agent loop runs on the flat-rate Gemini AI Ultra Antigravity subscription first
-      # using direct models (no Orchestrator Plan-Mode overhead): Pool 1 Gemini (Gemini 4
-      # Hydrogen, shared proportionally across Hydrogen/Neon/Carbon/Argon), crossing to
-      # Pool 2 Claude (Claude Sonnet 5.5), and finally DeepSeek via muninn.
-      AGENT_MODEL: gemini-4-hydrogen-high
+      # 3-way balanced AI routing (no Orchestrator Plan-Mode overhead):
+      # Main coordinator runs on Pool 2 Claude (Claude Sonnet 5.5) while subagents/delegates
+      # favor Pool 1 Gemini, crossing to Pool 1 Gemini (Gemini 4 Hydrogen), then Muninn
+      # paid-tier Gemini 3.8 Flash (USD 35/30d budget cap), and finally DeepSeek safety net.
+      AGENT_MODEL: claude-sonnet-5-5-high
       CHAT_MODEL: local-model:latest
     
     steps:
@@ -61,6 +61,7 @@ jobs:
           DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID }}
           DISCORD_CHANNEL_INFO_ID: ${{ vars.DISCORD_CHANNEL_INFO_ID }}
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
         run: |
@@ -72,6 +73,7 @@ jobs:
           [ -z "$DISCORD_USER_ID" ] && MISSING="$MISSING DISCORD_USER_ID"
           [ -z "$DISCORD_CHANNEL_INFO_ID" ] && MISSING="$MISSING DISCORD_CHANNEL_INFO_ID"
           [ -z "$API_SERVER_KEY" ] && MISSING="$MISSING API_SERVER_KEY"
+          [ -z "$GEMINI_API_KEY" ] && MISSING="$MISSING GEMINI_API_KEY"
           [ -z "$GH_TOKEN" ] && MISSING="$MISSING GH_TOKEN"
           [ -z "$KRATOS_MCP_TOKEN" ] && MISSING="$MISSING KRATOS_MCP_TOKEN"
           if [ -n "$MISSING" ]; then

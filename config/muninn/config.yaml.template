@@ -7,10 +7,11 @@ model_list:
       timeout: 1800
       stream_timeout: 1800
 
-  # Role-named DeepSeek aliases (Requires DEEPSEEK_API_KEY env var).
+  # Role-named aliases across Google Gemini API (GEMINI_API_KEY, USD 35/30d cap inside
+  # USD 40/mo Google Developer Program credits) and DeepSeek safety net (DEEPSEEK_API_KEY).
   # Consumers name a ROLE, never an upstream model, so the model behind a role
-  # can be swapped here without touching any consumer. The &flash and &pro
-  # anchors below are the only places an upstream DeepSeek slug appears.
+  # can be swapped here without touching any consumer. The anchors below are the
+  # single places upstream slugs appear.
   # The complexity_router tiers name ALIASES, not upstream slugs: an alias
   # expands to the slug at parse time, which is not a registered model.
   #
@@ -22,27 +23,43 @@ model_list:
   # before repointing: api-docs.deepseek.com/quick_start/pricing and
   # BerriAI/litellm model_prices_and_context_window.json.
   #
-  # agent-loop      fast tier      - Hermes main agent loop (AGENT_MODEL)
-  # agent-delegate  reasoning tier - delegation / coding subagents
-  # memory-extract  fast tier      - Mnemosyne memory consolidation
-  # compress        fast tier      - Hermes context compression summarizer
-  # app-synthesize  fast tier      - Homelab app synthesis (Kratos, Midas/Plutus, Eir)
-  # agent-auto      complexity router (dormant)
+  # agent-loop            fast tier      - Antigravity overflow on Gemini 3.8 Flash -> DeepSeek
+  # agent-delegate        reasoning tier - Delegation overflow on Gemini 3.8 Flash -> DeepSeek
+  # agent-loop-deepseek   safety net     - Direct DeepSeek V4-Flash fallback
+  # agent-delegate-deepseek safety net   - Direct DeepSeek V4-Pro fallback
+  # memory-extract        fast tier      - Mnemosyne memory consolidation (Gemini 2.5 Flash-Lite)
+  # compress              fast tier      - Hermes context compression summarizer (Gemini 2.5 Flash-Lite)
+  # app-synthesize        fast tier      - Homelab app synthesis (Gemini 3.5 Flash-Lite)
+  # agent-auto            complexity router (dormant)
 
-  # Fast tier - Hermes main agent loop.
+  # Fast tier - Antigravity overflow for Hermes main agent loop.
+  # Spends paid-tier Gemini API credits (USD 35/30d budget cap) before falling back to DeepSeek.
   - model_name: agent-loop
+    litellm_params:
+      model: &gemini_38_flash gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 600
+
+  # Reasoning tier - Antigravity overflow for delegation / coding subagents.
+  - model_name: agent-delegate
+    litellm_params:
+      model: *gemini_38_flash
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 600
+
+  # Dedicated DeepSeek safety-net deployments (triggered when Gemini quota or USD 35/30d cap hits).
+  - model_name: agent-loop-deepseek
     litellm_params:
       model: &flash deepseek/deepseek-v4-flash
       timeout: 600
 
-  # Reasoning tier - delegation / coding subagents.
-  - model_name: agent-delegate
+  - model_name: agent-delegate-deepseek
     litellm_params:
       model: &pro deepseek/deepseek-v4-pro
       timeout: 600
 
   # Fast tier - Mnemosyne memory consolidation.
-  # Routed to Gemini 2.5 Flash-Lite using GEMINI_API_KEY, with fallback to agent-loop.
+  # Routed to Gemini 2.5 Flash-Lite using GEMINI_API_KEY, with fallback to agent-loop-deepseek.
   - model_name: memory-extract
     litellm_params:
       model: &gemini_flash_lite gemini/gemini-2.5-flash-lite
@@ -51,7 +68,7 @@ model_list:
 
   # Fast tier - Hermes context compression summarizer.
   # Routed to Gemini 2.5 Flash-Lite on Google API (1M context, ~2s latency, zero hidden
-  # thinking token drain) using GEMINI_API_KEY, with fallback to agent-loop.
+  # thinking token drain) using GEMINI_API_KEY, with fallback to agent-loop-deepseek.
   - model_name: compress
     litellm_params:
       model: *gemini_flash_lite
@@ -59,11 +76,11 @@ model_list:
       timeout: 120
 
   # Fast tier - Homelab app protocol and scenario synthesis (Kratos, Midas/Plutus, Eir).
-  # Backed by Gemini 2.5 Flash-Lite ($0.10/$0.40 per 1M, 15 RPM / 500-1000 RPD on Free Tier)
-  # using GEMINI_API_KEY, with automatic fallback to agent-loop (DeepSeek V4-Flash).
+  # Upgraded to Gemini 3.5 Flash-Lite using GEMINI_API_KEY, with automatic fallback to
+  # agent-loop-deepseek (DeepSeek V4-Flash).
   - model_name: app-synthesize
     litellm_params:
-      model: *gemini_flash_lite
+      model: &gemini_35_flash_lite gemini/gemini-3.5-flash-lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 120
 
@@ -114,9 +131,10 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
+  # Redirected from deprecated gemini-2.5-flash (Dec 1, 2026 shutdown) to Gemini 3.5 Flash-Lite
   - model_name: gemini-2.5-flash
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: *gemini_35_flash_lite
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
@@ -126,23 +144,54 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
       timeout: 600
 
+  - model_name: gemini-3.5-flash-lite
+    litellm_params:
+      model: *gemini_35_flash_lite
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 600
+
+  - model_name: gemini-3.8-flash
+    litellm_params:
+      model: *gemini_38_flash
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 600
+
 litellm_settings:
   fallbacks:
+    - agent-loop:
+        - agent-loop-deepseek
+    - agent-delegate:
+        - agent-delegate-deepseek
     - app-synthesize:
-        - agent-loop
+        - agent-loop-deepseek
     - compress:
-        - agent-loop
+        - agent-loop-deepseek
     - memory-extract:
-        - agent-loop
+        - agent-loop-deepseek
+    - gemini-4-hydrogen:
+        - gemini-3.5-flash-lite
+        - agent-loop-deepseek
 
 router_settings:
+  # Cap Gemini API spend at USD 35/30d inside USD 40 monthly credits before failing over to DeepSeek.
+  provider_budget_config:
+    gemini:
+      budget_limit: 35.0
+      time_period: "30d"
   fallbacks:
+    - agent-loop:
+        - agent-loop-deepseek
+    - agent-delegate:
+        - agent-delegate-deepseek
     - app-synthesize:
-        - agent-loop
+        - agent-loop-deepseek
     - compress:
-        - agent-loop
+        - agent-loop-deepseek
     - memory-extract:
-        - agent-loop
+        - agent-loop-deepseek
+    - gemini-4-hydrogen:
+        - gemini-3.5-flash-lite
+        - agent-loop-deepseek
 
 general_settings:
   store_prompts_in_spend_logs: true
