@@ -127,6 +127,41 @@ def _extract_questions_dict(parsed: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _extract_include_meta(messages: List[Dict[str, str]], body: Dict[str, Any]) -> bool:
+    """Checks top-level request body or embedded JSON prompt schemas for opt-in include_meta."""
+    if isinstance(body, dict) and body.get("include_meta") is True:
+        return True
+    if not isinstance(messages, list):
+        return False
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            continue
+
+        for match in re.finditer(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", content):
+            try:
+                parsed = json.loads(match.group(1))
+                if isinstance(parsed, dict) and parsed.get("include_meta") is True:
+                    return True
+            except Exception:
+                pass
+
+        if msg.get("role", "") == "system":
+            raw_sys = content.strip()
+            if raw_sys.startswith("{") and raw_sys.endswith("}"):
+                try:
+                    parsed = json.loads(raw_sys)
+                    if isinstance(parsed, dict) and parsed.get("include_meta") is True:
+                        return True
+                except Exception:
+                    pass
+
+    return False
+
+
 def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, Dict[str, Any]]:
     """Inspects chat history to assemble state and derive typed decision primitives."""
     system_text = ""
@@ -260,13 +295,16 @@ def format_openai_completion(
     answers: Dict[str, Any],
     raw_response: Dict[str, Any],
     response_format: Optional[Dict[str, Any]] = None,
+    include_meta: bool = False,
 ) -> Dict[str, Any]:
     """Converts Jev answers dictionary into an OpenAI completion envelope.
 
     Single-question requests return a plain string verdict for backwards compatibility,
-    unless response_format={"type": "json_object"} is explicitly requested.
+    unless response_format={"type": "json_object"} or include_meta=True is requested.
     Multi-question requests (len(answers) > 1) return a JSON object mapping each
     question key to its normalized string verdict.
+    When include_meta=True, returns a JSON object containing verdicts plus calibrated
+    _confidence and _question_confidence metadata.
     """
     verdicts: Dict[str, str] = {}
     for key, val in answers.items():
@@ -276,7 +314,29 @@ def format_openai_completion(
 
     force_json = isinstance(response_format, dict) and response_format.get("type") == "json_object"
 
-    if not verdicts:
+    if include_meta:
+        question_confidences: Dict[str, float] = {}
+        for key, val in answers.items():
+            if not isinstance(val, dict):
+                continue
+            if val.get("confidence") is not None:
+                question_confidences[key] = float(val["confidence"])
+            elif "noul" in val and val["noul"] is not None:
+                question_confidences[key] = round(abs(float(val["noul"]) - 0.5) * 2.0, 4)
+
+        overall_conf: Optional[float]
+        if isinstance(raw_response, dict) and raw_response.get("confidence") is not None:
+            overall_conf = float(raw_response["confidence"])
+        elif question_confidences:
+            overall_conf = min(question_confidences.values())
+        else:
+            overall_conf = None
+
+        output: Dict[str, Any] = dict(verdicts)
+        output["_confidence"] = overall_conf
+        output["_question_confidence"] = question_confidences
+        content = json.dumps(output)
+    elif not verdicts:
         content = json.dumps(answers)
     elif len(answers) > 1 or len(verdicts) > 1 or force_json:
         content = json.dumps(verdicts)
@@ -393,6 +453,7 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
                 answers,
                 jev_res,
                 response_format=response_format,
+                include_meta=_extract_include_meta(messages, body),
             )
             self._send_json(200, completion)
         except TypeSafeAPIError as e:
