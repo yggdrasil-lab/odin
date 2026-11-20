@@ -130,6 +130,7 @@ jobs:
           python3 -c "import os; open('config/hermes/config.yaml', 'w').write(os.path.expandvars(open('config/hermes/config.yaml.template').read()))"
           python3 -c "import os; open('config/muninn/config.yaml', 'w').write(os.path.expandvars(open('config/muninn/config.yaml.template').read()))"
           python3 config/hermes/profiles/render_profiles.py --template config/hermes/config.yaml.template --roles config/hermes/profiles/roles.json --output-dir /opt/odin/hermes/profiles --skills-source /opt/odin/hermes/skills --symlink-target-prefix /opt/data/skills
+          export HERMES_CONFIG_SHA="$(cat config/hermes/config.yaml config/hermes/profiles/roles.json | sha256sum | cut -c1-12)"
           
           # Write config files and preserve strict private-node permissions on control sockets/locks/SSH keys
           docker run --rm -v /opt/odin/mnemosyne:/opt/mnemosyne alpine sh -c "chown -R 1000:1000 /opt/mnemosyne && chmod 775 /opt/mnemosyne"
