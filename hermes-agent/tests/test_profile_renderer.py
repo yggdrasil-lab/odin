@@ -21,15 +21,24 @@ class TestProfileRenderer(unittest.TestCase):
         spec = load_roles_spec(roles_path)
 
         # Verify main coordinator template has 0 MCP servers, lean toolsets, and zero orchestrator models
+        self.assertEqual(spec["coordinator"]["model"], "claude-sonnet-5-5-high")
         with open(template_path, "r", encoding="utf-8") as f:
             main_cfg = f.read()
         self.assertIn("mcp_servers: {}", main_cfg)
         self.assertNotIn("gemini-pro-orchestrator", main_cfg)
-        self.assertIn('model: "gemini-4-hydrogen-medium"', main_cfg)
-        self.assertIn('model: "claude-sonnet-5-5-medium"', main_cfg)
+        main_aux_block = main_cfg.split("# Fallback chain (main agent loop)", 1)[0].split("auxiliary:", 1)[1]
+        for expected_aux_model in (
+            "compress",
+            "memory-extract",
+            "app-synthesize",
+            "claude-sonnet-5-5-medium",
+            "gemini-4-hydrogen-medium",
+        ):
+            self.assertIn(f'model: "{expected_aux_model}"', main_aux_block)
+        self.assertNotIn("gemini-4-argon-high", main_aux_block)
         self.assertIn('model: "gemini-4-neon-high"', main_cfg)
         main_fb = main_cfg.split("# Fallback chain (main agent loop)", 1)[1].split("# Delegation Configuration", 1)[0]
-        self.assertEqual(re.findall(r'model:\s*"([^"]+)"', main_fb), ["claude-sonnet-5-5-high", "agent-loop"])
+        self.assertEqual(re.findall(r'model:\s*"([^"]+)"', main_fb), ["gemini-4-hydrogen-high", "agent-loop"])
         deleg_block = main_cfg.split("delegation:", 1)[1].split("# Safety & Approvals", 1)[0]
         self.assertEqual(
             re.findall(r'model:\s*"([^"]+)"', deleg_block),
@@ -91,7 +100,7 @@ class TestProfileRenderer(unittest.TestCase):
                 output_profiles_dir=profiles_dst,
                 skills_source_dir=skills_src,
                 env_vars={
-                    "AGENT_MODEL": "gemini-4-hydrogen-high",
+                    "AGENT_MODEL": "claude-sonnet-5-5-high",
                     "DOMAIN_NAME": "tienzo.net",
                     "KRATOS_MCP_TOKEN": "test-token",
                 },
@@ -135,8 +144,14 @@ class TestProfileRenderer(unittest.TestCase):
 
                 self.assertNotIn("gemini-pro-orchestrator", cfg_text)
                 aux_block = cfg_text.split("# Fallback chain (main agent loop)", 1)[0].split("auxiliary:", 1)[1]
-                self.assertIn('model: "gemini-4-hydrogen-medium"', aux_block)
-                self.assertIn('model: "claude-sonnet-5-5-medium"', aux_block)
+                for expected_aux_model in (
+                    "compress",
+                    "memory-extract",
+                    "app-synthesize",
+                    "claude-sonnet-5-5-medium",
+                    "gemini-4-hydrogen-medium",
+                ):
+                    self.assertIn(f'model: "{expected_aux_model}"', aux_block)
                 self.assertNotIn("gemini-4-argon-high", aux_block)
 
                 expected_models = {
@@ -191,7 +206,7 @@ class TestProfileRenderer(unittest.TestCase):
                 roles_path=roles_path,
                 output_profiles_dir=profiles_dst,
                 skills_source_dir=skills_src,
-                env_vars={"AGENT_MODEL": "gemini-4-hydrogen-high", "DOMAIN_NAME": "tienzo.net"},
+                env_vars={"AGENT_MODEL": "claude-sonnet-5-5-high", "DOMAIN_NAME": "tienzo.net"},
             )
             with open(os.path.join(profiles_dst, "swarm-worker", "config.yaml"), "r", encoding="utf-8") as swf:
                 sw_cfg = swf.read()

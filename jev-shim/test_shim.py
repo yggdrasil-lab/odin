@@ -226,8 +226,13 @@ class TestJevShim(unittest.TestCase):
 
         self.assertIn("- model_name: app-synthesize", content)
         self.assertIn("gemini/gemini-2.5-flash-lite", content)
+        self.assertIn("gemini/gemini-3.5-flash-lite", content)
+        self.assertIn("gemini/gemini-3.8-flash", content)
         self.assertIn("os.environ/GEMINI_API_KEY", content)
         self.assertIn("- model_name: gemini-2.5-flash-lite", content)
+        self.assertIn("- model_name: agent-loop-deepseek", content)
+        self.assertIn("provider_budget_config:", content)
+        self.assertIn("budget_limit: 35.0", content)
         self.assertIn("fallbacks:", content)
         self.assertNotIn("\u2014", content)
         self.assertNotIn("\u2013", content)

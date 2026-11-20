@@ -41,54 +41,54 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression rides medium-effort tiers across both Gemini AI Ultra pools
-    # (Pool 1 Gemini 4 Hydrogen Medium -> Pool 2 Claude Sonnet 5.5 Medium) to minimize
-    # proportional Pool 1 burn, falling back to Muninn (compress) if both pools are exhausted.
-    provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-medium"
-    context_length: 200000
-    timeout: 120
+    # Compression runs primarily on Muninn compress (Gemini 2.5 Flash-Lite, 1M context,
+    # falling back to DeepSeek on Muninn) to offload Pool 1/Pool 2 subscription quotas,
+    # with Antigravity medium-effort tiers (Pool 2 Claude -> Pool 1 Gemini) as fallback.
+    provider: "custom"
+    model: "compress"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
+    context_length: 1048576
+    timeout: 60
     fallback_providers:
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-medium"
         context_length: 200000
         timeout: 120
-      - provider: "custom"
-        model: "compress"
-        base_url: "http://muninn:4000/v1"
-        key_env: "MUNINN_MASTER_KEY"
-        context_length: 1048576
-        timeout: 60
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-hydrogen-medium"
+        context_length: 200000
+        timeout: 120
 
   memory:
-    # Mnemosyne memory consolidation and structured fact extraction ride medium-effort tiers
-    # across both Gemini AI Ultra pools (Pool 1 Hydrogen Medium -> Pool 2 Sonnet Medium) to
-    # minimize proportional Pool 1 burn before falling back to Muninn app-synthesize
-    # (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash).
-    provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-medium"
+    # Mnemosyne memory consolidation and structured fact extraction run primarily on Muninn
+    # memory-extract (Gemini 2.5 Flash-Lite -> DeepSeek), falling back across Antigravity
+    # medium-effort tiers (Pool 2 Claude Sonnet 5.5 Medium -> Pool 1 Gemini 4 Hydrogen Medium).
+    provider: "custom"
+    model: "memory-extract"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
     timeout: 120
     fallback_chain: &memory_fallbacks
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-medium"
-      - provider: "custom"
-        model: "app-synthesize"
-        base_url: "http://muninn:4000/v1"
-        key_env: "MUNINN_MASTER_KEY"
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-hydrogen-medium"
     fallback_providers: *memory_fallbacks
 
   background_review:
-    # Background skill reviews rotate across both Gemini AI Ultra pools at medium effort
-    # (Pool 1 Hydrogen Medium -> Pool 2 Sonnet Medium) before falling back to Muninn app-synthesize.
-    provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-medium"
+    # Background skill reviews run primarily on Muninn app-synthesize (Gemini 3.5 Flash-Lite ->
+    # DeepSeek), falling back across Antigravity medium-effort tiers (Pool 2 Sonnet Medium ->
+    # Pool 1 Hydrogen Medium).
+    provider: "custom"
+    model: "app-synthesize"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
     fallback_providers:
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-medium"
-      - provider: "custom"
-        model: "app-synthesize"
-        base_url: "http://muninn:4000/v1"
-        key_env: "MUNINN_MASTER_KEY"
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-hydrogen-medium"
 
   approval:
     # Fast, low-cost smart command approval using TypeSafe Jev System One decision model.
@@ -109,13 +109,13 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The main conversation loop runs on the flat-rate Gemini AI Ultra Antigravity subscription
-# first, starting on Pool 1 (Gemini 4 Hydrogen), crossing directly to Pool 2
-# (Claude Sonnet 5.5) on quota exhaustion (no redundant intra-pool Gemini fallback),
-# and finally falling back to DeepSeek V4-Flash on muninn when both pools are exhausted.
+# The Claude-primary coordinator runs on Pool 2 (Claude Sonnet 5.5) first,
+# crossing directly to Pool 1 (Gemini 4 Hydrogen) on quota exhaustion (no
+# redundant intra-pool fallback), and finally falling back to agent-loop on
+# muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek V4-Flash).
 fallback_providers:
   - provider: "antigravity-subscription-directsdk"
-    model: "claude-sonnet-5-5-high"
+    model: "gemini-4-hydrogen-high"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
