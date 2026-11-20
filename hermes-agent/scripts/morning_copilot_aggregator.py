@@ -537,6 +537,7 @@ class OdinTelemetry:
     swarm_total_services: int = 0
     swarm_healthy_services: int = 0
     swarm_degraded_services: List[Dict[str, Any]] = field(default_factory=list)
+    overlay_ipam: Optional[Dict[str, Any]] = None
 
 
 def fetch_odin_telemetry(
@@ -553,6 +554,7 @@ def fetch_odin_telemetry(
             swarm_total_services=swarm_audit.get("total_services", 0),
             swarm_healthy_services=swarm_audit.get("healthy_services", 0),
             swarm_degraded_services=swarm_audit.get("degraded_services", []),
+            overlay_ipam=swarm_audit.get("overlay_ipam"),
         )
 
     blocked: List[Dict[str, Any]] = []
@@ -604,6 +606,7 @@ def fetch_odin_telemetry(
         swarm_total_services=swarm_audit.get("total_services", 0),
         swarm_healthy_services=swarm_audit.get("healthy_services", 0),
         swarm_degraded_services=swarm_audit.get("degraded_services", []),
+        overlay_ipam=swarm_audit.get("overlay_ipam"),
     )
 
 
@@ -741,6 +744,26 @@ def generate_executive_markdown(report: MorningCopilotReport, section: str = "al
                 lines.append(f"  - `{ds['name']}` ({ds['replicas']}): {ds.get('task_state', 'degraded')}{err_str}{triage_str}")
         else:
             lines.append(f"- **Swarm Fleet**: 🟢 {odin.swarm_healthy_services}/{odin.swarm_total_services} services healthy (0 degraded).")
+
+    if odin.overlay_ipam:
+        ipam = odin.overlay_ipam
+        net_name = ipam.get("network", "aether-net")
+        in_use = ipam.get("ips_in_use")
+        free = ipam.get("dynamic_ips_available")
+        phantom = ipam.get("phantom_leaked_ips")
+        if ipam.get("degraded"):
+            reason = ipam.get("reason") or "IPAM check failed"
+            if in_use is not None and free is not None and phantom is not None:
+                lines.append(
+                    f"- **🚨 Overlay IPAM Alert (`{net_name}`)**: "
+                    f"{in_use} IPs in use, {free} free (~{phantom} phantom) | {reason}"
+                )
+            else:
+                lines.append(f"- **🚨 Overlay IPAM Alert (`{net_name}`)**: metrics unavailable | {reason}")
+        elif ipam.get("status") == "PASS":
+            lines.append(
+                f"- **Overlay IPAM (`{net_name}`)**: 🟢 {in_use} in use, {free} free (~{phantom} phantom)."
+            )
 
     status_summary = ", ".join(f"{st}: {cnt}" for st, cnt in odin.active_cards_by_status.items()) or "Queue idle"
     lines.append(f"- **Active Cards ({odin.total_active_cards})**: {status_summary}")

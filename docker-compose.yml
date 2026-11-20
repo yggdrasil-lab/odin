@@ -223,6 +223,7 @@ services:
       # of HOME.
       - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
       - AGENT_MODEL=${AGENT_MODEL}
+      - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
       - API_SERVER_ENABLED=true
       - API_SERVER_HOST=0.0.0.0
       - API_SERVER_PORT=8642
@@ -327,6 +328,7 @@ services:
       # /opt/data/home/.gemini/antigravity-cli. Point the override at the mount.
       - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
       - AGENT_MODEL=${AGENT_MODEL}
+      - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
       - HERMES_API_TIMEOUT=1800
       - HERMES_STREAM_READ_TIMEOUT=1800
       - HERMES_STREAM_STALE_TIMEOUT=1800
