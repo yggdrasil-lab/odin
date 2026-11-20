@@ -160,20 +160,14 @@ REAPPEND_INJECTION = (
 
 METHOD_ANCHOR = "    def _assemble_compressed(\n"
 
-CALL_ANCHOR = (
+_CALL_FALLBACK_PREFIX = (
     "        if not summary:\n"
     "            summary = self._fallback_summary_for_window(\n"
     "                telemetry, turns_to_summarize, compress_end - compress_start, feasibility_skip,\n"
     "            )\n"
-    "        # Phase 4: Assemble compressed message list\n"
-    "        compressed = self._assemble_compressed(messages, compress_start, compress_end, scan, summary)\n"
 )
 
-CALL_INJECTION = (
-    "        if not summary:\n"
-    "            summary = self._fallback_summary_for_window(\n"
-    "                telemetry, turns_to_summarize, compress_end - compress_start, feasibility_skip,\n"
-    "            )\n"
+_CALL_WRAPUP_TRY_BLOCK = (
     f"        {MARKER}\n"
     "        try:\n"
     "            self._trigger_odin_pre_compress_wrapup(\n"
@@ -184,9 +178,24 @@ CALL_INJECTION = (
     "            )\n"
     "        except Exception as _wrapup_err:\n"
     "            logger.warning(\"odin-patch: pre-compression wrapup failed: %s\", _wrapup_err, exc_info=True)\n"
+)
+
+_CALL_PHASE4_LEGACY = (
     "        # Phase 4: Assemble compressed message list\n"
     "        compressed = self._assemble_compressed(messages, compress_start, compress_end, scan, summary)\n"
 )
+
+_CALL_PHASE4_V2 = (
+    "        # Phase 4: the summary exists, so archive what the compaction drops or shortens, then assemble.\n"
+    "        messages, pruned_count = self._commit_window(canonical_messages, plan, pruned_count, compress_start, compress_end)\n"
+    "        compressed = self._assemble_with_archive_list(messages, compress_start, compress_end, scan, summary)\n"
+)
+
+CALL_ANCHOR = _CALL_FALLBACK_PREFIX + _CALL_PHASE4_LEGACY
+CALL_INJECTION = _CALL_FALLBACK_PREFIX + _CALL_WRAPUP_TRY_BLOCK + _CALL_PHASE4_LEGACY
+
+CALL_ANCHOR_V2 = _CALL_FALLBACK_PREFIX + _CALL_PHASE4_V2
+CALL_INJECTION_V2 = _CALL_FALLBACK_PREFIX + _CALL_WRAPUP_TRY_BLOCK + _CALL_PHASE4_V2
 
 METHOD_INJECTION = '''    def _trigger_odin_pre_compress_wrapup(
         self,
@@ -609,8 +618,27 @@ def main() -> int:
         else:
             print("[odin-patch] pre-compression wrapup hook already up to date; skipping hook injection")
     else:
-        if CALL_ANCHOR not in src:
+        matched_anchor = None
+        matched_injection = None
+        for call_anchor, call_injection in (
+            (CALL_ANCHOR_V2, CALL_INJECTION_V2),
+            (CALL_ANCHOR, CALL_INJECTION),
+        ):
+            if call_anchor in src:
+                matched_anchor = call_anchor
+                matched_injection = call_injection
+                break
+
+        if matched_anchor is None or matched_injection is None:
             print("[odin-patch] ERROR: CALL_ANCHOR not found in context_compressor.py; upstream changed", file=sys.stderr)
+            return 1
+
+        anchor_count = src.count(matched_anchor)
+        if anchor_count != 1:
+            print(
+                f"[odin-patch] ERROR: expected 1 CALL_ANCHOR match in context_compressor.py, found {anchor_count}",
+                file=sys.stderr,
+            )
             return 1
 
         if METHOD_ANCHOR not in src:
@@ -618,7 +646,7 @@ def main() -> int:
             return 1
 
         # Inject call site
-        src = src.replace(CALL_ANCHOR, CALL_INJECTION, 1)
+        src = src.replace(matched_anchor, matched_injection, 1)
 
         # Inject method
         method_idx = src.find(METHOD_ANCHOR)
