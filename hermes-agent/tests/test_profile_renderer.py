@@ -28,6 +28,13 @@ class TestProfileRenderer(unittest.TestCase):
         self.assertIn('model: "gemini-4-hydrogen-medium"', main_cfg)
         self.assertIn('model: "claude-sonnet-5-5-medium"', main_cfg)
         self.assertIn('model: "gemini-4-neon-high"', main_cfg)
+        main_fb = main_cfg.split("# Fallback chain (main agent loop)", 1)[1].split("# Delegation Configuration", 1)[0]
+        self.assertEqual(re.findall(r'model:\s*"([^"]+)"', main_fb), ["claude-sonnet-5-5-high", "agent-loop"])
+        deleg_block = main_cfg.split("delegation:", 1)[1].split("# Safety & Approvals", 1)[0]
+        self.assertEqual(
+            re.findall(r'model:\s*"([^"]+)"', deleg_block),
+            ["gemini-4-neon-high", "claude-sonnet-5-5-high", "agent-loop"],
+        )
         self.assertEqual(
             _parse_toolsets(main_cfg),
             {"delegation", "terminal", "file", "memory", "discord", "clarify", "cronjob", "skills"},
@@ -132,14 +139,23 @@ class TestProfileRenderer(unittest.TestCase):
                 self.assertIn('model: "claude-sonnet-5-5-medium"', aux_block)
                 self.assertNotIn("gemini-4-argon-high", aux_block)
 
-                if specialist == "sindri":
-                    self.assertIn('default: "gemini-4-argon-high"', cfg_text)
-                    self.assertIn('model: "gemini-4-neon-high"', cfg_text)
-                    self.assertIn('model: "claude-opus-5-5-high"', cfg_text)
-                elif specialist == "huginn":
-                    self.assertIn('default: "gemini-4-neon-high"', cfg_text)
-                else:
-                    self.assertIn('default: "claude-sonnet-5-5-high"', cfg_text)
+                expected_models = {
+                    "sindri": ("gemini-4-argon-high", ["claude-opus-5-5-high", "agent-loop"]),
+                    "huginn": ("gemini-4-neon-high", ["claude-sonnet-5-5-high", "agent-loop"]),
+                    "forseti": ("claude-sonnet-5-5-high", ["gemini-4-neon-high", "agent-loop"]),
+                    "vor": ("claude-sonnet-5-5-high", ["gemini-4-hydrogen-high", "agent-loop"]),
+                    "saga": ("claude-sonnet-5-5-high", ["gemini-4-hydrogen-high", "agent-loop"]),
+                }
+                primary_model, expected_fallbacks = expected_models[specialist]
+                self.assertIn(f'default: "{primary_model}"', cfg_text)
+                fb_block = cfg_text.split("# Fallback chain (main agent loop)", 1)[1].split("# Delegation Configuration", 1)[0]
+                fb_models = re.findall(r'model:\s*"([^"]+)"', fb_block)
+                self.assertEqual(fb_models, expected_fallbacks)
+                if primary_model.startswith("gemini-"):
+                    self.assertFalse(any(m.startswith("gemini-") for m in fb_models))
+                # Ensure no redundant intra-pool Gemini -> Gemini consecutive fallback legs
+                for left, right in zip(fb_models, fb_models[1:]):
+                    self.assertFalse(left.startswith("gemini-") and right.startswith("gemini-"))
 
                 # Verify SOUL.md contains pipeline handoff instruction
                 with open(os.path.join(prof_dir, "SOUL.md"), "r", encoding="utf-8") as sf:
@@ -181,6 +197,8 @@ class TestProfileRenderer(unittest.TestCase):
                 sw_cfg = swf.read()
                 self.assertIn('default: "gemini-4-hydrogen-high"', sw_cfg)
                 self.assertNotIn("gemini-pro-orchestrator", sw_cfg)
+                sw_fb_block = sw_cfg.split("# Fallback chain (main agent loop)", 1)[1].split("# Delegation Configuration", 1)[0]
+                self.assertEqual(re.findall(r'model:\s*"([^"]+)"', sw_fb_block), ["claude-sonnet-5-5-high", "agent-loop"])
 
             with open(vor_soul, "r", encoding="utf-8") as sf:
                 self.assertIn("# Runtime wrap-up improvement", sf.read())

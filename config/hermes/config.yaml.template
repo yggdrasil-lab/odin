@@ -8,9 +8,12 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a direct model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-4-hydrogen-high, gemini-4-neon-high, gemini-4-argon-high, claude-sonnet-5-5-high, claude-opus-5-5-high)
-  # rather than a muninn alias. Orchestrator models are intentionally avoided inside Hermes because
-  # external <tool_call> turns trigger Plan-Mode overhead on every step.
+  # (e.g. gemini-4-hydrogen-high, gemini-4-neon-high, gemini-4-carbon-high, gemini-4-argon-high,
+  # claude-sonnet-5-5-high, claude-opus-5-5-high) rather than a muninn alias.
+  # Under Gemini AI Ultra, Pool 1 (Gemini) is one shared 5h + weekly quota bucket consumed
+  # proportionally to token cost across Hydrogen, Neon, Carbon, and Argon, while Pool 2
+  # (Claude and GPT) is an independent quota bucket. Orchestrator models are intentionally
+  # avoided inside Hermes because external <tool_call> turns trigger Plan-Mode overhead on every step.
   default: "${AGENT_MODEL}"
 
   # Inference provider selection: the bundled Antigravity plugin, which shells
@@ -38,9 +41,9 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression rides medium-effort 5h Antigravity subscription pools first
-    # (Gemini 4 Hydrogen Medium -> Claude Sonnet 5.5 Medium), skipping Pool 3 (Argon weekly)
-    # and falling back to Muninn (compress) if both 5h pools are exhausted.
+    # Compression rides medium-effort tiers across both Gemini AI Ultra pools
+    # (Pool 1 Gemini 4 Hydrogen Medium -> Pool 2 Claude Sonnet 5.5 Medium) to minimize
+    # proportional Pool 1 burn, falling back to Muninn (compress) if both pools are exhausted.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-4-hydrogen-medium"
     context_length: 200000
@@ -58,9 +61,10 @@ auxiliary:
         timeout: 60
 
   memory:
-    # Mnemosyne memory consolidation and structured fact extraction ride medium-effort 5h
-    # Antigravity subscription pools first, skipping Pool 3 (Argon weekly) and falling back
-    # to Muninn app-synthesize (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash).
+    # Mnemosyne memory consolidation and structured fact extraction ride medium-effort tiers
+    # across both Gemini AI Ultra pools (Pool 1 Hydrogen Medium -> Pool 2 Sonnet Medium) to
+    # minimize proportional Pool 1 burn before falling back to Muninn app-synthesize
+    # (Gemini 2.5 Flash-Lite -> DeepSeek V4-Flash).
     provider: "antigravity-subscription-directsdk"
     model: "gemini-4-hydrogen-medium"
     timeout: 120
@@ -74,8 +78,8 @@ auxiliary:
     fallback_providers: *memory_fallbacks
 
   background_review:
-    # Background skill reviews rotate through medium-effort 5h Antigravity subscription
-    # pools first, skipping Pool 3 (Argon weekly) and falling back to Muninn app-synthesize.
+    # Background skill reviews rotate across both Gemini AI Ultra pools at medium effort
+    # (Pool 1 Hydrogen Medium -> Pool 2 Sonnet Medium) before falling back to Muninn app-synthesize.
     provider: "antigravity-subscription-directsdk"
     model: "gemini-4-hydrogen-medium"
     fallback_providers:
@@ -105,15 +109,13 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The main conversation loop runs on the flat-rate Antigravity subscription first,
-# starting with Gemini 4 Hydrogen, rotating across distinct subscription pools
-# (Claude Sonnet 5.5 -> Gemini 4 Argon), and finally to DeepSeek V4-Flash on muninn
-# only when all subscription quotas are exhausted.
+# The main conversation loop runs on the flat-rate Gemini AI Ultra Antigravity subscription
+# first, starting on Pool 1 (Gemini 4 Hydrogen), crossing directly to Pool 2
+# (Claude Sonnet 5.5) on quota exhaustion (no redundant intra-pool Gemini fallback),
+# and finally falling back to DeepSeek V4-Flash on muninn when both pools are exhausted.
 fallback_providers:
   - provider: "antigravity-subscription-directsdk"
     model: "claude-sonnet-5-5-high"
-  - provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-argon-high"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
@@ -123,17 +125,15 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run on the flat-rate Antigravity subscription via agy CLI,
-  # starting with Gemini 4 Neon (Pool 1) for strong reasoning without consuming sindri's
-  # dedicated Argon weekly pool, then rotating through Claude Sonnet 5.5 (Pool 2) and
-  # Gemini 4 Argon (Pool 3) before falling back to DeepSeek on muninn.
+  # Delegated subagents run on the flat-rate Gemini AI Ultra Antigravity subscription via
+  # agy CLI, starting with Pool 1 (Gemini 4 Neon) for strong reasoning, crossing directly
+  # to Pool 2 (Claude Sonnet 5.5) on quota exhaustion (no redundant intra-pool Gemini
+  # fallback), before falling back to DeepSeek on muninn.
   provider: "antigravity-subscription-directsdk"
   model: "gemini-4-neon-high"
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
       model: "claude-sonnet-5-5-high"
-    - provider: "antigravity-subscription-directsdk"
-      model: "gemini-4-argon-high"
     - provider: "custom"
       model: "agent-loop"
       base_url: "http://muninn:4000/v1"
