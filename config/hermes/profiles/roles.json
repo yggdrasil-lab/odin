@@ -71,17 +71,14 @@
         "devops/forge-pr-workflow",
         "devops/forge-repositories",
         "devops/swarm-compose-label-placement",
-        "devops/container-host-data-dir-prep",
         "devops/container-host-access-grants",
         "devops/stack-service-upgrades",
         "devops/authentik",
         "devops/arr-stack-configuration",
         "devops/vpn-routed-services",
-        "devops/mcp-endpoint-hosting",
         "media/romm-ops",
         "software-development/subagent-driven-development",
         "software-development/github",
-        "software-development/greenfield-repo-bootstrap",
         "creative/claude-design",
         "software-development/verify-file-operations"
       ]

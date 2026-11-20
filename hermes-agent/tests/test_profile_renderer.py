@@ -40,7 +40,7 @@ class TestProfileRenderer(unittest.TestCase):
             {"delegation", "terminal", "file", "memory", "discord", "clarify", "cronjob", "skills"},
         )
 
-        # Verify all 53 canonical Hermes skills are mapped across Coordinator + 5 Specialists
+        # Verify all 50 canonical Hermes skills are mapped across Coordinator + 5 Specialists
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_src = os.path.join(tmpdir, "skills_src")
             profiles_dst = os.path.join(tmpdir, "profiles")
@@ -61,7 +61,7 @@ class TestProfileRenderer(unittest.TestCase):
                 with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as sf:
                     sf.write(f"---\nname: {os.path.basename(rel_skill)}\ndescription: test\n---\n")
 
-            self.assertEqual(len(all_canonical_skills), 53)
+            self.assertEqual(len(all_canonical_skills), 50)
 
             # Verify fail-loud invariant on missing mandatory skill when skills_source_dir is mounted
             with self.assertRaises(FileNotFoundError):
@@ -212,6 +212,18 @@ class TestProfileRenderer(unittest.TestCase):
             entrypoint_text = f.read()
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', entrypoint_text)
         self.assertNotIn("ln -sf \"$HOME/.local/bin/agy\" /usr/local/bin/agy", entrypoint_text)
+
+    def test_entrypoint_render_profiles_fail_loud(self):
+        vault_root = os.environ.get("VAULT", "/opt/atlas/vault" if os.path.exists("/opt/atlas/vault") else "/app/vault")
+        entrypoint_path = os.path.join(vault_root, "Forge/odin/hermes-agent/entrypoint.sh")
+        with open(entrypoint_path, "r", encoding="utf-8") as f:
+            entrypoint_text = f.read()
+        self.assertIn("set -e", entrypoint_text)
+        match = re.search(r"render_profiles\.py.*?\n\s*fi\b", entrypoint_text, re.DOTALL)
+        self.assertIsNotNone(match, "render_profiles.py invocation block not found in entrypoint.sh")
+        render_block = match.group(0)
+        self.assertIn("--skills-source /opt/data/skills", render_block)
+        self.assertNotIn("|| true", render_block)
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@ else
       --template /app/vault/Forge/odin/config/hermes/config.yaml.template \
       --roles /app/vault/Forge/odin/config/hermes/profiles/roles.json \
       --output-dir /opt/data/profiles \
-      --skills-source /opt/data/skills || true
+      --skills-source /opt/data/skills
   fi
 
   # 8. Ensure profile directories and control files satisfy Hermes private-node checks
