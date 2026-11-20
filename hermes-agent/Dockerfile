@@ -80,6 +80,7 @@ RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_gateway_retry_and_single_query_safety.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_startup_api_media_sweep_offload.py \
     && rm -rf /tmp/odin-patches
 
 # Copy helper scripts and make them executable in PATH

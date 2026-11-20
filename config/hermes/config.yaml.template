@@ -219,7 +219,11 @@ compression:
   # Number of most-recent messages to always preserve (default: 20)
   protect_last_n: 20
   # Deterministic no-LLM prune of old tool results when the prompt exceeds this many tokens (0 = off).
-  proactive_prune_tokens: 0
+  # Set to 120000: above the normal 60k-105k multi-turn cached working set (so typical turns stay
+  # 100% on the persistent agy worker at 90-97% cache hit with zero extra cache busts), and below
+  # the 160000 hard compaction threshold so long multi-turn sessions strip old prior-turn tool
+  # results and flush hidden agy server-side thinking bloat before hitting full compaction.
+  proactive_prune_tokens: 120000
 
 # =============================================================================
 # Memory Configuration
