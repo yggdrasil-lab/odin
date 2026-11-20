@@ -41,7 +41,7 @@ model:
 # =============================================================================
 auxiliary:
   compression:
-    # Compression runs primarily on Muninn compress (Gemini 2.5 Flash-Lite, 1M context,
+    # Compression runs primarily on Muninn compress (Gemini 3.5 Flash-Lite, 1M context,
     # falling back to DeepSeek on Muninn) to offload Pool 1/Pool 2 subscription quotas,
     # with Antigravity medium-effort tiers (Pool 2 Claude -> Pool 1 Gemini) as fallback.
     provider: "custom"
@@ -62,7 +62,7 @@ auxiliary:
 
   memory:
     # Mnemosyne memory consolidation and structured fact extraction run primarily on Muninn
-    # memory-extract (Gemini 2.5 Flash-Lite -> DeepSeek), falling back across Antigravity
+    # memory-extract (Gemini 3.5 Flash-Lite -> DeepSeek), falling back across Antigravity
     # medium-effort tiers (Pool 2 Claude Sonnet 5.5 Medium -> Pool 1 Gemini 4 Hydrogen Medium).
     provider: "custom"
     model: "memory-extract"
