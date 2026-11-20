@@ -30,6 +30,10 @@ MODEL_ALIASES = {
     "hydrogen": "gemini-4-hydrogen-high",
     "gemini-4-neon": "gemini-4-neon-high",
     "neon": "gemini-4-neon-high",
+    "gemini-4-carbon": "gemini-4-carbon-high",
+    "carbon": "gemini-4-carbon-high",
+    "gemini-4-argon": "gemini-4-argon-high",
+    "argon": "gemini-4-argon-high",
 }
 
 MIME_EXTENSIONS = {

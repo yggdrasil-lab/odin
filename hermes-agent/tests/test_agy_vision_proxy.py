@@ -73,6 +73,12 @@ class TestAgyVisionProxy(unittest.TestCase):
         self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-neon"), "gemini-4-neon-high")
         self.assertEqual(agy_vision_proxy.resolve_agy_model("neon"), "gemini-4-neon-high")
 
+    def test_carbon_and_argon_model_aliases_resolve_to_high(self) -> None:
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-carbon"), "gemini-4-carbon-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("carbon"), "gemini-4-carbon-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-argon"), "gemini-4-argon-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("argon"), "gemini-4-argon-high")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -75,6 +75,7 @@ RUN git clone --quiet https://github.com/anpicasso/hermes-jev-approvals /tmp/jev
 # See patches/hook_pre_compress_wrapup.py for details.
 COPY patches/ /tmp/odin-patches/
 RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_v1029_worker_usage_and_native_tool.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \

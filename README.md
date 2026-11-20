@@ -96,28 +96,28 @@ Live model switching via `/model` command in any chat interface.
 
 ### Primary model and fallback (`model:` + `fallback_providers:`)
 
-The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Google AI Pro) subscription** first, via the official `agy` CLI (`antigravity-subscription-directsdk`), and rotates to **DeepSeek through Muninn** when all three flat-rate subscription pools are exhausted. Hermes intentionally uses **direct models** (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `gemini-4-argon-high`, `claude-sonnet-5-5-high`, `claude-opus-5-5-high`) rather than `gemini-pro-orchestrator-*`, because Hermes manages its own `<tool_call>` loop externally and Orchestrator models re-enter Plan Mode on every incoming turn.
+The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Gemini AI Ultra) subscription** first, via the official `agy` CLI (`antigravity-subscription-directsdk`), and rotates to **DeepSeek through Muninn** when both flat-rate subscription pools are exhausted. Under Gemini AI Ultra, **Pool 1 (Gemini)** is one shared 5h + weekly quota bucket consumed proportionally to token cost across all Gemini models (`gemini-4-hydrogen-*`, `gemini-4-neon-*`, `gemini-4-carbon-*`, `gemini-4-argon-*`, `gemini-3.8-flash-*`), while **Pool 2 (Claude and GPT)** is an independent 5h + weekly quota bucket (`claude-sonnet-5-5-*`, `claude-opus-5-5-*`, `gpt-oss-120b-medium`). Hermes intentionally uses **direct models** rather than `gemini-pro-orchestrator-*`, because Hermes manages its own `<tool_call>` loop externally and Orchestrator models re-enter Plan Mode on every incoming turn.
 
 ```
-main agent loop → Antigravity Pool 1 (agy CLI, gemini-4-hydrogen-high)
-                ↘ quota reached → Pool 2 (claude-sonnet-5-5-high)
-                ↘ quota reached → Pool 3 (gemini-4-argon-high)
-                ↘ usage limit reached → Muninn (custom) → DeepSeek V4-Flash (agent-loop)
+main agent loop -> Antigravity Pool 1 (agy CLI, gemini-4-hydrogen-high)
+                -> quota reached -> Pool 2 (claude-sonnet-5-5-high)
+                -> usage limit reached -> Muninn (custom) -> DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a direct model exposed by the `agy` plugin (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `claude-sonnet-5-5-high`, `gemini-4-argon-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a direct model exposed by the `agy` plugin (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `gemini-4-carbon-high`, `gemini-4-argon-high`, `claude-sonnet-5-5-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
-This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates the chain eagerly through each distinct subscription pool before finally hitting Muninn.
+This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates cross-pool without redundant intra-pool Gemini hops before finally hitting Muninn.
 
-Compression, memory consolidation, and background review ride medium-effort 5-hour pools first (`gemini-4-hydrogen-medium` -> `claude-sonnet-5-5-medium`), skipping the weekly Argon reserve (`Pool 3`) completely before falling back to Muninn (`compress` / `app-synthesize`).
+Compression, memory consolidation, and background review ride medium-effort tiers across both pools (`gemini-4-hydrogen-medium` -> `claude-sonnet-5-5-medium`) to minimize proportional Pool 1 burn before falling back to Muninn (`compress` / `app-synthesize`).
 
-Specialist profiles (`config/hermes/profiles/roles.json`) balance load across all 3 pools:
-- `sindri` (`frontier_deep`): `gemini-4-argon-high` (Pool 3) -> `gemini-4-neon-high` (Pool 1) -> `claude-opus-5-5-high` (Pool 2) -> Muninn.
-- `huginn` & `delegation`: `gemini-4-neon-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-argon-high` (Pool 3) -> Muninn.
-- `forseti`, `vor`, `saga`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-neon-high`/`gemini-4-hydrogen-high` (Pool 1) -> `gemini-4-argon-high` (Pool 3) -> Muninn.
-- `odin` & `swarm-worker` / `flash_fast` Sindri chores: `gemini-4-hydrogen-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-argon-high` (Pool 3) -> Muninn (with Two-Way Recovery escalating failed verification gates to `sindri` on `gemini-4-argon-high`).
+Specialist profiles (`config/hermes/profiles/roles.json`) pair each role with an optimal primary model and a cross-pool fallback:
+- `sindri` (`frontier_deep`): `gemini-4-argon-high` (Pool 1) -> `claude-opus-5-5-high` (Pool 2) -> Muninn (`agent-loop`).
+- `huginn` & `delegation`: `gemini-4-neon-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> Muninn (`agent-loop`).
+- `forseti`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-neon-high` (Pool 1) -> Muninn (`agent-loop`).
+- `vor` & `saga`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-hydrogen-high` (Pool 1) -> Muninn (`agent-loop`).
+- `odin` & `swarm-worker` / `flash_fast` Sindri chores: `gemini-4-hydrogen-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> Muninn (`agent-loop`, with Two-Way Recovery escalating failed verification gates to `sindri` on `gemini-4-argon-high`).
 
-Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). The subscription's fixed-fee Gemini, Claude, and Argon pools are exhausted before any metered API is touched.
+Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). Both fixed-fee Gemini and Claude pools are exhausted before any metered API is touched.
 
 Two prerequisites, both wired in this repo and easy to break:
 
