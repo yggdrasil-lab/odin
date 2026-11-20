@@ -28,7 +28,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
 
   muninn-db:
     image: postgres:16-alpine
@@ -49,7 +49,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
 
   muninn:
     image: ghcr.io/berriai/litellm-database:main-latest
@@ -72,11 +72,12 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.muninn.rule=Host(`muninn.${DOMAIN_NAME}`)"
@@ -112,7 +113,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
 
   agy-vision:
     image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
@@ -136,7 +137,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
 
   open-webui:
 
@@ -174,11 +175,12 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.odin-webui.rule=Host(`odin.${DOMAIN_NAME}`)"
@@ -290,11 +292,12 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         # Router for Huginn API (Port 8642)
@@ -359,11 +362,12 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         # Router for Huginn Dashboard (Port 9119)
@@ -403,11 +407,12 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.mnemosyne-db.rule=Host(`mnemosyne.${DOMAIN_NAME}`)"
@@ -474,7 +479,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 64M
