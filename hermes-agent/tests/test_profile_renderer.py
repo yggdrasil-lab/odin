@@ -4,11 +4,22 @@ import tempfile
 import unittest
 
 
-def _parse_toolsets(cfg_text: str) -> set[str]:
-    m = re.search(r"^platform_toolsets:\s*\n\s+discord:\s*\n((?:\s+-\s+\S+\n)+)", cfg_text, re.MULTILINE)
+def _parse_platform_toolsets(cfg_text: str, platform: str) -> set[str]:
+    section_match = re.search(r"^platform_toolsets:\s*\n((?:  .*\n|\n)+)", cfg_text, re.MULTILINE)
+    if not section_match:
+        return set()
+    block = section_match.group(1)
+    m = re.search(rf"^  {re.escape(platform)}:\s*\n((?:    -\s+\S+\n)+)", block, re.MULTILINE)
     if not m:
         return set()
     return {line.strip().lstrip("- ").strip() for line in m.group(1).strip().splitlines()}
+
+
+def _parse_mnemosyne_tools(cfg_text: str) -> list[str]:
+    m = re.search(r"^    tools:\s*\n((?:      -\s+\S+\n)+)", cfg_text, re.MULTILINE)
+    if not m:
+        return []
+    return [line.strip().lstrip("- ").strip().strip('"') for line in m.group(1).strip().splitlines()]
 
 
 class TestProfileRenderer(unittest.TestCase):
@@ -45,9 +56,31 @@ class TestProfileRenderer(unittest.TestCase):
             ["gemini-4-neon-high", "claude-sonnet-5-5-high", "agent-loop"],
         )
         self.assertEqual(
-            _parse_toolsets(main_cfg),
+            _parse_platform_toolsets(main_cfg, "discord"),
             {"delegation", "terminal", "file", "memory", "discord", "clarify", "cronjob", "skills"},
         )
+        self.assertEqual(
+            _parse_platform_toolsets(main_cfg, "cli"),
+            {"delegation", "terminal", "file", "memory", "cronjob", "skills"},
+        )
+        expected_core_mnemosyne_tools = [
+            "mnemosyne_recall",
+            "mnemosyne_remember",
+            "mnemosyne_get",
+            "mnemosyne_update",
+            "mnemosyne_forget",
+            "mnemosyne_invalidate",
+            "mnemosyne_validate",
+            "mnemosyne_stats",
+        ]
+        self.assertEqual(_parse_mnemosyne_tools(main_cfg), expected_core_mnemosyne_tools)
+        comp_block = main_aux_block.split("memory:", 1)[0]
+        bg_block = main_aux_block.split("background_review:", 1)[1].split("approval:", 1)[0]
+        self.assertIn("fallback_chain:", comp_block)
+        self.assertIn("fallback_providers:", comp_block)
+        self.assertNotIn("context_length: 200000", comp_block)
+        self.assertIn("fallback_chain:", bg_block)
+        self.assertIn("fallback_providers:", bg_block)
 
         # Verify all 50 canonical Hermes skills are mapped across Coordinator + 5 Specialists
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -219,6 +252,60 @@ class TestProfileRenderer(unittest.TestCase):
                 self.assertIn("# Runtime wrap-up improvement", sf.read())
             self.assertIn("custom/learned-skill", re_rendered["vor"]["linked_skills"])
             self.assertFalse(os.path.lexists(os.path.join(vor_custom_dir, "broken-skill")))
+
+    def test_cli_toolsets_mnemosyne_slimming_and_context_ceiling(self):
+        from render_profiles import load_roles_spec, render_profile_config
+
+        vault_root = os.environ.get("VAULT", "/opt/atlas/vault" if os.path.exists("/opt/atlas/vault") else "/app/vault")
+        odin_dir = os.path.join(vault_root, "Forge/odin")
+        roles_path = os.path.join(odin_dir, "config/hermes/profiles/roles.json")
+        template_path = os.path.join(odin_dir, "config/hermes/config.yaml.template")
+        compose_path = os.path.join(odin_dir, "docker-compose.yml")
+        deploy_path = os.path.join(odin_dir, ".github/workflows/deploy.yml")
+
+        spec = load_roles_spec(roles_path)
+        with open(template_path, "r", encoding="utf-8") as tf:
+            template_text = tf.read()
+        env_vars = {"AGENT_MODEL": "claude-sonnet-5-5-high", "DOMAIN_NAME": "example.net", "KRATOS_MCP_TOKEN": "tok"}
+
+        core_tools = [
+            "mnemosyne_recall", "mnemosyne_remember", "mnemosyne_get", "mnemosyne_update",
+            "mnemosyne_forget", "mnemosyne_invalidate", "mnemosyne_validate", "mnemosyne_stats",
+        ]
+        vor_tools = core_tools + [
+            "mnemosyne_sleep", "mnemosyne_diagnose", "mnemosyne_resolve_conflicts", "mnemosyne_persona_promote",
+        ]
+
+        for role_id, role_cfg in spec["roles"].items():
+            rendered = render_profile_config(template_text, role_cfg, env_vars)
+            expected_toolsets = set(role_cfg["toolsets"])
+            discord_ts = _parse_platform_toolsets(rendered, "discord")
+            cli_ts = _parse_platform_toolsets(rendered, "cli")
+            self.assertEqual(discord_ts, expected_toolsets, role_id)
+            self.assertEqual(cli_ts, expected_toolsets, role_id)
+            self.assertNotIn("execute_code", cli_ts)
+            if role_id in ("sindri", "forseti"):
+                self.assertNotIn("memory", discord_ts)
+                self.assertNotIn("memory", cli_ts)
+            if role_id == "vor":
+                self.assertIn("session_search", cli_ts)
+                self.assertEqual(_parse_mnemosyne_tools(rendered), vor_tools)
+            else:
+                self.assertEqual(_parse_mnemosyne_tools(rendered), core_tools)
+            comp_aux = rendered.split("compression:", 1)[1].split("memory:", 1)[0]
+            bg_aux = rendered.split("background_review:", 1)[1].split("approval:", 1)[0]
+            self.assertIn("fallback_chain:", comp_aux)
+            self.assertIn("fallback_chain:", bg_aux)
+
+        with open(deploy_path, "r", encoding="utf-8") as df:
+            self.assertIn("HERMES_ANTIGRAVITY_CONTEXT_LENGTH: 200000", df.read())
+        with open(compose_path, "r", encoding="utf-8") as cf:
+            compose_text = cf.read()
+        self.assertEqual(
+            compose_text.count("HERMES_ANTIGRAVITY_CONTEXT_LENGTH=${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}"),
+            2,
+        )
+        self.assertNotRegex(compose_text, r"\$\{[A-Za-z0-9_]+:-")
 
     def test_entrypoint_nonroot_agy_persistence_hygiene(self):
         vault_root = os.environ.get("VAULT", "/opt/atlas/vault" if os.path.exists("/opt/atlas/vault") else "/app/vault")

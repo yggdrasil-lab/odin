@@ -76,11 +76,13 @@ RUN git clone --quiet https://github.com/anpicasso/hermes-jev-approvals /tmp/jev
 COPY patches/ /tmp/odin-patches/
 RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_v1029_worker_usage_and_native_tool.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_catalog_and_claude55_aliases.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_gateway_retry_and_single_query_safety.py \
     && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_startup_api_media_sweep_offload.py \
+    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_managed_worker_routed_env.py \
     && rm -rf /tmp/odin-patches
 
 # Copy helper scripts and make them executable in PATH

@@ -42,6 +42,7 @@ from kanban_gateway import (
     evaluate_jev_actionability,
     evaluate_task_complexity,
     handoff_kanban_task,
+    link_kanban_tasks,
     list_active_tasks,
     logger,
     post_discord_thread,
@@ -135,6 +136,7 @@ def cmd_triage(args: argparse.Namespace) -> int:
 
 
 def cmd_create(args: argparse.Namespace) -> int:
+    depends_on = list(args.depends_on or []) + list(args.blocked_by or [])
     task_id, thread_id = create_kanban_task(
         args.title,
         args.body,
@@ -142,13 +144,24 @@ def cmd_create(args: argparse.Namespace) -> int:
         assignee=args.assignee,
         tier=args.tier,
         await_approval=args.await_approval,
+        depends_on=depends_on or None,
+        status=args.status,
     )
     print(f"Created task {task_id} with thread ID {thread_id}")
     return 0
 
 
+def cmd_link(args: argparse.Namespace) -> int:
+    res = link_kanban_tasks(args.parent_id, args.child_id)
+    print(json.dumps(res, indent=2))
+    return 0
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    update_task_lifecycle(args.task_id, args.status, args.message)
+    ok = update_task_lifecycle(args.task_id, args.status, args.message, force=args.force)
+    if not ok:
+        sys.stderr.write(f"ERROR: Lifecycle update rejected for {args.task_id} -> '{args.status}'\n")
+        return 1
     print(f"Updated task {args.task_id} to status '{args.status}'")
     return 0
 
@@ -252,6 +265,7 @@ def cmd_list(_args: argparse.Namespace) -> int:
 COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "triage": cmd_triage,
     "create": cmd_create,
+    "link": cmd_link,
     "update": cmd_update,
     "debrief": cmd_debrief,
     "propose": cmd_propose,
@@ -268,10 +282,7 @@ COMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
 }
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Jev Decision Gating & Discord Threaded Kanban Gateway")
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-
+def _add_intake_subparsers(subparsers: argparse._SubParsersAction) -> None:
     p_triage = subparsers.add_parser("triage", help="Triage event with Jev; if actionable, create card + thread")
     p_triage.add_argument("text", help="Event or alert text to evaluate")
     p_triage.add_argument("--title", help="Optional explicit title")
@@ -282,63 +293,38 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--body", required=True, help="Task description")
     p_create.add_argument("--priority", type=int, default=1, help="Task priority (0-3)")
     p_create.add_argument("--assignee", default=DEFAULT_ASSIGNEE, help="Assignee profile")
-    p_create.add_argument(
-        "--tier",
-        choices=["flash_fast", "frontier_deep"],
-        default=None,
-        help="Optional complexity tier override",
-    )
-    p_create.add_argument(
-        "--await-approval",
-        action="store_true",
-        default=False,
-        help="Park task in 'in_review' awaiting operator approval before execution",
-    )
+    p_create.add_argument("--tier", choices=["flash_fast", "frontier_deep"], default=None, help="Optional complexity tier override")
+    p_create.add_argument("--await-approval", action="store_true", default=False, help="Park task in 'in_review' awaiting operator approval before execution")
+    p_create.add_argument("--depends-on", action="append", default=[], dest="depends_on", help="Parent task ID that must finish before this task runs (repeatable)")
+    p_create.add_argument("--blocked-by", action="append", default=[], dest="blocked_by", help="Alias for --depends-on (repeatable)")
+    p_create.add_argument("--status", choices=["todo", "ready", "in_review"], default=None, help="Optional initial status (overridden to 'todo' if any parent is open)")
 
+    p_link = subparsers.add_parser("link", help="Attach a parent -> child dependency edge between tasks")
+    p_link.add_argument("parent_id", help="Parent (blocking) Kanban task ID")
+    p_link.add_argument("child_id", help="Child (dependent) Kanban task ID")
+
+
+def _add_lifecycle_subparsers(subparsers: argparse._SubParsersAction) -> None:
     p_update = subparsers.add_parser("update", help="Update task lifecycle status and notify thread")
     p_update.add_argument("--task-id", required=True, help="Task ID (e.g. kb-a1b2c3d4)")
-    p_update.add_argument(
-        "--status",
-        required=True,
-        choices=["todo", "ready", "in_progress", "in_review", "done", "blocked"],
-    )
+    p_update.add_argument("--status", required=True, choices=["todo", "ready", "in_progress", "in_review", "done", "blocked"])
     p_update.add_argument("--message", required=True, help="Status update or progress message")
+    p_update.add_argument("--force", action="store_true", default=False, help="Force status regression (e.g. done -> in_review)")
 
-    p_debrief = subparsers.add_parser(
-        "debrief",
-        help="Record task debrief/retro and route follow-ups (Tier 2 auto-fix vs Tier 3 #info proposal)",
-    )
+    p_debrief = subparsers.add_parser("debrief", help="Record task debrief/retro and route follow-ups (Tier 2 auto-fix vs Tier 3 #info proposal)")
     p_debrief.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
     p_debrief.add_argument("--summary", required=True, help="Summary of work delivered and testing")
     p_debrief.add_argument("--friction", default="", help="Frictions, tool errors, or failure modes encountered")
     p_debrief.add_argument("--chore-title", default="", help="Optional title for spawned follow-up card")
     p_debrief.add_argument("--pr-url", default="", help="Optional GitHub PR URL requiring review")
-    p_debrief.add_argument(
-        "--auto-fix",
-        action="store_true",
-        default=False,
-        help="Force Tier 2 direct autonomous script fix ('ready') instead of Tier 3 proposal",
-    )
+    p_debrief.add_argument("--auto-fix", action="store_true", default=False, help="Force Tier 2 direct autonomous script fix ('ready') instead of Tier 3 proposal")
 
-    p_handoff = subparsers.add_parser(
-        "handoff",
-        help="Hand off task to another Court of Odin specialist in the pipeline",
-    )
+    p_handoff = subparsers.add_parser("handoff", help="Hand off task to another Court of Odin specialist in the pipeline")
     p_handoff.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
-    p_handoff.add_argument(
-        "--to",
-        required=True,
-        dest="to_assignee",
-        help="Target specialist (huginn, sindri, forseti, vor, saga)",
-    )
+    p_handoff.add_argument("--to", required=True, dest="to_assignee", help="Target specialist (huginn, sindri, forseti, vor, saga)")
     p_handoff.add_argument("--summary", required=True, help="Compact state digest + file/PR paths for next specialist")
     p_handoff.add_argument("--pr-url", default="", help="Optional PR or branch reference")
-    p_handoff.add_argument(
-        "--tier",
-        choices=["flash_fast", "frontier_deep"],
-        default=None,
-        help="Optional complexity tier override for target specialist",
-    )
+    p_handoff.add_argument("--tier", choices=["flash_fast", "frontier_deep"], default=None, help="Optional complexity tier override for target specialist")
 
     p_verify = subparsers.add_parser("verify", help="Evaluate verification gate and trigger state transition")
     p_verify.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
@@ -349,6 +335,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--pr-url", default="", help="Optional PR or branch reference")
     p_verify.add_argument("--max-retries", type=int, default=3, help="Max retry cycles before circuit breaker trips (default: 3)")
 
+
+def _add_ops_and_gate_subparsers(subparsers: argparse._SubParsersAction) -> None:
     p_serve = subparsers.add_parser("serve", help="Run HTTP API server for remote alert ingestion")
     p_serve.add_argument("--host", default="0.0.0.0", help="HTTP server listen host (default: 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8643, help="HTTP server listen port (default: 8643)")
@@ -371,21 +359,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_fgate.add_argument("--text", required=True, help="Friction text")
 
     subparsers.add_parser("list", aliases=["ls"], help="List active Kanban cards and mapped threads")
-
     p_show = subparsers.add_parser("show", help="Inspect a Kanban card and its recent events")
     p_show.add_argument("task_id", help="Kanban Task ID (e.g. kb-a1b2c3d4)")
     p_show.add_argument("--json", action="store_true", help="Output task details as JSON")
 
-    p_propose = subparsers.add_parser(
-        "propose",
-        help="Create a Tier 3 continuous improvement proposal thread in #info (in_review)",
-    )
+    p_propose = subparsers.add_parser("propose", help="Create a Tier 3 continuous improvement proposal thread in #info (in_review)")
     p_propose.add_argument("--title", required=True, help="Short proposal title")
     p_propose.add_argument("--friction", required=True, help="Friction or failure mode observed")
     p_propose.add_argument("--proposal", required=True, help="Proposed skill, script, or rule change specification")
     p_propose.add_argument("--target", default="vor", help="Recommended specialist upon approval (vor or sindri)")
     p_propose.add_argument("--origin-task", default="", help="Optional originating Kanban task ID")
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Jev Decision Gating & Discord Threaded Kanban Gateway")
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    _add_intake_subparsers(subparsers)
+    _add_lifecycle_subparsers(subparsers)
+    _add_ops_and_gate_subparsers(subparsers)
     return parser
 
 
@@ -400,4 +391,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

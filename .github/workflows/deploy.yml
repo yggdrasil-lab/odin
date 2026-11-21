@@ -18,6 +18,7 @@ jobs:
       # paid-tier Gemini 3.8 Flash (USD 35/30d budget cap), and finally DeepSeek safety net.
       AGENT_MODEL: claude-sonnet-5-5-high
       CHAT_MODEL: local-model:latest
+      HERMES_ANTIGRAVITY_CONTEXT_LENGTH: 200000
     
     steps:
       - name: Checkout code

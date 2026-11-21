@@ -204,9 +204,22 @@ def _build_mcp_block(mcps: List[str], env_vars: Dict[str, str]) -> str:
 
 
 def _build_toolsets_block(toolsets: List[str]) -> str:
+    sorted_toolsets = sorted(toolsets)
     lines = ["platform_toolsets:", "  discord:"]
-    for t in sorted(toolsets):
+    for t in sorted_toolsets:
         lines.append(f"    - {t}")
+    lines.append("  cli:")
+    for t in sorted_toolsets:
+        lines.append(f"    - {t}")
+    return "\n".join(lines) + "\n"
+
+
+def _build_mnemosyne_tools_block(tools: Sequence[str]) -> str:
+    if not tools:
+        return "    tools: []\n"
+    lines = ["    tools:"]
+    for tool_name in tools:
+        lines.append(f'      - "{tool_name}"')
     return "\n".join(lines) + "\n"
 
 
@@ -224,6 +237,32 @@ def _build_fallback_block(fallback_models: List[str]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _override_mnemosyne_tools(rendered: str, role_cfg: Dict[str, Any]) -> str:
+    mnemosyne_tools = role_cfg.get("mnemosyne_tools")
+    if mnemosyne_tools is None:
+        return rendered
+    tools_block = _build_mnemosyne_tools_block(mnemosyne_tools)
+    tools_pattern = re.compile(r"^    tools:(?: \[\])?\n(?:      - .*\n)*", re.MULTILINE)
+    updated, replaced_count = tools_pattern.subn(tools_block, rendered, count=1)
+    if replaced_count != 1:
+        raise ValueError("memory.mnemosyne.tools block not found in config template")
+    return updated
+
+
+def _replace_platform_toolsets(rendered: str, role_cfg: Dict[str, Any]) -> str:
+    toolsets_block = _build_toolsets_block(role_cfg.get("toolsets", ["file", "skills", "terminal"]))
+    updated, toolset_count = re.subn(
+        r"^platform_toolsets:.*?(?=^# ===|\Z)",
+        toolsets_block,
+        rendered,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if toolset_count != 1:
+        raise ValueError("platform_toolsets block not found in config template")
+    return updated
 
 
 def render_profile_config(
@@ -259,14 +298,11 @@ def render_profile_config(
         flags=re.MULTILINE | re.DOTALL,
     )
 
-    # 4. Replace platform_toolsets section
-    toolsets_block = _build_toolsets_block(role_cfg.get("toolsets", ["file", "skills", "terminal"]))
-    rendered = re.sub(
-        r"^platform_toolsets:.*\Z",
-        toolsets_block,
-        rendered,
-        flags=re.MULTILINE | re.DOTALL,
-    )
+    # 4. Override memory.mnemosyne.tools when explicitly configured on the role
+    rendered = _override_mnemosyne_tools(rendered, role_cfg)
+
+    # 5. Replace platform_toolsets multi-platform block (discord + cli) cleanly
+    rendered = _replace_platform_toolsets(rendered, role_cfg)
 
     return _expand_env(rendered, env_vars)
 
