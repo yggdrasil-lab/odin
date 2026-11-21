@@ -348,7 +348,9 @@ def render_all_profiles(
             if overwrite_soul or not os.path.exists(soul_dst):
                 gw.copy_file(soul_src, soul_dst)
             if resolved_agy_dir and role_id != "swarm-worker":
-                gw.replace_file_copy(soul_src, os.path.join(resolved_agy_dir, f"{role_id}.md"))
+                agy_dst = os.path.join(resolved_agy_dir, f"{role_id}.md")
+                if overwrite_soul or not os.path.exists(agy_dst):
+                    gw.replace_file_copy(soul_src, agy_dst)
 
         # 3. Provision symlinked skills/
         skills_dst = os.path.join(prof_dir, "skills")
