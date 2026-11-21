@@ -221,10 +221,13 @@ class TestProfileRenderer(unittest.TestCase):
                 self.assertEqual(len(linked), len(expected_skills))
 
             # Verify non-destructive behavior on re-render:
-            # 1. Runtime edits to SOUL.md survive re-render
+            # 1. Runtime edits to SOUL.md and existing Vault agent definitions survive re-render
             vor_soul = os.path.join(profiles_dst, "vor", "SOUL.md")
             with open(vor_soul, "a", encoding="utf-8") as sf:
                 sf.write("\n# Runtime wrap-up improvement\n")
+            agy_sindri_md = os.path.join(agy_agents_dst, "sindri.md")
+            with open(agy_sindri_md, "a", encoding="utf-8") as af:
+                af.write("\n# Vault canonical agent preservation check\n")
 
             # 2. Newly added valid skill symlink survives re-render, while broken symlink is pruned
             extra_skill_src = os.path.join(skills_src, "custom", "learned-skill")
@@ -240,6 +243,7 @@ class TestProfileRenderer(unittest.TestCase):
                 output_profiles_dir=profiles_dst,
                 skills_source_dir=skills_src,
                 env_vars={"AGENT_MODEL": "claude-sonnet-5-5-high", "DOMAIN_NAME": "tienzo.net"},
+                antigravity_agents_dir=agy_agents_dst,
             )
             with open(os.path.join(profiles_dst, "swarm-worker", "config.yaml"), "r", encoding="utf-8") as swf:
                 sw_cfg = swf.read()
@@ -250,6 +254,8 @@ class TestProfileRenderer(unittest.TestCase):
 
             with open(vor_soul, "r", encoding="utf-8") as sf:
                 self.assertIn("# Runtime wrap-up improvement", sf.read())
+            with open(agy_sindri_md, "r", encoding="utf-8") as af:
+                self.assertIn("# Vault canonical agent preservation check", af.read())
             self.assertIn("custom/learned-skill", re_rendered["vor"]["linked_skills"])
             self.assertFalse(os.path.lexists(os.path.join(vor_custom_dir, "broken-skill")))
 
