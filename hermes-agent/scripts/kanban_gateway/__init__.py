@@ -28,6 +28,8 @@ from .discord import (
     post_thread_lifecycle_update,
 )
 from .engine import (
+    ALLOWED_CREATE_STATUSES,
+    ALLOWED_TASK_OWNERS,
     create_improvement_proposal,
     create_kanban_task,
     handoff_kanban_task,
@@ -54,6 +56,8 @@ from .server import (
 )
 
 __all__ = [
+    "ALLOWED_CREATE_STATUSES",
+    "ALLOWED_TASK_OWNERS",
     "DEFAULT_ASSIGNEE",
     "DISCORD_CHANNEL_ID",
     "DISCORD_USER_ID",

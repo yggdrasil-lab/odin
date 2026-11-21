@@ -174,7 +174,8 @@ def evaluate_two_way_recovery(
     )
 
 
-ALLOWED_CREATE_STATUSES: Tuple[str, ...] = ("todo", "ready", "in_review")
+ALLOWED_TASK_OWNERS: Tuple[str, ...] = ("hermes", "ide")
+ALLOWED_CREATE_STATUSES: Tuple[str, ...] = ("todo", "ready", "in_progress", "in_review")
 TERMINAL_DEPENDENCY_STATUSES: Tuple[str, ...] = ("done", "archived")
 ACTIVE_RUNNING_STATUSES: Tuple[str, ...] = ("running", "in_progress")
 _KB_PREFIX_RE = re.compile(r"^(?:\[kb-[0-9a-f]+\]\s*)+", re.IGNORECASE)
@@ -185,6 +186,28 @@ _WRAPUP_SKIP_SUBSTRINGS: Tuple[str, ...] = (
     "proposal:",
     "[auto-fix]",
 )
+
+
+def validate_task_owner(owner: str) -> str:
+    """Normalizes and validates task creation owner against ALLOWED_TASK_OWNERS."""
+    if not isinstance(owner, str):
+        raise ValueError(f"Invalid task owner {owner!r}. Allowed: {', '.join(ALLOWED_TASK_OWNERS)}")
+    cleaned = owner.strip().lower()
+    if cleaned not in ALLOWED_TASK_OWNERS:
+        raise ValueError(f"Invalid task owner {owner!r}. Allowed: {', '.join(ALLOWED_TASK_OWNERS)}")
+    return cleaned
+
+
+def validate_create_status(status: Optional[str]) -> Optional[str]:
+    """Normalizes and validates optional creation status against ALLOWED_CREATE_STATUSES."""
+    if status is None:
+        return None
+    if not isinstance(status, str):
+        raise ValueError(f"Invalid initial status {status!r}; expected one of {ALLOWED_CREATE_STATUSES}")
+    cleaned = status.strip().lower()
+    if cleaned not in ALLOWED_CREATE_STATUSES:
+        raise ValueError(f"Invalid initial status '{status}'; expected one of {ALLOWED_CREATE_STATUSES}")
+    return cleaned
 
 
 def _strip_kb_prefix(title: str) -> str:
@@ -206,14 +229,24 @@ def _compute_initial_task_status(
     await_approval: bool,
     open_parents: Sequence[str],
     explicit_status: Optional[str],
+    owner: str = "hermes",
 ) -> str:
-    if explicit_status is not None and explicit_status not in ALLOWED_CREATE_STATUSES:
-        raise ValueError(f"Invalid initial status '{explicit_status}'; expected one of {ALLOWED_CREATE_STATUSES}")
+    """Resolves initial task status from approval gate, dependencies, explicit status, and owner.
+
+    Never default parentless IDE cards to 'todo' because Hermes recompute_ready
+    auto-promotes parentless 'todo' tasks into 'ready' on the next tick.
+    """
+    normalized_owner = validate_task_owner(owner)
+    clean_status = validate_create_status(explicit_status)
     if await_approval:
         return "in_review"
     if open_parents:
         return "todo"
-    return explicit_status or "ready"
+    if clean_status is not None:
+        return clean_status
+    if normalized_owner == "ide":
+        return "in_progress"
+    return "ready"
 
 
 def _ensure_task_links_table(conn: sqlite3.Connection) -> None:
@@ -331,16 +364,26 @@ def _resolve_create_routing(
     )
 
 
+def _format_create_status_badge(
+    initial_status: str, owner: str = "hermes", await_approval: bool = False,
+) -> str:
+    if initial_status == "in_review":
+        return "`IN_REVIEW (AWAITING APPROVAL)`" if await_approval else "`IN_REVIEW`"
+    if initial_status == "in_progress":
+        return "`IN_PROGRESS` (IDE-Owned)" if owner == "ide" else "`IN_PROGRESS`"
+    if initial_status == "todo":
+        return "`TODO (WAITING ON DEPENDENCY)`"
+    if initial_status == "ready":
+        return "`READY`"
+    return f"`{initial_status.upper()}`"
+
+
 def _build_create_embed_fields(
     initial_status: str, priority: int, resolved_assignee: str,
     complexity: Dict[str, Any], model_override: Optional[str],
+    owner: str = "hermes", await_approval: bool = False,
 ) -> list[Dict[str, Any]]:
-    badge_map = {
-        "in_review": "`IN_REVIEW (AWAITING APPROVAL)`",
-        "todo": "`TODO (WAITING ON DEPENDENCY)`",
-        "ready": "`READY`",
-    }
-    status_badge = badge_map.get(initial_status, f"`{initial_status.upper()}`")
+    status_badge = _format_create_status_badge(initial_status, owner=owner, await_approval=await_approval)
     model_label = model_override or complexity.get("recommended_model")
     return [
         {"name": "Status", "value": status_badge, "inline": True},
@@ -377,10 +420,14 @@ def _provision_create_thread(
     task_id: str, full_title: str, final_body: str, initial_status: str,
     priority: int, resolved_assignee: str, complexity: Dict[str, Any],
     model_override: Optional[str], now: int,
+    owner: str = "hermes", await_approval: bool = False,
 ) -> Optional[str]:
     if not (DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID):
         return None
-    fields = _build_create_embed_fields(initial_status, priority, resolved_assignee, complexity, model_override)
+    fields = _build_create_embed_fields(
+        initial_status, priority, resolved_assignee, complexity, model_override,
+        owner=owner, await_approval=await_approval,
+    )
     try:
         thread_id = post_discord_thread(
             title=full_title, thread_name=full_title, description=final_body, fields=fields,
@@ -396,21 +443,23 @@ def _insert_task_on_conn(
     conn: sqlite3.Connection, *, task_id: str, full_title: str, final_body: str,
     routing: TaskRoutingResolution, initial_status: str, priority: int,
     workspace_kind: str, await_approval: bool, parent_ids: Tuple[str, ...],
-    open_parents: list[str], now: int,
+    open_parents: list[str], now: int, owner: str = "hermes",
 ) -> None:
+    created_by = "ide" if owner == "ide" else "jev-gateway"
+    started_at = now if initial_status == "in_progress" else None
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO tasks (id, title, body, assignee, status, priority, created_by, "
-        "created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences, "
-        "model_override, provider_override) VALUES (?, ?, ?, ?, ?, ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)",
+        "created_at, started_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences, "
+        "model_override, provider_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)",
         (
             task_id, full_title, final_body, routing.resolved_assignee, initial_status,
-            priority, now, workspace_kind, routing.model_override, routing.provider_override,
+            priority, created_by, now, started_at, workspace_kind, routing.model_override, routing.provider_override,
         ),
     )
     created_payload: Dict[str, Any] = {
-        "source": "jev-gateway", "title": full_title, "complexity": routing.complexity,
-        "await_approval": await_approval, "initial_status": initial_status,
+        "source": "jev-gateway", "owner": owner, "title": full_title,
+        "complexity": routing.complexity, "await_approval": await_approval, "initial_status": initial_status,
     }
     if parent_ids:
         created_payload["depends_on"] = list(parent_ids)
@@ -424,7 +473,7 @@ def _insert_task_on_conn(
 
 def _persist_new_task(
     *, task_id: str, full_title: str, final_body: str, routing: TaskRoutingResolution,
-    priority: int, workspace_kind: str, await_approval: bool,
+    priority: int, workspace_kind: str, await_approval: bool, owner: str,
     parent_ids: Tuple[str, ...], explicit_status: Optional[str], now: int,
 ) -> str:
     conn = sqlite3.connect(KANBAN_DB_PATH, timeout=10.0)
@@ -437,11 +486,11 @@ def _persist_new_task(
         if missing:
             raise ValueError(f"Unknown dependency parent task(s): {', '.join(missing)}")
         open_parents = [pid for pid in parent_ids if parent_statuses[pid] not in TERMINAL_DEPENDENCY_STATUSES]
-        initial_status = _compute_initial_task_status(await_approval, open_parents, explicit_status)
+        initial_status = _compute_initial_task_status(await_approval, open_parents, explicit_status, owner=owner)
         _insert_task_on_conn(
             conn, task_id=task_id, full_title=full_title, final_body=final_body, routing=routing,
             initial_status=initial_status, priority=priority, workspace_kind=workspace_kind,
-            await_approval=await_approval, parent_ids=parent_ids, open_parents=open_parents, now=now,
+            await_approval=await_approval, owner=owner, parent_ids=parent_ids, open_parents=open_parents, now=now,
         )
         conn.commit()
         return initial_status
@@ -457,12 +506,17 @@ def create_kanban_task(
     workspace_kind: str = "scratch", notify_discord: bool = True,
     precomputed_complexity: Optional[Dict[str, Any]] = None, tier: Optional[str] = None,
     await_approval: bool = False, depends_on: Optional[Sequence[str]] = None,
-    status: Optional[str] = None,
+    owner: str = "hermes", status: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Inserts a new task into kanban.db atomically and provisions its Discord thread subscription."""
+    """Inserts a new task into kanban.db atomically and provisions its Discord thread subscription.
+
+    IDE-owned tasks default to 'in_progress' (excluded from Hermes worker daemon
+    polling, reapers, and concurrency caps; never default parentless IDE cards to
+    'todo' because Hermes recompute_ready auto-promotes parentless 'todo' -> 'ready').
+    """
+    normalized_owner = validate_task_owner(owner)
+    explicit_status = validate_create_status(status)
     parent_ids = _normalize_parent_ids(depends_on)
-    if status is not None and status not in ALLOWED_CREATE_STATUSES:
-        raise ValueError(f"Invalid initial status '{status}'; expected one of {ALLOWED_CREATE_STATUSES}")
     routing = _resolve_create_routing(title, body, assignee, precomputed_complexity, tier, await_approval)
     short_id = uuid.uuid4().hex[:8]
     task_id = f"kb-{short_id}"
@@ -474,12 +528,13 @@ def create_kanban_task(
     initial_status = _persist_new_task(
         task_id=task_id, full_title=full_title, final_body=final_body, routing=routing,
         priority=priority, workspace_kind=workspace_kind, await_approval=await_approval,
-        parent_ids=parent_ids, explicit_status=status, now=now,
+        owner=normalized_owner, parent_ids=parent_ids, explicit_status=explicit_status, now=now,
     )
     thread_id = (
         _provision_create_thread(
             task_id, full_title, final_body, initial_status, priority,
             routing.resolved_assignee, routing.complexity, routing.model_override, now,
+            owner=normalized_owner, await_approval=await_approval,
         )
         if notify_discord else None
     )
@@ -1127,24 +1182,32 @@ def verify_pipeline_stage(
             }
 
 
+@dataclass(frozen=True)
+class _LifecycleUpdateResult:
+    ok: bool
+    changed: bool
+    thread_id: Optional[str]
+    task_title: str
+    created_by: str
+
+
 def _commit_lifecycle_update(
     task_id: str, canonical_status: str, new_status: str, message: str, force: bool,
-) -> Tuple[bool, bool, Optional[str], str]:
+) -> _LifecycleUpdateResult:
     conn = sqlite3.connect(KANBAN_DB_PATH)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT status, title FROM tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
+        row = cursor.execute("SELECT status, title, created_by FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             logger.warning("Task %s not found in kanban database", task_id)
-            return False, False, None, ""
-        current_status, task_title = row[0], (row[1] if len(row) > 1 and row[1] else "")
+            return _LifecycleUpdateResult(False, False, None, "", "")
+        current_status, task_title, created_by = row[0], (row[1] or ""), (row[2] or "")
         if current_status == canonical_status:
             logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
-            return True, False, None, task_title
+            return _LifecycleUpdateResult(True, False, None, task_title, created_by)
         if current_status == "done" and canonical_status == "in_review" and not force:
             logger.warning("Refusing status regression 'done' -> 'in_review' for task %s (pass force=True to override).", task_id)
-            return False, False, None, task_title
+            return _LifecycleUpdateResult(False, False, None, task_title, created_by)
         now = int(time.time())
         extra = ", started_at = ?" if canonical_status in ("running", "in_progress") else (", completed_at = ?" if canonical_status == "done" else "")
         params = [canonical_status, now, task_id] if extra else [canonical_status, task_id]
@@ -1155,7 +1218,7 @@ def _commit_lifecycle_update(
         )
         thread_id = _fetch_discord_thread_id(cursor, task_id)
         conn.commit()
-        return True, True, thread_id, task_title
+        return _LifecycleUpdateResult(True, True, thread_id, task_title, created_by)
     finally:
         conn.close()
 
@@ -1163,19 +1226,25 @@ def _commit_lifecycle_update(
 def update_task_lifecycle(task_id: str, new_status: str, message: str, force: bool = False) -> bool:
     """Updates task status in kanban.db and notifies its assigned Discord thread."""
     canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())
-    ok, changed, thread_id, task_title = _commit_lifecycle_update(task_id, canonical_status, new_status, message, force)
-    if not ok:
+    res = _commit_lifecycle_update(task_id, canonical_status, new_status, message, force)
+    if not res.ok:
         return False
-    if not changed:
+    if not res.changed:
         return True
-    if thread_id:
+    if res.thread_id:
         fields = [
             {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
             {"name": "New Status", "value": f"`{new_status.upper()}`", "inline": True},
         ]
-        post_thread_lifecycle_update(thread_id, new_status, message, fields=fields)
+        post_thread_lifecycle_update(res.thread_id, new_status, message, fields=fields)
     if canonical_status == "done":
-        trigger_session_wrapup_chore(task_id, task_title, thread_id)
+        if res.created_by.strip().lower() == "ide":
+            logger.info(
+                "Skipping background Hermes wrap-up chore for IDE-owned task %s; wrap-up runs interactively in IDE.",
+                task_id,
+            )
+        else:
+            trigger_session_wrapup_chore(task_id, res.task_title, res.thread_id)
     return True
 
 
