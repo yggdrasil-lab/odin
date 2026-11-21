@@ -2,12 +2,11 @@
 """test_morning_copilot_aggregator.py - Comprehensive Unit Tests for Morning Copilot Aggregator."""
 
 import os
-import sqlite3
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import date
+from unittest.mock import patch
 
 # Add scripts directory to path
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -192,34 +191,28 @@ class TestMorningCopilotAggregator(unittest.TestCase):
         self.assertEqual(cd.due_date, "2026-11-12")
         self.assertEqual(cd.days_remaining, 3)
 
-    def test_fetch_odin_telemetry_with_sqlite(self):
-        """Verify Odin Kanban database inspection for blocked cards and Iris alerts."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-            db_path = tf.name
-
-        try:
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "CREATE TABLE tasks ("
-                "id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, "
-                "created_by TEXT, created_at INTEGER)"
-            )
-            now_ts = int(datetime.now(timezone.utc).timestamp())
-            conn.execute("INSERT INTO tasks VALUES ('kb-01', 'Blocked task', 'sindri', 'blocked', 'user', ?)", (now_ts - 3600,))
-            conn.execute("INSERT INTO tasks VALUES ('kb-02', 'Iris alert task', 'huginn', 'done', 'jev-gateway', ?)", (now_ts - 1800,))
-            conn.execute("INSERT INTO tasks VALUES ('kb-03', 'Active task', 'vor', 'in_progress', 'user', ?)", (now_ts - 600,))
-            conn.commit()
-            conn.close()
-
-            telemetry = fetch_odin_telemetry(db_path, lookback_hours=24)
-            self.assertEqual(len(telemetry.blocked_cards), 1)
-            self.assertEqual(telemetry.blocked_cards[0]["id"], "kb-01")
-            self.assertEqual(len(telemetry.iris_alerts_24h), 1)
-            self.assertEqual(telemetry.iris_alerts_24h[0]["id"], "kb-02")
-            self.assertEqual(telemetry.total_active_cards, 2)
-        finally:
-            if os.path.exists(db_path):
-                os.remove(db_path)
+    @patch(
+        "morning_copilot_aggregator.audit_swarm_services",
+        return_value={
+            "status": "FAIL",
+            "total_services": 10,
+            "healthy_services": 9,
+            "degraded_count": 1,
+            "degraded_services": [
+                {"name": "apollo-core_recyclarr", "replicas": "0/1", "task_state": "Restarting", "task_error": "boom"}
+            ],
+            "overlay_ipam": {"network": "aether-net", "status": "PASS", "degraded": False},
+        },
+    )
+    def test_fetch_odin_telemetry_from_swarm_audit(self, mock_audit):
+        """Verify Odin Swarm telemetry aggregation without Kanban database."""
+        telemetry = fetch_odin_telemetry()
+        mock_audit.assert_called_once_with()
+        self.assertEqual(telemetry.swarm_total_services, 10)
+        self.assertEqual(telemetry.swarm_healthy_services, 9)
+        self.assertEqual(len(telemetry.swarm_degraded_services), 1)
+        self.assertEqual(telemetry.swarm_degraded_services[0]["name"], "apollo-core_recyclarr")
+        self.assertEqual(telemetry.overlay_ipam["status"], "PASS")
 
     def test_generate_executive_markdown_and_zero_em_dashes(self):
         """Verify markdown report generation and strict zero em/en dash invariant."""
@@ -264,10 +257,18 @@ class TestMorningCopilotAggregator(unittest.TestCase):
                 ],
             ),
             odin=OdinTelemetry(
-                blocked_cards=[{"id": "kb-7837e28f", "title": "Decommission legacy backup", "assignee": "swarm-worker"}],
-                iris_alerts_24h=[],
-                active_cards_by_status={"blocked": 1},
-                total_active_cards=1,
+                swarm_total_services=75,
+                swarm_healthy_services=75,
+                swarm_degraded_services=[],
+                overlay_ipam={
+                    "network": "aether-net",
+                    "status": "PASS",
+                    "degraded": False,
+                    "ips_in_use": 133,
+                    "dynamic_ips_available": 123,
+                    "phantom_leaked_ips": 0,
+                    "reason": "",
+                },
             ),
         )
 
@@ -275,7 +276,9 @@ class TestMorningCopilotAggregator(unittest.TestCase):
         self.assertIn("# 🌅 Morning Executive Copilot - 2026-11-09", md)
         self.assertIn("## 🏋️ Biological Recovery & Training Directive", md)
         self.assertIn("## 💰 Wealth Runway & Financial Deadlines", md)
-        self.assertIn("## 🛡️ Homelab Swarm & Kanban Queue", md)
+        self.assertIn("## 🛡️ Homelab Swarm Health", md)
+        self.assertIn("75/75 services healthy (0 degraded)", md)
+        self.assertNotIn("Kanban", md)
         self.assertIn("## 🔍 Operational Review & Run Frictions", md)
         self.assertIn("0 frictions or inefficiencies encountered; run was clean and optimal.", md)
 

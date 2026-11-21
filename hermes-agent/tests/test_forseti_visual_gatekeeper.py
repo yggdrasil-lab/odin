@@ -30,7 +30,6 @@ from forseti_visual_gatekeeper import (
     resolve_repo_path,
     resolve_vault_path,
     sync_snapshots_to_obsidian,
-    transition_kanban_verification,
 )
 
 
@@ -187,43 +186,6 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         self.assertIn("## Forseti Mobile Visual Gate Report (FAILED)", md)
         self.assertIn("### Failure Telemetry", md)
         self.assertIn("AssertionError: Expected header Kratos", md)
-
-    def test_transition_kanban_verification_pass(self) -> None:
-        """Verify kanban-gateway verify --pass execution."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = "Task kb-001 verification PASSED"
-
-        with patch("subprocess.run", return_value=mock_proc) as mock_run:
-            res = transition_kanban_verification(
-                task_id="kb-001",
-                passed=True,
-                summary="All visual flows verified.",
-                pr_url="https://github.com/yggdrasil-lab/ui/pull/7",
-            )
-            self.assertTrue(res["success"])
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            self.assertEqual(args[:3], ["kanban-gateway", "verify", "kb-001"])
-            self.assertIn("--pass", args)
-            self.assertIn("--pr-url", args)
-
-    def test_transition_kanban_verification_fail(self) -> None:
-        """Verify kanban-gateway verify --fail execution on test regression."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = "Task kb-002 verification FAILED -> bounced to sindri"
-
-        with patch("subprocess.run", return_value=mock_proc) as mock_run:
-            res = transition_kanban_verification(
-                task_id="kb-002",
-                passed=False,
-                feedback="Modal bleed-through detected on iPhone 14.",
-            )
-            self.assertTrue(res["success"])
-            args = mock_run.call_args[0][0]
-            self.assertIn("--fail", args)
-            self.assertIn("--feedback", args)
 
     def test_sync_snapshots_to_obsidian(self) -> None:
         """Verify syncing snapshots and writing the visual review note in vault."""

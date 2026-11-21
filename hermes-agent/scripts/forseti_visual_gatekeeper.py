@@ -5,7 +5,6 @@ Pillar 3 of Yggdrasil Autonomous Expansion Roadmap:
 1. Automated mobile visual inspection test harness across homelab frontend repositories (Forge/ui, Forge/kratos, Forge/midas).
 2. Connect across aether-net to Poseidon Browserless (http://poseidon_browserless:3000) for headless Chromium rendering.
 3. Capture standardized PNG snapshots across iPhone 14 (390x844) and Pixel 7 (412x915) viewports and generate side-by-side PR comparison markdown.
-4. Integrate with kanban-gateway verify <task_id> --pass / --fail to automate review state transitions.
 
 Invariants Enforced:
 - Zero em/en dashes (strictly ASCII hyphens).
@@ -420,37 +419,6 @@ def generate_side_by_side_markdown(
     return "\n".join(lines)
 
 
-def transition_kanban_verification(
-    task_id: str,
-    passed: bool,
-    summary: str = "",
-    feedback: str = "",
-    pr_url: str = "",
-) -> Dict[str, Any]:
-    """Execute automated review state transitions via kanban-gateway verify."""
-    cmd = ["kanban-gateway", "verify", task_id]
-    if passed:
-        cmd.extend(["--pass", "--summary", summary.strip() or "Forseti mobile visual gate verified."])
-    else:
-        cmd.extend(["--fail", "--feedback", feedback.strip() or "Forseti visual inspection gate failed."])
-
-    if pr_url:
-        cmd.extend(["--pr-url", pr_url.strip()])
-
-    logger.info("Executing kanban transition: %s", " ".join(cmd[:4]))
-    try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
-        if proc.returncode == 0:
-            logger.info("Kanban verify transition succeeded for task %s (passed=%s)", task_id, passed)
-            return {"success": True, "task_id": task_id, "output": proc.stdout.strip()}
-        else:
-            logger.warning("Kanban verify returned non-zero (%d): %s", proc.returncode, proc.stderr.strip())
-            return {"success": False, "task_id": task_id, "error": proc.stderr.strip()}
-    except Exception as exc:
-        logger.error("Failed to execute kanban-gateway verify for %s: %s", task_id, exc)
-        return {"success": False, "task_id": task_id, "error": str(exc)}
-
-
 def post_github_pr_comment(repo_name: str, pr_number: str, markdown_body: str) -> bool:
     """Post visual comparison markdown to GitHub Pull Request as a review comment."""
     full_repo = f"yggdrasil-lab/{repo_name}"
@@ -510,143 +478,88 @@ def sync_snapshots_to_obsidian(
     return copied, review_note
 
 
-def main() -> int:
-    """CLI Entry point for Forseti Visual CI Gatekeeper."""
-    parser = argparse.ArgumentParser(
-        description="Forseti Automated Mobile Playwright Visual CI Gatekeeper (Pillar 3)"
-    )
-    parser.add_argument(
-        "repo",
-        nargs="?",
-        default="ui",
-        help="Repository name or directory path (e.g. 'ui', 'kratos', 'midas', 'Forge/ui')",
-    )
+def _add_endpoint_and_output_flags(parser: argparse.ArgumentParser) -> None:
+    """Register Browserless endpoint and report output flags on the CLI parser."""
+    parser.add_argument("--browserless-url", default=None, help="Poseidon Browserless HTTP endpoint (default: http://poseidon_browserless:3000)")
+    parser.add_argument("--ws-endpoint", default=None, help="Poseidon Browserless WebSocket endpoint (default: ws://poseidon_browserless:3000)")
+    parser.add_argument("--probe-only", action="store_true", help="Probe Browserless connectivity and pressure without running tests")
+    parser.add_argument("--sync-vault", action="store_true", help="Sync screenshots and markdown review note to Obsidian Second Brain")
+    parser.add_argument("--post-comment", action="store_true", help="Post side-by-side comparison markdown as a comment on GitHub PR")
+    parser.add_argument("--markdown-out", dest="markdown_out", help="Path to write the generated markdown comparison table")
+    parser.add_argument("--dry-run", action="store_true", help="Dry run without executing Playwright tests")
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build CLI argument parser for Forseti Visual CI Gatekeeper."""
+    parser = argparse.ArgumentParser(description="Forseti Automated Mobile Playwright Visual CI Gatekeeper (Pillar 3)")
+    parser.add_argument("repo", nargs="?", default="ui", help="Repository name or directory path (e.g. 'ui', 'kratos', 'midas', 'Forge/ui')")
     parser.add_argument("--pr", dest="pr_number", help="GitHub Pull Request number (e.g. '7', '25')")
     parser.add_argument("--pr-url", dest="pr_url", help="GitHub Pull Request URL")
-    parser.add_argument("--task-id", dest="task_id", help="Kanban Task ID (e.g. 'kb-ba9ad93e')")
-    parser.add_argument(
-        "--browserless-url",
-        default=None,
-        help="Poseidon Browserless HTTP endpoint (default: http://poseidon_browserless:3000)",
-    )
-    parser.add_argument(
-        "--ws-endpoint",
-        default=None,
-        help="Poseidon Browserless WebSocket endpoint (default: ws://poseidon_browserless:3000)",
-    )
-    parser.add_argument(
-        "--probe-only",
-        action="store_true",
-        help="Probe Browserless connectivity and pressure without running tests",
-    )
-    parser.add_argument(
-        "--sync-vault",
-        action="store_true",
-        help="Sync screenshots and markdown review note to Obsidian Second Brain",
-    )
-    parser.add_argument(
-        "--post-comment",
-        action="store_true",
-        help="Post side-by-side comparison markdown as a comment on GitHub PR",
-    )
-    parser.add_argument(
-        "--verify",
-        action="store_true",
-        help="Automatically trigger kanban-gateway verify state transition based on test outcome",
-    )
-    parser.add_argument(
-        "--markdown-out",
-        dest="markdown_out",
-        help="Path to write the generated markdown comparison table",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Dry run without executing tests or mutating Kanban state",
-    )
+    _add_endpoint_and_output_flags(parser)
+    return parser
 
-    args = parser.parse_args()
 
-    # Step 1: Probe Browserless Connectivity
-    browserless_url = args.browserless_url or resolve_browserless_url()
-    ws_endpoint = args.ws_endpoint or resolve_browserless_ws()
-    health = probe_browserless_health(browserless_url)
+def _resolve_pr_number(pr_number: Optional[str], pr_url: Optional[str]) -> Optional[str]:
+    """Extract PR number from explicit flag or PR URL."""
+    if pr_number:
+        return pr_number
+    if not pr_url:
+        return None
+    parts = pr_url.rstrip("/").split("/")
+    return parts[-1] if len(parts) >= 2 and parts[-2] == "pull" else None
 
-    logger.info("Poseidon Browserless URL: %s", browserless_url)
-    logger.info("Poseidon Browserless WS:  %s", ws_endpoint)
-    logger.info("Browserless Reachable:    %s", health.get("reachable", False))
 
-    if args.probe_only:
-        print(json.dumps(health, indent=2))
-        return 0 if health.get("reachable") else 1
-
-    # Step 2: Resolve Repository Path
-    repo_path = resolve_repo_path(args.repo)
-    repo_name = repo_path.name
-    logger.info("Target Repository:        %s (%s)", repo_name, repo_path)
-
-    # Step 3: Run Visual Test Harness or Discover Existing Snapshots
-    passed = True
-    output = "Dry run mode; tests skipped."
-
-    if not args.dry_run:
-        passed, output = run_visual_test_harness(
-            repo_path=repo_path,
-            browserless_ws=ws_endpoint,
-            sync_vault=args.sync_vault,
-        )
-
-    screenshots_map = discover_screenshots(repo_path)
-    logger.info("Discovered %d screenshot flows across iOS and Android", len(screenshots_map))
-
-    # Step 4: Generate Side-by-Side Comparison Markdown
-    pr_num = args.pr_number
-    if not pr_num and args.pr_url:
-        parts = args.pr_url.rstrip("/").split("/")
-        if len(parts) >= 2 and parts[-2] == "pull":
-            pr_num = parts[-1]
-
-    markdown_report = generate_side_by_side_markdown(
-        repo_name=repo_name,
-        screenshots_map=screenshots_map,
-        pr_number=pr_num,
-        test_passed=passed,
-        test_output=output,
-        browserless_url=browserless_url,
-    )
-
+def _publish_gate_outputs(
+    args: argparse.Namespace,
+    repo_name: str,
+    screenshots_map: Dict[str, Dict[str, Path]],
+    markdown_report: str,
+    pr_num: Optional[str],
+) -> None:
+    """Write markdown output file, sync Vault screenshots, and post GitHub PR comment."""
     if args.markdown_out:
         out_p = Path(args.markdown_out)
         out_p.parent.mkdir(parents=True, exist_ok=True)
         out_p.write_text(markdown_report, encoding="utf-8")
         logger.info("Saved markdown comparison report to %s", out_p)
 
-    # Step 5: Sync to Obsidian Second Brain if requested
     if args.sync_vault and screenshots_map:
-        copied, note_path = sync_snapshots_to_obsidian(
-            repo_name=repo_name,
-            screenshots_map=screenshots_map,
-            markdown_report=markdown_report,
-        )
+        copied, note_path = sync_snapshots_to_obsidian(repo_name=repo_name, screenshots_map=screenshots_map, markdown_report=markdown_report)
         logger.info("Obsidian sync complete: %d snapshots copied to %s", copied, note_path)
 
-    # Step 6: Post PR Comment if requested
     if args.post_comment and pr_num:
         comment_ok = post_github_pr_comment(repo_name, pr_num, markdown_report)
         logger.info("GitHub PR comment status: %s", "success" if comment_ok else "failed")
 
-    # Step 7: Automated Kanban State Transition if requested
-    if args.verify and args.task_id and not args.dry_run:
-        summary_text = f"Forseti Mobile Visual Gate ({repo_name}): {len(screenshots_map)} flows verified on iPhone 14 and Pixel 7."
-        transition_res = transition_kanban_verification(
-            task_id=args.task_id,
-            passed=passed,
-            summary=summary_text,
-            feedback=output if not passed else "",
-            pr_url=args.pr_url or (f"https://github.com/yggdrasil-lab/{repo_name}/pull/{pr_num}" if pr_num else ""),
-        )
-        logger.info("Kanban transition result: %s", transition_res.get("success", False))
 
+def main() -> int:
+    """CLI Entry point for Forseti Visual CI Gatekeeper."""
+    args = _build_arg_parser().parse_args()
+    browserless_url = args.browserless_url or resolve_browserless_url()
+    ws_endpoint = args.ws_endpoint or resolve_browserless_ws()
+    health = probe_browserless_health(browserless_url)
+
+    logger.info("Poseidon Browserless URL: %s | WS: %s | Reachable: %s", browserless_url, ws_endpoint, health.get("reachable", False))
+    if args.probe_only:
+        print(json.dumps(health, indent=2))
+        return 0 if health.get("reachable") else 1
+
+    repo_path = resolve_repo_path(args.repo)
+    repo_name = repo_path.name
+    passed, output = (
+        (True, "Dry run mode; tests skipped.")
+        if args.dry_run
+        else run_visual_test_harness(repo_path=repo_path, browserless_ws=ws_endpoint, sync_vault=args.sync_vault)
+    )
+    screenshots_map = discover_screenshots(repo_path)
+    logger.info("Discovered %d screenshot flows across iOS and Android", len(screenshots_map))
+
+    pr_num = _resolve_pr_number(args.pr_number, args.pr_url)
+    markdown_report = generate_side_by_side_markdown(
+        repo_name=repo_name, screenshots_map=screenshots_map, pr_number=pr_num,
+        test_passed=passed, test_output=output, browserless_url=browserless_url,
+    )
+    _publish_gate_outputs(args, repo_name, screenshots_map, markdown_report, pr_num)
     print("\n" + markdown_report)
     return 0 if passed else 1
 
