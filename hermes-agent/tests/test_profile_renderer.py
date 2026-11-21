@@ -188,7 +188,7 @@ class TestProfileRenderer(unittest.TestCase):
                 self.assertNotIn("gemini-4-argon-high", aux_block)
 
                 expected_models = {
-                    "sindri": ("gemini-4-argon-high", ["claude-opus-5-5-high", "agent-loop"]),
+                    "sindri": ("gemini-4-neon-high", ["claude-sonnet-5-5-high", "agent-loop"]),
                     "huginn": ("gemini-4-neon-high", ["claude-sonnet-5-5-high", "agent-loop"]),
                     "forseti": ("claude-sonnet-5-5-high", ["gemini-4-neon-high", "agent-loop"]),
                     "vor": ("claude-sonnet-5-5-high", ["gemini-4-hydrogen-high", "agent-loop"]),

@@ -58,8 +58,8 @@
       "title": "Sindri (Master Dwarven Smith - Forge Builder & Stack Engineer)",
       "aliases": ["forge-builder", "builder", "coder"],
       "tier": "frontier_deep",
-      "model": "gemini-4-argon-high",
-      "fallback_models": ["claude-opus-5-5-high"],
+      "model": "gemini-4-neon-high",
+      "fallback_models": ["claude-sonnet-5-5-high"],
       "mcps": [],
       "toolsets": [
         "file",

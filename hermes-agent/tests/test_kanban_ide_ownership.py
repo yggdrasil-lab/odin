@@ -92,7 +92,7 @@ class TestKanbanIdeOwnership(unittest.TestCase):
         self.sample_complexity = {
             "tier": "frontier_deep",
             "recommended_assignee": "sindri",
-            "recommended_model": "gemini-4-argon-high",
+            "recommended_model": "gemini-4-neon-high",
             "raw_verdict": "test_precomputed",
             "latency_seconds": 0.0,
         }

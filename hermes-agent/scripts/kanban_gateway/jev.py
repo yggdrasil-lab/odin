@@ -42,7 +42,7 @@ COMPLEXITY_TIER_QUESTION: Dict[str, Any] = {
         ),
         "frontier_deep": (
             "Architectural additions, multi-service Docker Swarm compose changes, database migrations, "
-            "security hardening, or complex Forge PR implementation. Uses gemini-4-argon-high."
+            "security hardening, or complex Forge PR implementation. Uses gemini-4-neon-high."
         ),
         "human_pairing": (
             "Architectural forks, destructive deletions, subjective product decisions, or fundamental "
@@ -229,7 +229,7 @@ def _resolve_complexity_verdict(content: str, title: str, body: str) -> Complexi
         recommended_assignee = _infer_specialist_from_text(title, body, tier)
 
     if tier == "frontier_deep":
-        recommended_model = "gemini-4-argon-high"
+        recommended_model = "gemini-4-neon-high"
     elif tier == "flash_fast":
         recommended_model = resolve_flash_fast_model(recommended_assignee)
     else:

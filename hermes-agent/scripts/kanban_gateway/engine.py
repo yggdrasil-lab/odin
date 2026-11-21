@@ -70,11 +70,11 @@ def resolve_handoff_model(
     if resolved_assignee == "raymund":
         return None, None
     if clean_tier == "frontier_deep":
-        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
+        return "gemini-4-neon-high", "antigravity-subscription-directsdk"
     if clean_tier == "flash_fast":
         return (recommended_model or resolve_flash_fast_model(resolved_assignee)), "antigravity-subscription-directsdk"
     if resolved_assignee == "sindri":
-        return "gemini-4-argon-high", "antigravity-subscription-directsdk"
+        return "gemini-4-neon-high", "antigravity-subscription-directsdk"
     return (
         recommended_model or SPECIALIST_MODELS.get(resolved_assignee, "gemini-4-hydrogen-high"),
         "antigravity-subscription-directsdk",
@@ -98,7 +98,7 @@ def resolve_task_routing(
         resolved_tier = tier.strip().lower()
         comp["tier"] = resolved_tier
         comp["recommended_model"] = (
-            "gemini-4-argon-high" if resolved_tier == "frontier_deep" else resolve_flash_fast_model(resolved_assignee)
+            "gemini-4-neon-high" if resolved_tier == "frontier_deep" else resolve_flash_fast_model(resolved_assignee)
         )
 
     if comp["tier"] == "human_pairing" and (not assignee or assignee == DEFAULT_ASSIGNEE):
@@ -147,11 +147,11 @@ def evaluate_two_way_recovery(
     max_retries: int,
     err_msg: str,
 ) -> RecoveryEscalationDecision:
-    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Argon) when a verification gate fails."""
+    """Pure evaluator for Two-Way Recovery escalation (Hydrogen -> Neon) when a verification gate fails."""
     next_assignee = "sindri"
-    model_override = "gemini-4-argon-high"
+    model_override = "gemini-4-neon-high"
     provider_override = "antigravity-subscription-directsdk"
-    escalated_from = prev_model if prev_model and prev_model != "gemini-4-argon-high" else None
+    escalated_from = prev_model if prev_model and prev_model != "gemini-4-neon-high" else None
     escalation_note = (
         f"\n**Two-Way Recovery Escalation:** Escalated model from `{escalated_from}` to `{model_override}`."
         if escalated_from
@@ -347,7 +347,7 @@ def _resolve_create_routing(
             "tier": resolved_tier,
             "recommended_assignee": target_role,
             "recommended_model": (
-                "gemini-4-argon-high"
+                "gemini-4-neon-high"
                 if resolved_tier == "frontier_deep"
                 else resolve_flash_fast_model(target_role)
             ),
@@ -626,7 +626,7 @@ def create_improvement_proposal(
         resolved_target = "vor"
 
     recommended_model = (
-        "gemini-4-argon-high"
+        "gemini-4-neon-high"
         if resolved_target == "sindri"
         else SPECIALIST_MODELS.get(resolved_target, "gemini-4-hydrogen-high")
     )
