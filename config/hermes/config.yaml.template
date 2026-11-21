@@ -50,15 +50,14 @@ auxiliary:
     key_env: "MUNINN_MASTER_KEY"
     context_length: 1048576
     timeout: 60
-    fallback_providers:
+    fallback_chain: &compression_fallbacks
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-medium"
-        context_length: 200000
         timeout: 120
       - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-hydrogen-medium"
-        context_length: 200000
         timeout: 120
+    fallback_providers: *compression_fallbacks
 
   memory:
     # Mnemosyne memory consolidation and structured fact extraction run primarily on Muninn
@@ -84,11 +83,12 @@ auxiliary:
     model: "app-synthesize"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
-    fallback_providers:
+    fallback_chain: &background_review_fallbacks
       - provider: "antigravity-subscription-directsdk"
         model: "claude-sonnet-5-5-medium"
       - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-hydrogen-medium"
+    fallback_providers: *background_review_fallbacks
 
   approval:
     # Fast, low-cost smart command approval using TypeSafe Jev System One decision model.
@@ -250,6 +250,15 @@ memory:
     default_scope: "global"     # Align with Mnemosyne 4.0 cross-session accessibility
     polyphonic_recall: true     # Multi-voice hybrid scoring (vec, fts, keyword, importance, recency)
     enhanced_recall: true       # Enhanced semantic & contextual retrieval
+    tools:
+      - "mnemosyne_recall"
+      - "mnemosyne_remember"
+      - "mnemosyne_get"
+      - "mnemosyne_update"
+      - "mnemosyne_forget"
+      - "mnemosyne_invalidate"
+      - "mnemosyne_validate"
+      - "mnemosyne_stats"
     skip_contexts:
       - "flush"
       - "subagent"
@@ -300,6 +309,13 @@ platform_toolsets:
     - cronjob
     - delegation
     - discord
+    - file
+    - memory
+    - skills
+    - terminal
+  cli:
+    - cronjob
+    - delegation
     - file
     - memory
     - skills

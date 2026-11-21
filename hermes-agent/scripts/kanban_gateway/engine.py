@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 import sqlite3
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 import uuid
 
 from .config import (
@@ -173,22 +174,138 @@ def evaluate_two_way_recovery(
     )
 
 
-def create_kanban_task(
+ALLOWED_CREATE_STATUSES: Tuple[str, ...] = ("todo", "ready", "in_review")
+TERMINAL_DEPENDENCY_STATUSES: Tuple[str, ...] = ("done", "archived")
+ACTIVE_RUNNING_STATUSES: Tuple[str, ...] = ("running", "in_progress")
+_KB_PREFIX_RE = re.compile(r"^(?:\[kb-[0-9a-f]+\]\s*)+", re.IGNORECASE)
+_WRAPUP_SKIP_PREFIXES: Tuple[str, ...] = ("wrap-up", "auto-sync")
+_WRAPUP_SKIP_SUBSTRINGS: Tuple[str, ...] = (
+    "address friction",
+    "session wrap-up",
+    "proposal:",
+    "[auto-fix]",
+)
+
+
+def _strip_kb_prefix(title: str) -> str:
+    return _KB_PREFIX_RE.sub("", (title or "").strip()).strip()
+
+
+def _should_skip_wrapup_title(title: str) -> bool:
+    clean = _strip_kb_prefix(title).lower()
+    return clean.startswith(_WRAPUP_SKIP_PREFIXES) or any(s in clean for s in _WRAPUP_SKIP_SUBSTRINGS)
+
+
+def _normalize_parent_ids(depends_on: Optional[Sequence[str]]) -> Tuple[str, ...]:
+    if not depends_on:
+        return ()
+    return tuple(dict.fromkeys(str(p).strip() for p in depends_on if str(p).strip()))
+
+
+def _compute_initial_task_status(
+    await_approval: bool,
+    open_parents: Sequence[str],
+    explicit_status: Optional[str],
+) -> str:
+    if explicit_status is not None and explicit_status not in ALLOWED_CREATE_STATUSES:
+        raise ValueError(f"Invalid initial status '{explicit_status}'; expected one of {ALLOWED_CREATE_STATUSES}")
+    if await_approval:
+        return "in_review"
+    if open_parents:
+        return "todo"
+    return explicit_status or "ready"
+
+
+def _ensure_task_links_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_links (
+            parent_id TEXT NOT NULL,
+            child_id  TEXT NOT NULL,
+            PRIMARY KEY (parent_id, child_id)
+        )
+        """
+    )
+
+
+def _task_links_table_exists(cursor: sqlite3.Cursor) -> bool:
+    row = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_links' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
+def _fetch_task_statuses(cursor: sqlite3.Cursor, task_ids: Sequence[str]) -> Dict[str, str]:
+    if not task_ids:
+        return {}
+    placeholders = ",".join("?" * len(task_ids))
+    rows = cursor.execute(
+        f"SELECT id, status FROM tasks WHERE id IN ({placeholders})",
+        tuple(task_ids),
+    ).fetchall()
+    return {row[0]: (row[1] or "") for row in rows}
+
+
+def _fetch_open_parents_for_child(cursor: sqlite3.Cursor, child_id: str) -> list[str]:
+    if not _task_links_table_exists(cursor):
+        return []
+    rows = cursor.execute(
+        """
+        SELECT t.id, t.status
+        FROM task_links l
+        JOIN tasks t ON t.id = l.parent_id
+        WHERE l.child_id = ?
+        ORDER BY t.id
+        """,
+        (child_id,),
+    ).fetchall()
+    return [row[0] for row in rows if (row[1] or "") not in TERMINAL_DEPENDENCY_STATUSES]
+
+
+def _would_create_cycle(cursor: sqlite3.Cursor, parent_id: str, child_id: str) -> bool:
+    seen: set[str] = set()
+    stack = [child_id]
+    while stack:
+        node = stack.pop()
+        if node == parent_id:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        rows = cursor.execute("SELECT child_id FROM task_links WHERE parent_id = ?", (node,)).fetchall()
+        stack.extend(row[0] for row in rows)
+    return False
+
+
+def _record_dependency_events(
+    cursor: sqlite3.Cursor,
+    task_id: str,
+    parent_ids: Sequence[str],
+    open_parents: Sequence[str],
+    now: int,
+) -> None:
+    for pid in parent_ids:
+        cursor.execute("INSERT OR IGNORE INTO task_links (parent_id, child_id) VALUES (?, ?)", (pid, task_id))
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'linked', ?, ?)",
+            (task_id, json.dumps({"parent": pid, "child": task_id}), now),
+        )
+    if open_parents:
+        payload = {"reason": "parent_not_done", "parent": open_parents[0], "parents": list(open_parents)}
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'dependency_wait', ?, ?)",
+            (task_id, json.dumps(payload), now),
+        )
+
+
+def _resolve_create_routing(
     title: str,
     body: str,
-    priority: int = 1,
-    assignee: Optional[str] = None,
-    workspace_kind: str = "scratch",
-    notify_discord: bool = True,
-    precomputed_complexity: Optional[Dict[str, Any]] = None,
-    tier: Optional[str] = None,
-    await_approval: bool = False,
-) -> Tuple[str, Optional[str]]:
-    """Inserts a new task into kanban.db and provisions its Discord thread subscription.
-
-    Returns:
-        (task_id, discord_thread_id)
-    """
+    assignee: Optional[str],
+    precomputed_complexity: Optional[Dict[str, Any]],
+    tier: Optional[str],
+    await_approval: bool,
+) -> TaskRoutingResolution:
     explicit_specialist = bool(assignee and assignee != DEFAULT_ASSIGNEE)
     if (tier or explicit_specialist) and not precomputed_complexity:
         target_role = normalize_assignee(assignee) if explicit_specialist else "sindri"
@@ -206,102 +323,236 @@ def create_kanban_task(
         }
     else:
         base_complexity = dict(precomputed_complexity or evaluate_task_complexity(title, body))
-
-    routing = resolve_task_routing(
+    return resolve_task_routing(
         assignee=assignee,
         complexity=base_complexity,
         tier=tier,
         await_approval=await_approval,
     )
-    resolved_assignee = routing.resolved_assignee
-    model_override = routing.model_override
-    provider_override = routing.provider_override
-    complexity = routing.complexity
-    initial_status = routing.initial_status
 
+
+def _build_create_embed_fields(
+    initial_status: str, priority: int, resolved_assignee: str,
+    complexity: Dict[str, Any], model_override: Optional[str],
+) -> list[Dict[str, Any]]:
+    badge_map = {
+        "in_review": "`IN_REVIEW (AWAITING APPROVAL)`",
+        "todo": "`TODO (WAITING ON DEPENDENCY)`",
+        "ready": "`READY`",
+    }
+    status_badge = badge_map.get(initial_status, f"`{initial_status.upper()}`")
+    model_label = model_override or complexity.get("recommended_model")
+    return [
+        {"name": "Status", "value": status_badge, "inline": True},
+        {"name": "Priority", "value": f"`P{priority}`", "inline": True},
+        {"name": "Assignee", "value": f"`{resolved_assignee}`", "inline": True},
+        {"name": "Model Tier", "value": f"`{complexity['tier']}` ({model_label})", "inline": True},
+    ]
+
+
+def _record_notify_subscription(task_id: str, thread_id: str, now: int) -> None:
+    conn = sqlite3.connect(KANBAN_DB_PATH, timeout=10.0)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO kanban_notify_subs "
+            "(task_id, platform, chat_id, thread_id, user_id, notifier_profile, created_at, last_event_id, delivery_mode) "
+            "VALUES (?, 'discord', ?, ?, ?, 'kanban-gateway', ?, 0, 'notify')",
+            (task_id, DISCORD_CHANNEL_ID, thread_id, DISCORD_USER_ID, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _fetch_discord_thread_id(cursor: sqlite3.Cursor, task_id: str) -> Optional[str]:
+    cursor.execute(
+        "SELECT thread_id FROM kanban_notify_subs WHERE task_id = ? AND platform = 'discord' LIMIT 1",
+        (task_id,),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def _provision_create_thread(
+    task_id: str, full_title: str, final_body: str, initial_status: str,
+    priority: int, resolved_assignee: str, complexity: Dict[str, Any],
+    model_override: Optional[str], now: int,
+) -> Optional[str]:
+    if not (DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID):
+        return None
+    fields = _build_create_embed_fields(initial_status, priority, resolved_assignee, complexity, model_override)
+    try:
+        thread_id = post_discord_thread(
+            title=full_title, thread_name=full_title, description=final_body, fields=fields,
+        )
+        _record_notify_subscription(task_id, thread_id, now)
+        return thread_id
+    except Exception as e:
+        logger.error("Failed to provision Discord thread for %s: %s", task_id, e)
+        return None
+
+
+def _insert_task_on_conn(
+    conn: sqlite3.Connection, *, task_id: str, full_title: str, final_body: str,
+    routing: TaskRoutingResolution, initial_status: str, priority: int,
+    workspace_kind: str, await_approval: bool, parent_ids: Tuple[str, ...],
+    open_parents: list[str], now: int,
+) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO tasks (id, title, body, assignee, status, priority, created_by, "
+        "created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences, "
+        "model_override, provider_override) VALUES (?, ?, ?, ?, ?, ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)",
+        (
+            task_id, full_title, final_body, routing.resolved_assignee, initial_status,
+            priority, now, workspace_kind, routing.model_override, routing.provider_override,
+        ),
+    )
+    created_payload: Dict[str, Any] = {
+        "source": "jev-gateway", "title": full_title, "complexity": routing.complexity,
+        "await_approval": await_approval, "initial_status": initial_status,
+    }
+    if parent_ids:
+        created_payload["depends_on"] = list(parent_ids)
+    cursor.execute(
+        "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'created', ?, ?)",
+        (task_id, json.dumps(created_payload), now),
+    )
+    if parent_ids:
+        _record_dependency_events(cursor, task_id, parent_ids, open_parents, now)
+
+
+def _persist_new_task(
+    *, task_id: str, full_title: str, final_body: str, routing: TaskRoutingResolution,
+    priority: int, workspace_kind: str, await_approval: bool,
+    parent_ids: Tuple[str, ...], explicit_status: Optional[str], now: int,
+) -> str:
+    conn = sqlite3.connect(KANBAN_DB_PATH, timeout=10.0)
+    try:
+        if parent_ids:
+            _ensure_task_links_table(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        parent_statuses = _fetch_task_statuses(conn.cursor(), parent_ids)
+        missing = [pid for pid in parent_ids if pid not in parent_statuses]
+        if missing:
+            raise ValueError(f"Unknown dependency parent task(s): {', '.join(missing)}")
+        open_parents = [pid for pid in parent_ids if parent_statuses[pid] not in TERMINAL_DEPENDENCY_STATUSES]
+        initial_status = _compute_initial_task_status(await_approval, open_parents, explicit_status)
+        _insert_task_on_conn(
+            conn, task_id=task_id, full_title=full_title, final_body=final_body, routing=routing,
+            initial_status=initial_status, priority=priority, workspace_kind=workspace_kind,
+            await_approval=await_approval, parent_ids=parent_ids, open_parents=open_parents, now=now,
+        )
+        conn.commit()
+        return initial_status
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def create_kanban_task(
+    title: str, body: str, priority: int = 1, assignee: Optional[str] = None,
+    workspace_kind: str = "scratch", notify_discord: bool = True,
+    precomputed_complexity: Optional[Dict[str, Any]] = None, tier: Optional[str] = None,
+    await_approval: bool = False, depends_on: Optional[Sequence[str]] = None,
+    status: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Inserts a new task into kanban.db atomically and provisions its Discord thread subscription."""
+    parent_ids = _normalize_parent_ids(depends_on)
+    if status is not None and status not in ALLOWED_CREATE_STATUSES:
+        raise ValueError(f"Invalid initial status '{status}'; expected one of {ALLOWED_CREATE_STATUSES}")
+    routing = _resolve_create_routing(title, body, assignee, precomputed_complexity, tier, await_approval)
     short_id = uuid.uuid4().hex[:8]
     task_id = f"kb-{short_id}"
+    if task_id in parent_ids:
+        raise ValueError(f"Task {task_id} cannot depend on itself")
     full_title = f"[KB-{short_id}] {title}"
     now = int(time.time())
     final_body = format_hitl_approval_body(body, task_id, routing, await_approval)
-
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    # 1. Insert into tasks
-    cursor.execute(
-        """
-        INSERT INTO tasks (
-            id, title, body, assignee, status, priority, created_by,
-            created_at, workspace_kind, consecutive_failures, goal_mode, block_recurrences,
-            model_override, provider_override
-        ) VALUES (?, ?, ?, ?, ?, ?, 'jev-gateway', ?, ?, 0, 0, 0, ?, ?)
-        """,
-        (
-            task_id,
-            full_title,
-            final_body,
-            resolved_assignee,
-            initial_status,
-            priority,
-            now,
-            workspace_kind,
-            model_override,
-            provider_override,
-        ),
+    initial_status = _persist_new_task(
+        task_id=task_id, full_title=full_title, final_body=final_body, routing=routing,
+        priority=priority, workspace_kind=workspace_kind, await_approval=await_approval,
+        parent_ids=parent_ids, explicit_status=status, now=now,
     )
-
-    # 2. Record created event
-    created_payload = {
-        "source": "jev-gateway",
-        "title": full_title,
-        "complexity": complexity,
-        "await_approval": await_approval,
-        "initial_status": initial_status,
-    }
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'created', ?, ?)
-        """,
-        (task_id, json.dumps(created_payload), now),
+    thread_id = (
+        _provision_create_thread(
+            task_id, full_title, final_body, initial_status, priority,
+            routing.resolved_assignee, routing.complexity, routing.model_override, now,
+        )
+        if notify_discord else None
     )
-
-    thread_id = None
-    if notify_discord and DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID:
-        try:
-            status_badge = "`IN_REVIEW (AWAITING APPROVAL)`" if await_approval else "`READY`"
-            fields = [
-                {"name": "Status", "value": status_badge, "inline": True},
-                {"name": "Priority", "value": f"`P{priority}`", "inline": True},
-                {"name": "Assignee", "value": f"`{resolved_assignee}`", "inline": True},
-                {"name": "Model Tier", "value": f"`{complexity['tier']}` ({model_override or complexity.get('recommended_model')})", "inline": True},
-            ]
-            thread_id = post_discord_thread(
-                title=full_title,
-                thread_name=full_title,
-                description=final_body,
-                fields=fields,
-            )
-
-            # 3. Store notification subscription in kanban_notify_subs
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO kanban_notify_subs (
-                    task_id, platform, chat_id, thread_id, user_id, notifier_profile,
-                    created_at, last_event_id, delivery_mode
-                ) VALUES (?, 'discord', ?, ?, ?, 'kanban-gateway', ?, 0, 'notify')
-                """,
-                (task_id, DISCORD_CHANNEL_ID, thread_id, DISCORD_USER_ID, now),
-            )
-        except Exception as e:
-            logger.error("Failed to provision Discord thread for %s: %s", task_id, e)
-
-    conn.commit()
-    conn.close()
-
-    logger.info("Created Kanban task %s (Discord Thread: %s)", task_id, thread_id)
+    logger.info("Created Kanban task %s (Status: %s, Discord Thread: %s)", task_id, initial_status, thread_id)
     return task_id, thread_id
+
+
+def _fetch_and_validate_link_pair(
+    cursor: sqlite3.Cursor, clean_parent: str, clean_child: str,
+) -> Tuple[str, str, bool]:
+    statuses = _fetch_task_statuses(cursor, (clean_parent, clean_child))
+    missing = [tid for tid in (clean_parent, clean_child) if tid not in statuses]
+    if missing:
+        raise ValueError(f"Unknown task(s): {', '.join(missing)}")
+    parent_status, child_status = statuses[clean_parent], statuses[clean_child]
+    if child_status in ACTIVE_RUNNING_STATUSES:
+        raise ValueError(f"Cannot link {clean_parent} -> {clean_child}: child task is {child_status}")
+    existing = cursor.execute(
+        "SELECT 1 FROM task_links WHERE parent_id = ? AND child_id = ? LIMIT 1",
+        (clean_parent, clean_child),
+    ).fetchone()
+    if existing is None and _would_create_cycle(cursor, clean_parent, clean_child):
+        raise ValueError(f"Linking {clean_parent} -> {clean_child} would create a dependency cycle")
+    return parent_status, child_status, existing is None
+
+
+def _apply_link_and_demote(
+    cursor: sqlite3.Cursor, clean_parent: str, clean_child: str,
+    parent_status: str, child_status: str, needs_insert: bool, now: int,
+) -> Dict[str, Any]:
+    if needs_insert:
+        cursor.execute("INSERT INTO task_links (parent_id, child_id) VALUES (?, ?)", (clean_parent, clean_child))
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'linked', ?, ?)",
+            (clean_child, json.dumps({"parent": clean_parent, "child": clean_child}), now),
+        )
+    demoted, final_status = False, child_status
+    if child_status == "ready" and parent_status not in TERMINAL_DEPENDENCY_STATUSES:
+        cursor.execute("UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'", (clean_child,))
+        demoted = cursor.rowcount == 1
+        if demoted:
+            final_status = "todo"
+            cursor.execute(
+                "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'dependency_wait', ?, ?)",
+                (clean_child, json.dumps({"reason": "parent_not_done", "demoted": True, "parent": clean_parent}), now),
+            )
+    return {
+        "parent_id": clean_parent, "child_id": clean_child, "linked": needs_insert,
+        "already_linked": not needs_insert, "demoted": demoted, "child_status": final_status,
+    }
+
+
+def link_kanban_tasks(parent_id: str, child_id: str) -> Dict[str, Any]:
+    """Attaches a parent -> child dependency link, validating cycles and demoting ready children."""
+    clean_parent, clean_child = (parent_id or "").strip(), (child_id or "").strip()
+    if not clean_parent or not clean_child:
+        raise ValueError("Both parent_id and child_id are required")
+    if clean_parent == clean_child:
+        raise ValueError(f"Task {clean_parent} cannot depend on itself")
+    conn = sqlite3.connect(KANBAN_DB_PATH, timeout=10.0)
+    try:
+        _ensure_task_links_table(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        parent_status, child_status, needs_insert = _fetch_and_validate_link_pair(cursor, clean_parent, clean_child)
+        result = _apply_link_and_demote(cursor, clean_parent, clean_child, parent_status, child_status, needs_insert, int(time.time()))
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def create_improvement_proposal(
@@ -414,62 +665,32 @@ def create_improvement_proposal(
     return task_id, thread_id
 
 
-def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optional[str] = None) -> Optional[str]:
-    """Auto-spawns an autonomous session wrap-up chore when a dev or engineering task transitions to done."""
-    clean_title = orig_title.lower()
-    # Recursion guard: do not trigger wrap-up for wrap-up chores, friction chores, auto-fixes, proposals, or triage tasks
-    if (
-        clean_title.startswith("wrap-up")
-        or clean_title.startswith("auto-sync")
-        or "address friction" in clean_title
-        or "session wrap-up" in clean_title
-        or "proposal:" in clean_title
-        or "[auto-fix]" in clean_title
-    ):
-        logger.info("Skipping wrap-up trigger for maintenance/wrap-up/proposal task %s", task_id)
-        return None
-
-    # Retrieve debrief event payload (summary, frictions, pr_url) if present
-    pr_url = None
-    summary = ""
-    frictions = "None"
-    try:
-        conn = sqlite3.connect(KANBAN_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'debrief' ORDER BY id DESC LIMIT 1",
-            (task_id,),
-        )
-        row = cursor.fetchone()
-        if row and row[0]:
-            payload = json.loads(row[0])
-            pr_url = payload.get("pr_url")
-            summary = payload.get("summary", "")
-            frictions = payload.get("frictions", "None")
-        conn.close()
-    except Exception as e:
-        logger.warning("Failed to fetch debrief details for wrap-up trigger on %s: %s", task_id, e)
-
-    # Detect target stack if mentioned in title or PR URL
-    stack_name = ""
-    for known in ("poseidon", "odin", "kratos", "charon", "argus", "apollo", "mimir", "olympus", "hephaestus", "comics", "cerberus", "palworld"):
-        if known in clean_title or (pr_url and known in pr_url.lower()):
-            stack_name = known.capitalize()
-            break
-
-    stack_instruction = ""
+def _resolve_wrapup_stack_instruction(orig_title: str, pr_url: Optional[str]) -> str:
+    clean_lower = _strip_kb_prefix(orig_title).lower()
+    known_stacks = (
+        "poseidon", "odin", "kratos", "charon", "argus", "apollo",
+        "mimir", "olympus", "hephaestus", "comics", "cerberus", "palworld",
+    )
+    stack_name = next(
+        (known.capitalize() for known in known_stacks if known in clean_lower or (pr_url and known in pr_url.lower())),
+        "",
+    )
     if stack_name:
-        stack_instruction = (
+        return (
             f"- [ ] **Gate 2B (Canonical Domain Notes)**: Open and update `second-brain/Areas/90-Infrastructure/{stack_name}/{stack_name} Stack.md`:\n"
             f"  - Add newly deployed services, ports, and volumes to the Services and Volumes tables.\n"
             f"  - Update the Mermaid architecture diagram edges if communication flows changed.\n"
             f"  - Add an entry under Historical Timeline (PR {pr_url or 'merged'}).\n"
         )
-    else:
-        stack_instruction = (
-            "- [ ] **Gate 2B (Canonical Domain Notes)**: Inspect affected stack/repo and update its canonical domain note under `second-brain/Areas/90-Infrastructure/` if applicable.\n"
-        )
+    return (
+        "- [ ] **Gate 2B (Canonical Domain Notes)**: Inspect affected stack/repo and update its canonical domain note under `second-brain/Areas/90-Infrastructure/` if applicable.\n"
+    )
 
+
+def _build_wrapup_chore_spec(
+    task_id: str, orig_title: str, pr_url: Optional[str], summary: str, frictions: str,
+) -> Tuple[str, str]:
+    stack_instruction = _resolve_wrapup_stack_instruction(orig_title, pr_url)
     chore_title = f"Wrap-up: Session wrap-up and docs sync for {orig_title}"
     chore_body = (
         f"Automated post-completion session wrap-up for task `{task_id}`:\n\n"
@@ -486,129 +707,183 @@ def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optio
         f"- [ ] **Step 4 (Readiness Probe & Cleanup)**: Run `python3 ${{HERMES_SKILLS_PATH:-/opt/odin/hermes/skills}}/productivity/session-wrapup/scripts/check_wrapup_readiness.py` to verify formatting, structure, and zero em/en dashes.\n"
         f"- [ ] **Completion**: Run `kanban-gateway debrief <THIS_TASK_ID> --summary \"Session wrap-up complete for {task_id}\"` and call `kanban_complete`.\n"
     )
+    return chore_title, chore_body
 
+
+def _persist_wrapup_chore(
+    task_id: str, orig_title: str, chore_id: str, short_id: str,
+    routing: TaskRoutingResolution, now: int,
+) -> Optional[Tuple[str, str]]:
+    conn = sqlite3.connect(KANBAN_DB_PATH, timeout=10.0)
     try:
-        chore_id, chore_thread_id = create_kanban_task(
-            title=chore_title,
-            body=chore_body,
-            priority=1,
-            assignee="vor",
-            precomputed_complexity={
-                "tier": "flash_fast",
-                "recommended_assignee": "vor",
-                "recommended_model": resolve_flash_fast_model("vor"),
-                "raw_verdict": "auto_spawn_session_wrapup",
-                "latency_seconds": 0.0,
-            },
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.cursor()
+        if cursor.execute(
+            "SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'wrapup_triggered' LIMIT 1", (task_id,),
+        ).fetchone():
+            conn.rollback()
+            logger.info("Wrap-up already triggered for task %s; skipping duplicate spawn", task_id)
+            return None
+        row = cursor.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'debrief' ORDER BY id DESC LIMIT 1", (task_id,),
+        ).fetchone()
+        payload = json.loads(row[0]) if row and row[0] else {}
+        chore_title, chore_body = _build_wrapup_chore_spec(
+            task_id, orig_title, payload.get("pr_url"), payload.get("summary", ""), payload.get("frictions", "None"),
         )
-        logger.info("Auto-spawned session wrap-up chore %s (vor) for completed task %s", chore_id, task_id)
-
-        if thread_id:
-            post_thread_lifecycle_update(
-                thread_id=thread_id,
-                status="wrapup_triggered",
-                message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`vor`) to sync infrastructure notes, journal, and self-improvement hardening.",
-            )
-        return chore_id
+        full_chore_title = f"[KB-{short_id}] {chore_title}"
+        _insert_task_on_conn(
+            conn, task_id=chore_id, full_title=full_chore_title, final_body=chore_body,
+            routing=routing, initial_status="ready", priority=1, workspace_kind="scratch",
+            await_approval=False, parent_ids=(), open_parents=[], now=now,
+        )
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'wrapup_triggered', ?, ?)",
+            (task_id, json.dumps({"chore_id": chore_id, "title": full_chore_title}), now),
+        )
+        conn.commit()
+        return full_chore_title, chore_body
     except Exception as e:
+        conn.rollback()
         logger.error("Failed to auto-spawn session wrap-up chore for %s: %s", task_id, e)
         return None
+    finally:
+        conn.close()
+
+
+def _notify_wrapup_spawned(
+    chore_id: str, full_chore_title: str, chore_body: str,
+    routing: TaskRoutingResolution, thread_id: Optional[str], now: int,
+) -> None:
+    _provision_create_thread(
+        chore_id, full_chore_title, chore_body, "ready", 1, "vor", routing.complexity, routing.model_override, now,
+    )
+    if not thread_id:
+        return
+    try:
+        post_thread_lifecycle_update(
+            thread_id=thread_id, status="wrapup_triggered",
+            message=f"📌 Triggered automated session wrap-up chore `{chore_id}` (`vor`) to sync infrastructure notes, journal, and self-improvement hardening.",
+        )
+    except Exception as e:
+        logger.warning("Failed to post wrapup_triggered update to thread %s: %s", thread_id, e)
+
+
+def trigger_session_wrapup_chore(task_id: str, orig_title: str, thread_id: Optional[str] = None) -> Optional[str]:
+    """Auto-spawns an autonomous session wrap-up chore once when a dev/engineering task transitions to done."""
+    if _should_skip_wrapup_title(orig_title):
+        logger.info("Skipping wrap-up trigger for maintenance/wrap-up/proposal task %s", task_id)
+        return None
+    now = int(time.time())
+    short_id = uuid.uuid4().hex[:8]
+    chore_id = f"kb-{short_id}"
+    vor_model = resolve_flash_fast_model("vor")
+    routing = TaskRoutingResolution(
+        resolved_assignee="vor", model_override=vor_model, provider_override="antigravity-subscription-directsdk",
+        complexity={
+            "tier": "flash_fast", "recommended_assignee": "vor", "recommended_model": vor_model,
+            "raw_verdict": "auto_spawn_session_wrapup", "latency_seconds": 0.0,
+        },
+        initial_status="ready",
+    )
+    persisted = _persist_wrapup_chore(task_id, orig_title, chore_id, short_id, routing, now)
+    if not persisted:
+        return None
+    full_chore_title, chore_body = persisted
+    logger.info("Auto-spawned session wrap-up chore %s (vor) for completed task %s", chore_id, task_id)
+    _notify_wrapup_spawned(chore_id, full_chore_title, chore_body, routing, thread_id, now)
+    return chore_id
+
+
+def _record_handoff_events(
+    cursor: sqlite3.Cursor, task_id: str, from_assignee: str, resolved_to: str,
+    summary: str, pr_url: str, model_override: Optional[str],
+    next_status: str, open_parents: list[str], now: int,
+) -> None:
+    event_payload = {
+        "from_assignee": from_assignee, "to_assignee": resolved_to,
+        "summary": summary, "pr_url": pr_url,
+        "model_override": model_override, "status": next_status,
+    }
+    cursor.execute(
+        "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'handoff', ?, ?)",
+        (task_id, json.dumps(event_payload), now),
+    )
+    if open_parents:
+        wait_payload = {"reason": "parent_not_done", "parent": open_parents[0], "parents": open_parents}
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'dependency_wait', ?, ?)",
+            (task_id, json.dumps(wait_payload), now),
+        )
+
+
+def _persist_handoff_tx(
+    task_id: str, resolved_to: str, summary: str, pr_url: str, tier: Optional[str], now: int,
+) -> Tuple[Dict[str, Any], str]:
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, body, assignee FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"Task {task_id} not found in kanban database")
+        orig_title, orig_body, from_assignee = row[0] or "", row[1] or "", row[2] or "unknown"
+        handoff_block = f"\n\n---\n### Pipeline Handoff ({from_assignee} -> {resolved_to})\n{summary.strip()}"
+        if pr_url:
+            handoff_block += f"\n**PR / Branch:** {pr_url}"
+        model_override, provider_override = resolve_handoff_model(resolved_to, tier=tier)
+        open_parents = _fetch_open_parents_for_child(cursor, task_id)
+        next_status = "todo" if open_parents else "ready"
+        cursor.execute(
+            "UPDATE tasks SET assignee = ?, status = ?, body = ?, model_override = ?, provider_override = ?, "
+            "consecutive_failures = 0, last_failure_error = NULL WHERE id = ?",
+            (resolved_to, next_status, f"{orig_body}{handoff_block}", model_override, provider_override, task_id),
+        )
+        _record_handoff_events(
+            cursor, task_id, from_assignee, resolved_to, summary, pr_url, model_override, next_status, open_parents, now,
+        )
+        thread_id = _fetch_discord_thread_id(cursor, task_id)
+        conn.commit()
+    finally:
+        conn.close()
+    result = {
+        "task_id": task_id, "status": next_status, "open_parents": open_parents,
+        "from_assignee": from_assignee, "to_assignee": resolved_to, "model_override": model_override,
+        "summary": summary, "pr_url": pr_url, "thread_id": thread_id,
+    }
+    return result, orig_title
+
+
+def _notify_handoff_thread(result: Dict[str, Any]) -> None:
+    thread_id = result["thread_id"]
+    if not thread_id:
+        return
+    fields = [
+        {"name": "Task ID", "value": f"`{result['task_id']}`", "inline": True},
+        {"name": "Pipeline Handoff", "value": f"`{result['from_assignee']}` -> `{result['to_assignee']}`", "inline": True},
+        {"name": "Model", "value": f"`{result['model_override'] or 'human/raymund'}`", "inline": True},
+    ]
+    if result["pr_url"]:
+        fields.append({"name": "PR / Branch", "value": result["pr_url"], "inline": False})
+    post_thread_lifecycle_update(
+        thread_id=thread_id, status=result["status"],
+        message=f"**Handoff Summary (`{result['from_assignee']}` -> `{result['to_assignee']}`):**\n{result['summary']}",
+        fields=fields,
+    )
 
 
 def handoff_kanban_task(
-    task_id: str,
-    to_assignee: str,
-    summary: str,
-    pr_url: str = "",
-    tier: Optional[str] = None,
+    task_id: str, to_assignee: str, summary: str, pr_url: str = "", tier: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Transitions a Kanban card to the next specialist in an async pipeline without conversational chat."""
     resolved_to = normalize_assignee(to_assignee)
-    now = int(time.time())
-
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, body, assignee FROM tasks WHERE id = ?", (task_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise ValueError(f"Task {task_id} not found in kanban database")
-
-    orig_title, orig_body, from_assignee = row[0] or "", row[1] or "", row[2] or "unknown"
-
-    handoff_block = (
-        f"\n\n---\n"
-        f"### Pipeline Handoff ({from_assignee} -> {resolved_to})\n"
-        f"{summary.strip()}"
+    result, orig_title = _persist_handoff_tx(task_id, resolved_to, summary, pr_url, tier, int(time.time()))
+    _notify_handoff_thread(result)
+    logger.info(
+        "Handed off task %s (%s): %s -> %s (%s, %s)",
+        task_id, orig_title, result["from_assignee"], resolved_to, result["model_override"], result["status"],
     )
-    if pr_url:
-        handoff_block += f"\n**PR / Branch:** {pr_url}"
-
-    new_body = f"{orig_body}{handoff_block}"
-    model_override, provider_override = resolve_handoff_model(resolved_to, tier=tier)
-
-    cursor.execute(
-        """
-        UPDATE tasks
-        SET assignee = ?, status = 'ready', body = ?, model_override = ?, provider_override = ?, consecutive_failures = 0, last_failure_error = NULL
-        WHERE id = ?
-        """,
-        (resolved_to, new_body, model_override, provider_override, task_id),
-    )
-
-    event_payload = {
-        "from_assignee": from_assignee,
-        "to_assignee": resolved_to,
-        "summary": summary,
-        "pr_url": pr_url,
-        "model_override": model_override,
-    }
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'handoff', ?, ?)
-        """,
-        (task_id, json.dumps(event_payload), now),
-    )
-
-    cursor.execute(
-        """
-        SELECT thread_id FROM kanban_notify_subs
-        WHERE task_id = ? AND platform = 'discord' LIMIT 1
-        """,
-        (task_id,),
-    )
-    sub_row = cursor.fetchone()
-    thread_id = sub_row[0] if sub_row else None
-
-    conn.commit()
-    conn.close()
-
-    if thread_id:
-        fields = [
-            {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
-            {"name": "Pipeline Handoff", "value": f"`{from_assignee}` -> `{resolved_to}`", "inline": True},
-            {"name": "Model", "value": f"`{model_override or 'human/raymund'}`", "inline": True},
-        ]
-        if pr_url:
-            fields.append({"name": "PR / Branch", "value": pr_url, "inline": False})
-        post_thread_lifecycle_update(
-            thread_id=thread_id,
-            status="ready",
-            message=f"**Handoff Summary (`{from_assignee}` -> `{resolved_to}`):**\n{summary}",
-            fields=fields,
-        )
-
-    logger.info("Handed off task %s (%s): %s -> %s (%s)", task_id, orig_title, from_assignee, resolved_to, model_override)
-    return {
-        "task_id": task_id,
-        "from_assignee": from_assignee,
-        "to_assignee": resolved_to,
-        "model_override": model_override,
-        "summary": summary,
-        "pr_url": pr_url,
-        "thread_id": thread_id,
-    }
+    return result
 
 
 def verify_pipeline_stage(
@@ -852,245 +1127,197 @@ def verify_pipeline_stage(
             }
 
 
-def update_task_lifecycle(task_id: str, new_status: str, message: str) -> bool:
+def _commit_lifecycle_update(
+    task_id: str, canonical_status: str, new_status: str, message: str, force: bool,
+) -> Tuple[bool, bool, Optional[str], str]:
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, title FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            logger.warning("Task %s not found in kanban database", task_id)
+            return False, False, None, ""
+        current_status, task_title = row[0], (row[1] if len(row) > 1 and row[1] else "")
+        if current_status == canonical_status:
+            logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
+            return True, False, None, task_title
+        if current_status == "done" and canonical_status == "in_review" and not force:
+            logger.warning("Refusing status regression 'done' -> 'in_review' for task %s (pass force=True to override).", task_id)
+            return False, False, None, task_title
+        now = int(time.time())
+        extra = ", started_at = ?" if canonical_status in ("running", "in_progress") else (", completed_at = ?" if canonical_status == "done" else "")
+        params = [canonical_status, now, task_id] if extra else [canonical_status, task_id]
+        cursor.execute(f"UPDATE tasks SET status = ?{extra} WHERE id = ?", params)
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'status_changed', ?, ?)",
+            (task_id, json.dumps({"status": new_status, "message": message}), now),
+        )
+        thread_id = _fetch_discord_thread_id(cursor, task_id)
+        conn.commit()
+        return True, True, thread_id, task_title
+    finally:
+        conn.close()
+
+
+def update_task_lifecycle(task_id: str, new_status: str, message: str, force: bool = False) -> bool:
     """Updates task status in kanban.db and notifies its assigned Discord thread."""
     canonical_status = STATUS_CANONICAL.get(new_status.lower(), new_status.lower())
-    conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT status, title FROM tasks WHERE id = ?", (task_id,))
-    row = cursor.fetchone()
-    if not row:
-        logger.warning("Task %s not found in kanban database", task_id)
-        conn.close()
+    ok, changed, thread_id, task_title = _commit_lifecycle_update(task_id, canonical_status, new_status, message, force)
+    if not ok:
         return False
-    current_status = row[0]
-    task_title = row[1] if len(row) > 1 and row[1] else ""
-
-    if current_status == canonical_status:
-        logger.info("Task %s is already '%s'; skipping no-op lifecycle update.", task_id, canonical_status)
-        conn.close()
+    if not changed:
         return True
-
-    now = int(time.time())
-    extra_clause = ""
-    if canonical_status in ("running", "in_progress"):
-        extra_clause = ", started_at = ?"
-    elif canonical_status == "done":
-        extra_clause = ", completed_at = ?"
-
-    query = f"UPDATE tasks SET status = ?{extra_clause} WHERE id = ?"
-    params = [canonical_status, now, task_id] if extra_clause else [canonical_status, task_id]
-    cursor.execute(query, params)
-
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'status_changed', ?, ?)
-        """,
-        (task_id, json.dumps({"status": new_status, "message": message}), now),
-    )
-
-    # Find registered thread subscription
-    cursor.execute(
-        """
-        SELECT thread_id FROM kanban_notify_subs
-        WHERE task_id = ? AND platform = 'discord' LIMIT 1
-        """,
-        (task_id,),
-    )
-    row = cursor.fetchone()
-    thread_id = row[0] if row else None
-
-    conn.commit()
-    conn.close()
-
     if thread_id:
         fields = [
             {"name": "Task ID", "value": f"`{task_id}`", "inline": True},
             {"name": "New Status", "value": f"`{new_status.upper()}`", "inline": True},
         ]
         post_thread_lifecycle_update(thread_id, new_status, message, fields=fields)
-
-    # Auto-trigger full autonomous session wrap-up when a task transitions to done
     if canonical_status == "done":
         trigger_session_wrapup_chore(task_id, task_title, thread_id)
-
     return True
 
 
-def record_task_debrief(
-    task_id: str,
-    summary: str,
-    frictions: Optional[str] = None,
-    chore_title: Optional[str] = None,
-    pr_url: Optional[str] = None,
-    auto_fix: bool = False,
-) -> Dict[str, Any]:
-    """Records a task debrief / retrospective receipt and routes follow-ups:
-    - Tier 2 (auto_fix_script / auto_fix=True): spawns a 'ready' [Auto-Fix] card assigned directly to vor/sindri.
-    - Tier 3 (propose_review / spawn_chore): spawns an 'in_review' Proposal thread in #info assigned to raymund.
-    """
+def _extract_pr_url(summary: str, pr_url: Optional[str]) -> Optional[str]:
+    if pr_url or ("github.com/" not in summary or "/pull/" not in summary):
+        return pr_url
+    match = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
+    return match.group(0) if match else None
+
+
+def _fetch_task_for_debrief(task_id: str) -> Tuple[str, str]:
     conn = sqlite3.connect(KANBAN_DB_PATH)
-    cursor = conn.cursor()
-
-    now = int(time.time())
-
-    # 1. Verify task exists
-    cursor.execute("SELECT id, title, body FROM tasks WHERE id = ?", (task_id,))
-    task_row = cursor.fetchone()
-    if not task_row:
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, body FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"Task {task_id} not found in kanban database")
+        return row[0] or "", row[1] or ""
+    finally:
         conn.close()
-        raise ValueError(f"Task {task_id} not found in kanban database")
 
-    task_body = task_row[2] or ""
 
-    # Auto-extract PR URL from summary if not explicitly passed
-    extracted_pr = pr_url
-    if not extracted_pr and ("github.com/" in summary and "/pull/" in summary):
-        import re
-        m = re.search(r"https://github\.com/[^\s)]+/pull/\d+", summary)
-        if m:
-            extracted_pr = m.group(0)
+def _write_debrief_tx(
+    task_id: str, payload: Dict[str, Any], extracted_pr: Optional[str], now: int,
+) -> Optional[str]:
+    conn = sqlite3.connect(KANBAN_DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'debrief', ?, ?)",
+            (task_id, json.dumps(payload), now),
+        )
+        if extracted_pr:
+            status_row = cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if status_row and status_row[0] == "done":
+                logger.info("Skipping debrief auto-transition to 'in_review' for already-done task %s", task_id)
+            else:
+                cursor.execute("UPDATE tasks SET status = 'in_review' WHERE id = ?", (task_id,))
+                logger.info("Transitioned task %s to 'in_review' due to PR: %s", task_id, extracted_pr)
+        thread_id = _fetch_discord_thread_id(cursor, task_id)
+        conn.commit()
+        return thread_id
+    finally:
+        conn.close()
 
-    # Jev System One Decision Gates (batched in a single round-trip)
-    batch_gates = evaluate_debrief_gates_batch(
-        task_title=task_row[1],
-        task_body=task_body,
-        debrief_summary=summary,
-        pr_url=extracted_pr,
-        friction_text=frictions,
+
+def _resolve_debrief_action(
+    auto_fix: bool, friction_gate: Optional[Dict[str, Any]], chore_title: Optional[str],
+) -> str:
+    if auto_fix:
+        if friction_gate is not None:
+            friction_gate["action"] = "auto_fix_script"
+        return "auto_fix_script"
+    if friction_gate:
+        return friction_gate.get("action") or "ignore_transient"
+    return "propose_review" if chore_title else "ignore_transient"
+
+
+def _spawn_debrief_autofix(
+    task_id: str, task_title: str, frictions: Optional[str],
+    chore_title: Optional[str], friction_gate: Optional[Dict[str, Any]], friction_assignee: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    raw_title = chore_title or f"Fix failing script in {task_id}"
+    ctitle = raw_title if raw_title.lower().startswith("[auto-fix]") else f"[Auto-Fix] {raw_title}"
+    cbody = (
+        f"Autonomous Tier 2 script/path repair spawned from task debrief for `{task_id}`:\n\n"
+        f"**Failing Script / Friction Report:**\n{frictions}\n\n"
+        f"**Origin Task:** {task_title} (`{task_id}`)\n\n"
+        f"**Execution Mandate:** Fix the failing existing script, broken path, or CLI flag directly and verify with tests (`validate_skill.py --all` if touching skills). Do not create brand-new skills or alter canonical rules in `AGENTS.md`."
     )
-    acceptance_gate = batch_gates["acceptance_gate"]
-    auto_merge_gate = batch_gates["auto_merge_gate"]
-    friction_gate = batch_gates["friction_gate"]
-
-    # 2. Record debrief event
-    payload = {
-        "summary": summary,
-        "frictions": frictions or "None",
-        "pr_url": extracted_pr,
-        "timestamp": now,
-        "acceptance_gate": acceptance_gate,
-        "auto_merge_gate": auto_merge_gate,
-        "friction_gate": friction_gate,
+    chore_tier = "frontier_deep" if friction_assignee == "sindri" else "flash_fast"
+    precomputed = {
+        "tier": chore_tier,
+        "recommended_assignee": friction_assignee,
+        "recommended_model": SPECIALIST_MODELS.get(friction_assignee, "gemini-4-hydrogen-high"),
+        "raw_verdict": friction_gate.get("raw_verdict", "auto_fix_script") if friction_gate else "auto_fix_script",
+        "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,
     }
-    cursor.execute(
-        """
-        INSERT INTO task_events (task_id, kind, payload, created_at)
-        VALUES (?, 'debrief', ?, ?)
-        """,
-        (task_id, json.dumps(payload), now),
+    return create_kanban_task(
+        title=ctitle, body=cbody, priority=1, assignee=friction_assignee, precomputed_complexity=precomputed,
     )
 
-    # 3. If a PR URL was produced, automatically transition task status to in_review
-    if extracted_pr:
-        cursor.execute("UPDATE tasks SET status = 'in_review' WHERE id = ?", (task_id,))
-        logger.info("Transitioned task %s to 'in_review' due to PR: %s", task_id, extracted_pr)
 
-    # 4. Route actionable frictions: Tier 2 (auto_fix_script) -> direct 'ready' [Auto-Fix] card; Tier 3 (propose_review) -> 'in_review' #info Proposal
-    chore_id = None
-    chore_thread_id = None
-    action = (
-        "auto_fix_script"
-        if auto_fix
-        else (friction_gate.get("action") if friction_gate else ("propose_review" if chore_title else "ignore_transient"))
-    )
-    if auto_fix and friction_gate is not None:
-        friction_gate["action"] = "auto_fix_script"
-
+def _spawn_debrief_followup(
+    action: str, task_id: str, task_title: str, frictions: Optional[str],
+    chore_title: Optional[str], batch_gates: Dict[str, Any],
+) -> Tuple[Optional[str], Optional[str]]:
+    friction_gate = batch_gates["friction_gate"]
+    friction_assignee = batch_gates.get("friction_assignee") or "vor"
     if action == "auto_fix_script":
-        raw_title = chore_title or f"Fix failing script in {task_id}"
-        if not raw_title.lower().startswith("[auto-fix]"):
-            ctitle = f"[Auto-Fix] {raw_title}"
-        else:
-            ctitle = raw_title
-        cbody = (
-            f"Autonomous Tier 2 script/path repair spawned from task debrief for `{task_id}`:\n\n"
-            f"**Failing Script / Friction Report:**\n{frictions}\n\n"
-            f"**Origin Task:** {task_row[1]} (`{task_id}`)\n\n"
-            f"**Execution Mandate:** Fix the failing existing script, broken path, or CLI flag directly and verify with tests (`validate_skill.py --all` if touching skills). Do not create brand-new skills or alter canonical rules in `AGENTS.md`."
-        )
-        conn.commit()
-        conn.close()
-        friction_assignee = batch_gates.get("friction_assignee") or "vor"
-        chore_tier = "frontier_deep" if friction_assignee == "sindri" else "flash_fast"
-        chore_id, chore_thread_id = create_kanban_task(
-            title=ctitle,
-            body=cbody,
-            priority=1,
-            assignee=friction_assignee,
-            precomputed_complexity={
-                "tier": chore_tier,
-                "recommended_assignee": friction_assignee,
-                "recommended_model": SPECIALIST_MODELS.get(friction_assignee, "gemini-4-hydrogen-high"),
-                "raw_verdict": friction_gate.get("raw_verdict", "auto_fix_script") if friction_gate else "auto_fix_script",
-                "latency_seconds": friction_gate.get("latency_seconds", 0.0) if friction_gate else 0.0,
-            },
-        )
-        conn = sqlite3.connect(KANBAN_DB_PATH)
-        cursor = conn.cursor()
-    elif action in ("propose_review", "spawn_chore") or bool(chore_title):
+        return _spawn_debrief_autofix(task_id, task_title, frictions, chore_title, friction_gate, friction_assignee)
+    if action in ("propose_review", "spawn_chore") or bool(chore_title):
         ctitle = chore_title or f"Address friction in {task_id}"
-        triage_verdict = friction_gate.get("raw_verdict", "Explicit proposal requested") if friction_gate else "Explicit proposal requested"
+        verdict = friction_gate.get("raw_verdict", "Explicit proposal requested") if friction_gate else "Explicit proposal requested"
         cproposal = (
-            f"Formulate and implement a targeted fix for the friction encountered during `{task_id}` ({task_row[1]}).\n"
-            f"- **Jev Triage Verdict:** {triage_verdict}"
+            f"Formulate and implement a targeted fix for the friction encountered during `{task_id}` ({task_title}).\n"
+            f"- **Jev Triage Verdict:** {verdict}"
         )
-        conn.commit()
-        conn.close()
-        friction_assignee = batch_gates.get("friction_assignee") or "vor"
-        chore_id, chore_thread_id = create_improvement_proposal(
-            title=ctitle,
-            friction=frictions or "See task debrief summary.",
-            proposal=cproposal,
-            target_specialist=friction_assignee,
-            origin_task_id=task_id,
+        return create_improvement_proposal(
+            title=ctitle, friction=frictions or "See task debrief summary.",
+            proposal=cproposal, target_specialist=friction_assignee, origin_task_id=task_id,
         )
-        conn = sqlite3.connect(KANBAN_DB_PATH)
-        cursor = conn.cursor()
-    elif friction_gate and friction_gate.get("action") == "ignore_transient":
+    if friction_gate and friction_gate.get("action") == "ignore_transient":
         logger.info("Friction in task %s classified as transient noise; suppressed follow-up proposal.", task_id)
+    return None, None
 
-    # 5. Find Discord thread subscription for parent task
-    cursor.execute(
-        """
-        SELECT thread_id FROM kanban_notify_subs
-        WHERE task_id = ? AND platform = 'discord' LIMIT 1
-        """,
-        (task_id,),
+
+def record_task_debrief(
+    task_id: str, summary: str, frictions: Optional[str] = None,
+    chore_title: Optional[str] = None, pr_url: Optional[str] = None, auto_fix: bool = False,
+) -> Dict[str, Any]:
+    """Records a task debrief / retrospective receipt and routes Tier 2 auto-fix vs Tier 3 proposal follow-ups."""
+    now = int(time.time())
+    task_title, task_body = _fetch_task_for_debrief(task_id)
+    extracted_pr = _extract_pr_url(summary, pr_url)
+    batch_gates = evaluate_debrief_gates_batch(
+        task_title=task_title, task_body=task_body, debrief_summary=summary, pr_url=extracted_pr, friction_text=frictions,
     )
-    sub_row = cursor.fetchone()
-    thread_id = sub_row[0] if sub_row else None
-
-    conn.commit()
-    conn.close()
-
-    # 6. Post Discord embed
+    payload = {
+        "summary": summary, "frictions": frictions or "None", "pr_url": extracted_pr, "timestamp": now,
+        "acceptance_gate": batch_gates["acceptance_gate"],
+        "auto_merge_gate": batch_gates["auto_merge_gate"],
+        "friction_gate": batch_gates["friction_gate"],
+    }
+    thread_id = _write_debrief_tx(task_id, payload, extracted_pr, now)
+    action = _resolve_debrief_action(auto_fix, batch_gates["friction_gate"], chore_title)
+    chore_id, chore_thread_id = _spawn_debrief_followup(action, task_id, task_title, frictions, chore_title, batch_gates)
     if thread_id:
         post_thread_debrief(
-            thread_id=thread_id,
-            task_id=task_id,
-            summary=summary,
-            frictions=frictions,
-            chore_task_id=chore_id,
-            pr_url=extracted_pr,
-            acceptance_gate=acceptance_gate,
-            auto_merge_gate=auto_merge_gate,
-            friction_gate=friction_gate,
+            thread_id=thread_id, task_id=task_id, summary=summary, frictions=frictions,
+            chore_task_id=chore_id, pr_url=extracted_pr,
+            acceptance_gate=batch_gates["acceptance_gate"],
+            auto_merge_gate=batch_gates["auto_merge_gate"],
+            friction_gate=batch_gates["friction_gate"],
         )
-
     return {
-        "task_id": task_id,
-        "summary": summary,
-        "frictions": frictions,
-        "chore_id": chore_id,
-        "chore_thread_id": chore_thread_id,
-        "thread_id": thread_id,
-        "pr_url": extracted_pr,
-        "acceptance_gate": acceptance_gate,
-        "auto_merge_gate": auto_merge_gate,
-        "friction_gate": friction_gate,
+        "task_id": task_id, "summary": summary, "frictions": frictions, "chore_id": chore_id,
+        "chore_thread_id": chore_thread_id, "thread_id": thread_id, "pr_url": extracted_pr,
+        "acceptance_gate": batch_gates["acceptance_gate"],
+        "auto_merge_gate": batch_gates["auto_merge_gate"],
+        "friction_gate": batch_gates["friction_gate"],
     }
 
 

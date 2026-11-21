@@ -224,6 +224,7 @@ services:
       # documented override at the mount and it resolves the token regardless
       # of HOME.
       - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
+      - HERMES_ANTIGRAVITY_CONTEXT_LENGTH=${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
       - API_SERVER_ENABLED=true
@@ -330,6 +331,7 @@ services:
       # with passwd HOME=/opt/data while the agy token is mounted at
       # /opt/data/home/.gemini/antigravity-cli. Point the override at the mount.
       - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
+      - HERMES_ANTIGRAVITY_CONTEXT_LENGTH=${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}
       - AGENT_MODEL=${AGENT_MODEL}
       - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
       - HERMES_API_TIMEOUT=1800

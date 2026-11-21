@@ -115,8 +115,23 @@
       "toolsets": [
         "file",
         "memory",
+        "session_search",
         "skills",
         "terminal"
+      ],
+      "mnemosyne_tools": [
+        "mnemosyne_recall",
+        "mnemosyne_remember",
+        "mnemosyne_get",
+        "mnemosyne_update",
+        "mnemosyne_forget",
+        "mnemosyne_invalidate",
+        "mnemosyne_validate",
+        "mnemosyne_stats",
+        "mnemosyne_sleep",
+        "mnemosyne_diagnose",
+        "mnemosyne_resolve_conflicts",
+        "mnemosyne_persona_promote"
       ],
       "skills": [
         "productivity/session-wrapup",
