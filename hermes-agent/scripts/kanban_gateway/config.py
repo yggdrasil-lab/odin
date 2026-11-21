@@ -116,7 +116,7 @@ ASSIGNEE_ALIASES = {
 
 SPECIALIST_MODELS = {
     "huginn": "gemini-4-neon-high",
-    "sindri": "gemini-4-argon-high",
+    "sindri": "gemini-4-neon-high",
     "forseti": "claude-sonnet-5-5-high",
     "vor": "claude-sonnet-5-5-high",
     "saga": "claude-sonnet-5-5-high",

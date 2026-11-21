@@ -38,7 +38,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
         )
         self.assertEqual(res["tier"], "frontier_deep")
         self.assertEqual(res["recommended_assignee"], "sindri")
-        self.assertEqual(res["recommended_model"], "gemini-4-argon-high")
+        self.assertEqual(res["recommended_model"], "gemini-4-neon-high")
 
     @patch("kanban_gateway.jev.call_jev_raw")
     def test_sindri_flash_fast_routing(self, mock_jev):
@@ -147,7 +147,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     notify_discord=False,
                 )
 
-                # Verify flash_fast Sindri task preserves gemini-4-hydrogen-high and escalates to Argon on failure
+                # Verify flash_fast Sindri task preserves gemini-4-hydrogen-high and escalates to Neon on failure
                 sindri_fast_id, _ = engine.create_kanban_task(
                     title="Minor CSS tweak on Kratos",
                     body="Update padding on header.",
@@ -160,7 +160,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 self.assertEqual(sindri_fast_info["status"], "ready")
                 self.assertEqual(sindri_fast_info["model_override"], "gemini-4-hydrogen-high")
 
-                # Simulate verification failure on flash_fast Sindri task with Discord thread subscription -> Two-Way Recovery escalates to gemini-4-argon-high
+                # Simulate verification failure on flash_fast Sindri task with Discord thread subscription -> Two-Way Recovery escalates to gemini-4-neon-high
                 conn = sqlite3.connect(db_path)
                 conn.execute(
                     "INSERT INTO kanban_notify_subs (task_id, platform, chat_id, thread_id, user_id, notifier_profile, created_at, last_event_id, delivery_mode) VALUES (?, 'discord', 'c1', 't-fast-1', 'u1', 'huginn', 1, 0, 'thread')",
@@ -176,12 +176,12 @@ class TestKanbanRoleRouting(unittest.TestCase):
                         feedback="Unit test failed on header padding",
                     )
                     self.assertFalse(verify_fail_res["passed"])
-                    self.assertEqual(verify_fail_res["model_override"], "gemini-4-argon-high")
+                    self.assertEqual(verify_fail_res["model_override"], "gemini-4-neon-high")
                     self.assertEqual(verify_fail_res["escalated_from"], "gemini-4-hydrogen-high")
                     mock_thread_post.assert_called_once()
-                    self.assertIn("**Two-Way Recovery Escalation:** Escalated model from `gemini-4-hydrogen-high` to `gemini-4-argon-high`", mock_thread_post.call_args.kwargs["message"])
+                    self.assertIn("**Two-Way Recovery Escalation:** Escalated model from `gemini-4-hydrogen-high` to `gemini-4-neon-high`", mock_thread_post.call_args.kwargs["message"])
                 escalated_info = engine.show_kanban_task(sindri_fast_id, as_json=True)
-                self.assertEqual(escalated_info["model_override"], "gemini-4-argon-high")
+                self.assertEqual(escalated_info["model_override"], "gemini-4-neon-high")
                 self.assertIn("Two-Way Recovery Escalation", escalated_info["body"])
 
                 # Verify explicit specialist without --tier bypasses evaluate_task_complexity over aether-net
@@ -209,7 +209,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 hitl_info = engine.show_kanban_task(hitl_id, as_json=True)
                 self.assertEqual(hitl_info["status"], "in_review")
                 self.assertEqual(hitl_info["assignee"], "sindri")
-                self.assertEqual(hitl_info["model_override"], "gemini-4-argon-high")
+                self.assertEqual(hitl_info["model_override"], "gemini-4-neon-high")
                 self.assertIn("Human-in-the-Loop (HITL) Approval Gate", hitl_info["body"])
                 self.assertIn(f"kanban-gateway handoff {hitl_id} --to sindri", hitl_info["body"])
 
@@ -228,7 +228,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     summary="Root cause: missing env var in poseidon compose. Ready for Forge fix.",
                 )
                 self.assertEqual(res["to_assignee"], "sindri")
-                self.assertEqual(res["model_override"], "gemini-4-argon-high")
+                self.assertEqual(res["model_override"], "gemini-4-neon-high")
 
                 conn = sqlite3.connect(db_path)
                 row = conn.execute(
@@ -238,7 +238,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                 conn.close()
                 self.assertEqual(row[0], "sindri")
                 self.assertEqual(row[1], "ready")
-                self.assertEqual(row[2], "gemini-4-argon-high")
+                self.assertEqual(row[2], "gemini-4-neon-high")
                 self.assertIn("Root cause: missing env var", row[3])
                 self.assertEqual(row[4], 0)
                 self.assertIsNone(row[5])
@@ -288,7 +288,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     self.assertIn("[Auto-Fix] Fix FileNotFoundError in check_poseidon.py", autofix_info["title"])
                     self.assertIsNone(engine.trigger_session_wrapup_chore(autofix_id, autofix_info["title"]))
 
-                # Test Tier 2 failing script friction routed to sindri uses gemini-4-argon-high
+                # Test Tier 2 failing script friction routed to sindri uses gemini-4-neon-high
                 with patch.object(engine, "DISCORD_BOT_TOKEN", ""), patch.object(engine, "DISCORD_CHANNEL_ID", ""), patch(
                     "kanban_gateway.engine.evaluate_debrief_gates_batch",
                     return_value={
@@ -306,7 +306,7 @@ class TestKanbanRoleRouting(unittest.TestCase):
                     )
                     sindri_autofix_info = engine.show_kanban_task(sindri_debrief_res["chore_id"], as_json=True)
                     self.assertEqual(sindri_autofix_info["assignee"], "sindri")
-                    self.assertEqual(sindri_autofix_info["model_override"], "gemini-4-argon-high")
+                    self.assertEqual(sindri_autofix_info["model_override"], "gemini-4-neon-high")
 
                     # Test session wrap-up chore auto-spawn passes precomputed_complexity (bypassing Jev/Muninn evaluation)
                     with patch("kanban_gateway.engine.evaluate_task_complexity") as mock_eval_complexity:
