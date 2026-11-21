@@ -60,6 +60,8 @@ class KanbanGatewayHTTPHandler(BaseHTTPRequestHandler):
                 parsed = _coerce_depends_on(payload.get(key))
                 if parsed:
                     deps.extend(parsed)
+            raw_owner = payload.get("owner")
+            owner = "hermes" if raw_owner is None else raw_owner
             task_id, thread_id = create_kanban_task(
                 title,
                 body,
@@ -68,6 +70,7 @@ class KanbanGatewayHTTPHandler(BaseHTTPRequestHandler):
                 tier=payload.get("tier"),
                 await_approval=bool(payload.get("await_approval", False)),
                 depends_on=deps or None,
+                owner=owner,
                 status=payload.get("status"),
             )
             self._send_json(200, {"task_id": task_id, "thread_id": thread_id})

@@ -22,6 +22,8 @@ from typing import Callable, Sequence
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kanban_gateway import (
+    ALLOWED_CREATE_STATUSES,
+    ALLOWED_TASK_OWNERS,
     DEFAULT_ASSIGNEE,
     DISCORD_CHANNEL_ID,
     DISCORD_USER_ID,
@@ -145,6 +147,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         tier=args.tier,
         await_approval=args.await_approval,
         depends_on=depends_on or None,
+        owner=args.owner,
         status=args.status,
     )
     print(f"Created task {task_id} with thread ID {thread_id}")
@@ -297,7 +300,18 @@ def _add_intake_subparsers(subparsers: argparse._SubParsersAction) -> None:
     p_create.add_argument("--await-approval", action="store_true", default=False, help="Park task in 'in_review' awaiting operator approval before execution")
     p_create.add_argument("--depends-on", action="append", default=[], dest="depends_on", help="Parent task ID that must finish before this task runs (repeatable)")
     p_create.add_argument("--blocked-by", action="append", default=[], dest="blocked_by", help="Alias for --depends-on (repeatable)")
-    p_create.add_argument("--status", choices=["todo", "ready", "in_review"], default=None, help="Optional initial status (overridden to 'todo' if any parent is open)")
+    p_create.add_argument(
+        "--owner",
+        choices=list(ALLOWED_TASK_OWNERS),
+        default="hermes",
+        help="Task execution owner ('hermes' dispatches to worker daemon; 'ide' defaults to 'in_progress')",
+    )
+    p_create.add_argument(
+        "--status",
+        choices=list(ALLOWED_CREATE_STATUSES),
+        default=None,
+        help="Optional initial status override (overridden to 'todo' if any parent is open)",
+    )
 
     p_link = subparsers.add_parser("link", help="Attach a parent -> child dependency edge between tasks")
     p_link.add_argument("parent_id", help="Parent (blocking) Kanban task ID")
