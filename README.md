@@ -104,18 +104,13 @@ main agent loop -> Antigravity Pool 1 (agy CLI, gemini-4-hydrogen-high)
                 -> usage limit reached -> Muninn (custom) -> DeepSeek V4-Flash (agent-loop)
 ```
 
-`AGENT_MODEL` therefore names a direct model exposed by the `agy` plugin (`gemini-4-hydrogen-high`, `gemini-4-neon-high`, `gemini-4-carbon-high`, `gemini-4-argon-high`, `claude-sonnet-5-5-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names a direct model exposed by the `agy` plugin (`gemini-4-hydrogen-high`, `claude-sonnet-5-5-high`, ...) - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
 This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and rotates cross-pool without redundant intra-pool Gemini hops before finally hitting Muninn.
 
-Compression, memory consolidation, and background review ride medium-effort tiers across both pools (`gemini-4-hydrogen-medium` -> `claude-sonnet-5-5-medium`) to minimize proportional Pool 1 burn before falling back to Muninn (`compress` / `app-synthesize`).
+Compression, memory consolidation, and background review ride medium-effort tiers across both pools (`claude-sonnet-5-5-medium` -> `gemini-4-hydrogen-medium`) to minimize proportional Pool 1 burn before falling back to Muninn (`compress` / `app-synthesize`).
 
-Specialist profiles (`config/hermes/profiles/roles.json`) pair each role with an optimal primary model and a cross-pool fallback:
-- `sindri` (`frontier_deep`): `gemini-4-argon-high` (Pool 1) -> `claude-opus-5-5-high` (Pool 2) -> Muninn (`agent-loop`).
-- `huginn` & `delegation`: `gemini-4-neon-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> Muninn (`agent-loop`).
-- `forseti`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-neon-high` (Pool 1) -> Muninn (`agent-loop`).
-- `vor` & `saga`: `claude-sonnet-5-5-high` (Pool 2) -> `gemini-4-hydrogen-high` (Pool 1) -> Muninn (`agent-loop`).
-- `odin` & `swarm-worker` / `flash_fast` Sindri chores: `gemini-4-hydrogen-high` (Pool 1) -> `claude-sonnet-5-5-high` (Pool 2) -> Muninn (`agent-loop`, with Two-Way Recovery escalating failed verification gates to `sindri` on `gemini-4-argon-high`).
+Hermes runs strictly in minimal single-coordinator mode (`odin` only, `gateway.multiplex_profiles: false`) for cron jobs, Discord, and auto-ingestions on `gemini-4-hydrogen-high` -> `claude-sonnet-5-5-high` -> Muninn (`agent-loop` / `agent-delegate`). All 5 Court of Odin specialists (`huginn`, `sindri`, `forseti`, `vor`, `saga`) run natively inside Antigravity IDE.
 
 Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). Both fixed-fee Gemini and Claude pools are exhausted before any metered API is touched.
 

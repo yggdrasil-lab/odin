@@ -396,13 +396,18 @@ class AntigravityStream(Iterator[Any]):
 
     def _usage_totals(self, usage_data: dict[str, Any]) -> tuple[int, int, int, int]:
         if self.is_worker and self.usage_baseline is not None:
-            d = _delta_worker_usage(usage_data, self.usage_baseline)
-            return d.input_tokens, d.output_tokens, d.total_tokens, d.cache_read_tokens
-        i = int(usage_data.get("input_tokens", 0) or 0)
-        o = int(usage_data.get("output_tokens", 0) or 0)
-        t = int(usage_data.get("total_tokens", i + o) or 0)
-        c = int(usage_data.get("cache_read_tokens", 0) or 0)
-        return i, o, t, c
+            deltas = _delta_worker_usage(usage_data, self.usage_baseline)
+            return (
+                deltas.input_tokens,
+                deltas.output_tokens,
+                deltas.total_tokens,
+                deltas.cache_read_tokens,
+            )
+        input_tokens = int(usage_data.get("input_tokens", 0) or 0)
+        output_tokens = int(usage_data.get("output_tokens", 0) or 0)
+        total_tokens = int(usage_data.get("total_tokens", input_tokens + output_tokens) or 0)
+        cached_tokens = int(usage_data.get("cache_read_tokens", 0) or 0)
+        return input_tokens, output_tokens, total_tokens, cached_tokens
 
     def _empty_result_message(self, **kw: Any) -> str:
         return f"empty/no result ({{kw}})"
@@ -638,7 +643,18 @@ class AntigravityStream(Iterator[Any]):
 
 def collect_stream_completion(stream: AntigravityStream) -> Any:
     chunks = list(stream)
-    return chunks[-1] if chunks else None
+    usage = None
+    for c in chunks:
+        if getattr(c, "usage", None) is not None:
+            usage = c.usage
+    if not usage:
+        usage = SimpleNamespace(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+        )
+    return SimpleNamespace(chunks=chunks, usage=usage)
 '''
 
 
@@ -1078,6 +1094,7 @@ class TestAgyV1029Patches(unittest.TestCase):
             ("process.py", "def _own_process_group"),
             ("client.py", "# The session is gone: any later usage from it belongs to a dead"),
             ("stream.py", "if neutralized_tool_step:"),
+            ("stream.py", "cache_read_tokens: int\n"),
             ("tests/test_antigravity_plugin.py", "def test_native_tool_step_neutralization_in_stream"),
         ):
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -1264,7 +1281,87 @@ class TestAgyV1029Patches(unittest.TestCase):
                         list(client.chat.completions.create(model="gemini-4-hydrogen-high", messages=[{"role": "user", "content": "new session"}], stream=True))
                     )
                     self.assertEqual(u_fresh.prompt_tokens, 500)
+                    self.assertEqual(u_fresh.completion_tokens_details.reasoning_tokens, 0)
                     self.assertEqual(client._worker_usage_baseline["input_tokens"], 500)
+
+    @staticmethod
+    def _mock_stream_proc(events_list: list[dict[str, Any]]) -> MagicMock:
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdin = MagicMock()
+        proc.stdout.readline.side_effect = [json.dumps(e) + "\n" for e in events_list] + [""]
+        return proc
+
+    def _extract_usage(self, chunks: list[Any]) -> Any:
+        for chunk in chunks:
+            if getattr(chunk, "usage", None) is not None:
+                return chunk.usage
+        self.fail("missing usage chunk")
+
+    @staticmethod
+    def _usage_turn_event(conv_id: str, text: str, usage: dict[str, int]) -> list[dict[str, Any]]:
+        return [
+            {"event": "init", "conversation_id": conv_id},
+            {"event": "step_update", "step_update": {"text_delta": text}},
+            {"event": "result", "result": {"status": "SUCCESS", "response": text, "usage": usage}},
+        ]
+
+    def test_worker_thinking_tokens_delta_and_respawn_preservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plugin_dir = Path(tmpdir)
+            _write_v1029_plugin_fixture(plugin_dir)
+            agy_patch.main(["--plugin-dir", str(plugin_dir)])
+
+            with _import_patched_plugin(plugin_dir) as mods:
+                client = mods["client"].AntigravityClient(cwd=tmpdir)
+                self.addCleanup(client.close)
+                t1 = self._usage_turn_event("conv-think", "One.", {"input_tokens": 1000, "output_tokens": 50, "thinking_tokens": 1200, "total_tokens": 2250, "cache_read_tokens": 0})
+                t2 = self._usage_turn_event("conv-think", "Two.", {"input_tokens": 1400, "output_tokens": 90, "thinking_tokens": 3700, "total_tokens": 5190, "cache_read_tokens": 900})
+                t3 = self._usage_turn_event("conv-think", "Three.", {"input_tokens": 1700, "output_tokens": 130, "thinking_tokens": 5100, "total_tokens": 6930, "cache_read_tokens": 2000})
+                p_a, p_b = self._mock_stream_proc(t1 + t2), self._mock_stream_proc(t3)
+
+                m1 = [{"role": "user", "content": "q1"}]
+                m2 = m1 + [{"role": "assistant", "content": "One."}, {"role": "user", "content": "q2"}]
+                m3 = m2 + [{"role": "assistant", "content": "Two."}, {"role": "user", "content": "q3"}]
+
+                with patch("subprocess.Popen", side_effect=[p_a, p_b]):
+                    u1 = self._extract_usage(list(client.chat.completions.create(model="gemini-4-hydrogen-high", messages=m1, stream=True)))
+                    u2 = self._extract_usage(list(client.chat.completions.create(model="gemini-4-hydrogen-high", messages=m2, stream=True)))
+                    p_a.poll.return_value = 0
+                    u3 = self._extract_usage(list(client.chat.completions.create(model="gemini-4-hydrogen-high", messages=m3, stream=True)))
+
+                self.assertEqual(u1.completion_tokens_details.reasoning_tokens, 1200)
+                self.assertEqual(u2.completion_tokens_details.reasoning_tokens, 2500)
+                self.assertEqual(u3.completion_tokens_details.reasoning_tokens, 1400)
+                self.assertEqual(client._worker_usage_baseline["thinking_tokens"], 5100)
+
+    def test_oneshot_and_fallback_reasoning_tokens_emission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plugin_dir = Path(tmpdir)
+            _write_v1029_plugin_fixture(plugin_dir)
+            agy_patch.main(["--plugin-dir", str(plugin_dir)])
+
+            with _import_patched_plugin(plugin_dir) as mods:
+                client = mods["client"].AntigravityClient(cwd=tmpdir)
+                self.addCleanup(client.close)
+                oneshot_events = self._usage_turn_event(
+                    "conv-oneshot", "Solo.",
+                    {"input_tokens": 300, "output_tokens": 40, "thinking_tokens": 450, "total_tokens": 790, "cache_read_tokens": 0},
+                )
+                p_oneshot = self._mock_stream_proc(oneshot_events)
+                self.assertTrue(client._worker_lock.acquire(blocking=False))
+                try:
+                    with patch("subprocess.Popen", return_value=p_oneshot):
+                        u_oneshot = self._extract_usage(
+                            list(client.chat.completions.create(model="gemini-4-hydrogen-high", messages=[{"role": "user", "content": "oneshot"}], stream=True))
+                        )
+                finally:
+                    client._worker_lock.release()
+                self.assertEqual(u_oneshot.completion_tokens_details.reasoning_tokens, 450)
+                self.assertEqual(client._worker_usage_baseline, {})
+
+                fallback = mods["stream"].collect_stream_completion([])
+                self.assertEqual(fallback.usage.completion_tokens_details.reasoning_tokens, 0)
 
     def test_native_tool_interception_recovers_and_blocks_leaks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

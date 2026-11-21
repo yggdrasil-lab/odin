@@ -10,7 +10,7 @@ overlay network (aether-net) in a single unified execution:
    athletic events (badminton buffer) -> volume autoregulation.
 3. Plutus API (http://plutus-api:8000/v1): financial runway in locked weeks,
    unallocated transactions, credit card settlement deadlines.
-4. Odin API (http://huginn-gateway:8642/v1) & Kanban: blocked cards and overnight Iris alerts.
+4. Odin Swarm (audit_swarm_health): Swarm replica health and overlay IPAM headroom.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,7 +34,7 @@ except ImportError:
     try:
         from hermes_agent.scripts.audit_swarm_health import audit_swarm_services
     except ImportError:
-        def audit_swarm_services(triage: bool = False, kanban_db_path: str = "") -> Dict[str, Any]:
+        def audit_swarm_services() -> Dict[str, Any]:
             return {
                 "status": "PASS",
                 "total_services": 0,
@@ -56,11 +55,6 @@ DEFAULT_EIR_URL = os.environ.get("EIR_API_URL", "http://eir-api:8000")
 DEFAULT_KRATOS_URL = os.environ.get("KRATOS_API_URL", "http://kratos-api:8000")
 DEFAULT_PLUTUS_URL = os.environ.get("PLUTUS_API_URL", "http://plutus-api:8000")
 DEFAULT_HUGINN_URL = os.environ.get("HUGINN_GATEWAY_URL", "http://huginn-gateway:8642")
-
-KANBAN_DB_PATH = os.environ.get(
-    "KANBAN_DB_PATH",
-    "/opt/data/kanban.db" if os.path.exists("/opt/data/kanban.db") else "/opt/odin/hermes/kanban.db",
-)
 
 OBSIDIAN_VAULT_PATH = os.environ.get(
     "OBSIDIAN_VAULT_PATH",
@@ -525,84 +519,21 @@ def fetch_plutus_telemetry(base_url: str, as_of_date: str) -> PlutusTelemetry:
 
 
 # ----------------------------------------------------------------------
-# 4. ODIN Kanban Queue & Overnight Iris Alerts
+# 4. ODIN Swarm Health & Overlay IPAM
 # ----------------------------------------------------------------------
 
 @dataclass
 class OdinTelemetry:
-    blocked_cards: List[Dict[str, Any]] = field(default_factory=list)
-    iris_alerts_24h: List[Dict[str, Any]] = field(default_factory=list)
-    active_cards_by_status: Dict[str, int] = field(default_factory=dict)
-    total_active_cards: int = 0
     swarm_total_services: int = 0
     swarm_healthy_services: int = 0
     swarm_degraded_services: List[Dict[str, Any]] = field(default_factory=list)
     overlay_ipam: Optional[Dict[str, Any]] = None
 
 
-def fetch_odin_telemetry(
-    db_path: str,
-    lookback_hours: int = 24,
-    auto_triage: bool = True
-) -> OdinTelemetry:
-    """Queries Kanban database and audits Swarm service replicas and health."""
-    swarm_audit = audit_swarm_services(triage=auto_triage, kanban_db_path=db_path)
-
-    if not os.path.exists(db_path):
-        logger.warning("Kanban database not found at %s", db_path)
-        return OdinTelemetry(
-            swarm_total_services=swarm_audit.get("total_services", 0),
-            swarm_healthy_services=swarm_audit.get("healthy_services", 0),
-            swarm_degraded_services=swarm_audit.get("degraded_services", []),
-            overlay_ipam=swarm_audit.get("overlay_ipam"),
-        )
-
-    blocked: List[Dict[str, Any]] = []
-    alerts: List[Dict[str, Any]] = []
-    status_counts: Dict[str, int] = {}
-    now_ts = int(datetime.now(timezone.utc).timestamp())
-    lookback_ts = now_ts - (lookback_hours * 3600)
-
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3.0)
-        conn.row_factory = sqlite3.Row
-
-        # 1. Blocked cards
-        for row in conn.execute("SELECT id, title, assignee, created_at FROM tasks WHERE status = 'blocked' ORDER BY created_at DESC"):
-            blocked.append({
-                "id": row["id"],
-                "title": row["title"],
-                "assignee": row["assignee"],
-            })
-
-        # 2. Overnight Iris alerts (source: jev-gateway or title contains Alert)
-        stmt_alerts = (
-            "SELECT id, title, created_by, status, created_at FROM tasks "
-            "WHERE created_at >= ? AND (created_by = 'jev-gateway' OR title LIKE '%Alert%' OR title LIKE '%Incident%') "
-            "ORDER BY created_at DESC"
-        )
-        for row in conn.execute(stmt_alerts, (lookback_ts,)):
-            alerts.append({
-                "id": row["id"],
-                "title": row["title"],
-                "status": row["status"],
-                "created_by": row["created_by"],
-            })
-
-        # 3. Active queue status counts
-        for row in conn.execute("SELECT status, count(*) as cnt FROM tasks WHERE status != 'done' GROUP BY status"):
-            status_counts[row["status"]] = row["cnt"]
-
-        conn.close()
-    except Exception as exc:
-        logger.error("Failed querying Kanban database at %s: %s", db_path, exc)
-
-    total_active = sum(status_counts.values())
+def fetch_odin_telemetry() -> OdinTelemetry:
+    """Audits Swarm service replicas and overlay IPAM headroom."""
+    swarm_audit = audit_swarm_services()
     return OdinTelemetry(
-        blocked_cards=blocked,
-        iris_alerts_24h=alerts,
-        active_cards_by_status=status_counts,
-        total_active_cards=total_active,
         swarm_total_services=swarm_audit.get("total_services", 0),
         swarm_healthy_services=swarm_audit.get("healthy_services", 0),
         swarm_degraded_services=swarm_audit.get("degraded_services", []),
@@ -634,163 +565,111 @@ class MorningCopilotReport:
         }
 
 
-def generate_executive_markdown(report: MorningCopilotReport, section: str = "all") -> str:
-    """Formats aggregated cross-stack intelligence into an executive Markdown briefing.
-    section: 'all', 'executive' (wealth + homelab), or 'training' (biological recovery).
-    """
-    eir = report.eir
-    kratos = report.kratos
-    plutus = report.plutus
-    odin = report.odin
+def _render_biometrics_lines(eir: EirTelemetry, kratos: KratosTelemetry) -> List[str]:
+    """Formats Eir biometrics and Kratos training prescription lines."""
+    vitals_parts = []
+    if eir.sleep_duration_hours is not None:
+        deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
+        vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
+    if eir.hrv_ms is not None:
+        vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
+    if eir.resting_hr_bpm is not None:
+        vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
+    if eir.weight_kg is not None:
+        fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
+        vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
 
-    lines: List[str] = []
+    lines = [
+        f"- **Vitals**: {' | '.join(vitals_parts) if vitals_parts else 'Telemetry syncing'}",
+        f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}",
+        f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})",
+    ]
+    if kratos.badminton_buffer_note:
+        lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
+    if kratos.recommended_exercises:
+        ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
+        if ex_names:
+            lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
+    return lines
 
-    if section == "training":
-        lines.append(f"# 🏋️ Biological Recovery & Training Directive - {report.date}")
-        lines.append("")
-        vitals_parts = []
-        if eir.sleep_duration_hours is not None:
-            deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
-            vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
-        if eir.hrv_ms is not None:
-            vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
-        if eir.resting_hr_bpm is not None:
-            vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
-        if eir.weight_kg is not None:
-            fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
-            vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
 
-        vitals_line = " | ".join(vitals_parts) if vitals_parts else "Telemetry syncing"
-        lines.append(f"- **Vitals**: {vitals_line}")
-        lines.append(f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}")
-        lines.append(f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})")
-
-        if kratos.badminton_buffer_note:
-            lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
-
-        if kratos.recommended_exercises:
-            ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
-            if ex_names:
-                lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
-        lines.append("")
-        lines.append("## 🔍 Operational Review & Run Frictions")
-        lines.append("- Telemetry: Biological recovery metrics and Kratos training prescription verified.")
-        lines.append("- 0 frictions or inefficiencies encountered; run was clean and optimal.")
-        return "\n".join(lines)
-
-    lines.append(f"# 🌅 Morning Executive Copilot - {report.date}")
-    lines.append("")
-
-    if section in ("all", "both"):
-        # Section 1: Biological Recovery & Autoregulated Training
-        lines.append("## 🏋️ Biological Recovery & Training Directive")
-        vitals_parts = []
-        if eir.sleep_duration_hours is not None:
-            deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
-            vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
-        if eir.hrv_ms is not None:
-            vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
-        if eir.resting_hr_bpm is not None:
-            vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
-        if eir.weight_kg is not None:
-            fat_str = f" ({eir.body_fat_pct:.1f}% fat)" if eir.body_fat_pct is not None else ""
-            vitals_parts.append(f"Weight {eir.weight_kg:.1f}kg{fat_str}")
-
-        vitals_line = " | ".join(vitals_parts) if vitals_parts else "Telemetry syncing"
-        lines.append(f"- **Vitals**: {vitals_line}")
-        lines.append(f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}")
-        lines.append(f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})")
-
-        if kratos.badminton_buffer_note:
-            lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
-
-        if kratos.recommended_exercises:
-            ex_names = [e.get("exercise_name", "") for e in kratos.recommended_exercises[:4] if e.get("exercise_name")]
-            if ex_names:
-                lines.append(f"- **Prescription**: {', '.join(ex_names)} ({kratos.target_rir})")
-        lines.append("")
-
-    # Section 2: Wealth & Financial Runway
-    lines.append("## 💰 Wealth Runway & Financial Deadlines")
-    lines.append(
-        f"- **Runway**: **{plutus.runway_weeks:.1f} weeks** ({plutus.runway_years:.2f} years) | "
-        f"Emergency: {plutus.emergency_weeks:.1f}w | Locked: {plutus.locked_weeks:.1f}w"
-    )
-    lines.append(
-        f"- **Burn & Banked Time**: Weekly Burn ${plutus.weekly_burn_rate:,.2f} NZD | "
-        f"Time Banked This Week: {plutus.time_banked_this_week:+.1f} weeks"
-    )
-
+def _render_wealth_lines(plutus: PlutusTelemetry) -> List[str]:
+    """Formats Plutus runway, unallocated transactions, and credit card deadlines."""
+    lines = [
+        "## 💰 Wealth Runway & Financial Deadlines",
+        (
+            f"- **Runway**: **{plutus.runway_weeks:.1f} weeks** ({plutus.runway_years:.2f} years) | "
+            f"Emergency: {plutus.emergency_weeks:.1f}w | Locked: {plutus.locked_weeks:.1f}w"
+        ),
+        (
+            f"- **Burn & Banked Time**: Weekly Burn ${plutus.weekly_burn_rate:,.2f} NZD | "
+            f"Time Banked This Week: {plutus.time_banked_this_week:+.1f} weeks"
+        ),
+    ]
     if plutus.unallocated_tx_count > 0:
         lines.append(f"- **⚠️ Unallocated Transactions**: {plutus.unallocated_tx_count} transactions require classification.")
     else:
         lines.append("- **Unallocated Transactions**: 0 unallocated items; ledger fully reconciled.")
-
-    if plutus.credit_card_deadlines:
-        for cd in plutus.credit_card_deadlines:
-            rem_str = f"in {cd.days_remaining} days" if cd.days_remaining is not None else "scheduled"
-            lines.append(f"- **💳 {cd.account_name}**: {cd.notice} ({rem_str}).")
+    for cd in plutus.credit_card_deadlines:
+        rem_str = f"in {cd.days_remaining} days" if cd.days_remaining is not None else "scheduled"
+        lines.append(f"- **💳 {cd.account_name}**: {cd.notice} ({rem_str}).")
     lines.append("")
+    return lines
 
-    # Section 3: Odin Swarm & Kanban Queue
-    lines.append("## 🛡️ Homelab Swarm & Kanban Queue")
 
+def _render_swarm_lines(odin: OdinTelemetry) -> List[str]:
+    """Formats Homelab Swarm replica and overlay IPAM health lines."""
+    lines = ["## 🛡️ Homelab Swarm Health"]
     if odin.swarm_total_services > 0:
         if odin.swarm_degraded_services:
             lines.append(f"- **🚨 Degraded Swarm Services ({len(odin.swarm_degraded_services)})**:")
             for ds in odin.swarm_degraded_services:
-                triage_str = f" (Triaged to Kanban: `{ds['triage_id']}`)" if ds.get("triage_id") else (" (Already in Kanban)" if ds.get("already_tracked") else "")
                 err_str = f" | {ds['task_error']}" if ds.get("task_error") else ""
-                lines.append(f"  - `{ds['name']}` ({ds['replicas']}): {ds.get('task_state', 'degraded')}{err_str}{triage_str}")
+                lines.append(f"  - `{ds['name']}` ({ds['replicas']}): {ds.get('task_state', 'degraded')}{err_str}")
         else:
             lines.append(f"- **Swarm Fleet**: 🟢 {odin.swarm_healthy_services}/{odin.swarm_total_services} services healthy (0 degraded).")
+    elif not odin.overlay_ipam:
+        lines.append("- **Swarm Fleet**: Telemetry unavailable.")
 
     if odin.overlay_ipam:
         ipam = odin.overlay_ipam
         net_name = ipam.get("network", "aether-net")
-        in_use = ipam.get("ips_in_use")
-        free = ipam.get("dynamic_ips_available")
-        phantom = ipam.get("phantom_leaked_ips")
+        in_use, free, phantom = ipam.get("ips_in_use"), ipam.get("dynamic_ips_available"), ipam.get("phantom_leaked_ips")
         if ipam.get("degraded"):
             reason = ipam.get("reason") or "IPAM check failed"
-            if in_use is not None and free is not None and phantom is not None:
-                lines.append(
-                    f"- **🚨 Overlay IPAM Alert (`{net_name}`)**: "
-                    f"{in_use} IPs in use, {free} free (~{phantom} phantom) | {reason}"
-                )
-            else:
-                lines.append(f"- **🚨 Overlay IPAM Alert (`{net_name}`)**: metrics unavailable | {reason}")
+            metrics = f"{in_use} IPs in use, {free} free (~{phantom} phantom)" if None not in (in_use, free, phantom) else "metrics unavailable"
+            lines.append(f"- **🚨 Overlay IPAM Alert (`{net_name}`)**: {metrics} | {reason}")
         elif ipam.get("status") == "PASS":
-            lines.append(
-                f"- **Overlay IPAM (`{net_name}`)**: 🟢 {in_use} in use, {free} free (~{phantom} phantom)."
-            )
-
-    status_summary = ", ".join(f"{st}: {cnt}" for st, cnt in odin.active_cards_by_status.items()) or "Queue idle"
-    lines.append(f"- **Active Cards ({odin.total_active_cards})**: {status_summary}")
-
-    if odin.blocked_cards:
-        lines.append(f"- **🚨 Blocked Cards ({len(odin.blocked_cards)})**:")
-        for bc in odin.blocked_cards:
-            lines.append(f"  - `{bc['id']}`: {bc['title']} (Assignee: {bc['assignee']})")
-    else:
-        lines.append("- **Blocked Cards**: 0 cards blocked; pipeline flowing smoothly.")
-
-    if odin.iris_alerts_24h:
-        lines.append(f"- **Overnight Iris Incidents ({len(odin.iris_alerts_24h)})**:")
-        for al in odin.iris_alerts_24h[:3]:
-            lines.append(f"  - `{al['id']}`: {al['title']} ({al['status']})")
-    else:
-        lines.append("- **Overnight Incidents**: 0 Iris incidents in the past 24 hours.")
+            lines.append(f"- **Overlay IPAM (`{net_name}`)**: 🟢 {in_use} in use, {free} free (~{phantom} phantom).")
     lines.append("")
+    return lines
 
-    # Operational Review Footer
+
+def generate_executive_markdown(report: MorningCopilotReport, section: str = "all") -> str:
+    """Formats aggregated cross-stack intelligence into an executive Markdown briefing.
+    section: 'all', 'executive' (wealth + homelab), or 'training' (biological recovery).
+    """
+    if section == "training":
+        lines = [f"# 🏋️ Biological Recovery & Training Directive - {report.date}", ""]
+        lines.extend(_render_biometrics_lines(report.eir, report.kratos))
+        lines.extend(["", "## 🔍 Operational Review & Run Frictions",
+                      "- Telemetry: Biological recovery metrics and Kratos training prescription verified.",
+                      "- 0 frictions or inefficiencies encountered; run was clean and optimal."])
+        return "\n".join(lines)
+
+    lines = [f"# 🌅 Morning Executive Copilot - {report.date}", ""]
+    if section in ("all", "both"):
+        lines.append("## 🏋️ Biological Recovery & Training Directive")
+        lines.extend(_render_biometrics_lines(report.eir, report.kratos))
+        lines.append("")
+
+    lines.extend(_render_wealth_lines(report.plutus))
+    lines.extend(_render_swarm_lines(report.odin))
+
     lines.append("## 🔍 Operational Review & Run Frictions")
-    if section == "executive":
-        lines.append("- Execution: Executive intelligence aggregated successfully across Plutus and Odin.")
-    else:
-        lines.append("- Execution: Cross-stack telemetry aggregated successfully across Eir, Kratos, Plutus, and Odin.")
+    scope_note = "Plutus and Odin" if section == "executive" else "Eir, Kratos, Plutus, and Odin"
+    lines.append(f"- Execution: {'Executive intelligence' if section == 'executive' else 'Cross-stack telemetry'} aggregated successfully across {scope_note}.")
     lines.append("- 0 frictions or inefficiencies encountered; run was clean and optimal.")
-
     return "\n".join(lines)
 
 
@@ -828,17 +707,13 @@ def run_morning_copilot(
     eir_url: str = DEFAULT_EIR_URL,
     kratos_url: str = DEFAULT_KRATOS_URL,
     plutus_url: str = DEFAULT_PLUTUS_URL,
-    kanban_db_path: str = KANBAN_DB_PATH,
     vault_path: str = OBSIDIAN_VAULT_PATH,
     save_journal: bool = False,
     section: str = "all",
-    auto_triage: bool = True,
 ) -> MorningCopilotReport:
     """Executes full cross-stack aggregation cycle."""
     date_str = target_date or get_auckland_today()
     logger.info("Starting Morning Executive Copilot aggregation for date: %s", date_str)
-
-    # 1. Eir & 2. Kratos (health & training telemetry)
     if section != "executive":
         eir = fetch_eir_telemetry(eir_url, date_str)
         kratos = fetch_kratos_telemetry(kratos_url, date_str, eir.recovery_tier)
@@ -846,26 +721,16 @@ def run_morning_copilot(
         eir = EirTelemetry(date=date_str)
         kratos = KratosTelemetry(date=date_str, iso_week=resolve_iso_week(date_str))
 
-    # 3. Plutus & 4. Odin (wealth & homelab telemetry)
     if section != "training":
         plutus = fetch_plutus_telemetry(plutus_url, date_str)
-        odin = fetch_odin_telemetry(kanban_db_path, auto_triage=auto_triage)
+        odin = fetch_odin_telemetry()
     else:
         plutus = PlutusTelemetry(as_of_date=date_str)
         odin = OdinTelemetry()
 
-    report = MorningCopilotReport(
-        date=date_str,
-        eir=eir,
-        kratos=kratos,
-        plutus=plutus,
-        odin=odin,
-    )
-
+    report = MorningCopilotReport(date=date_str, eir=eir, kratos=kratos, plutus=plutus, odin=odin)
     if save_journal:
-        md = generate_executive_markdown(report, section=section)
-        append_to_obsidian_journal(vault_path, date_str, md)
-
+        append_to_obsidian_journal(vault_path, date_str, generate_executive_markdown(report, section=section))
     return report
 
 
@@ -880,10 +745,8 @@ def main() -> int:
     parser.add_argument("--eir-url", type=str, default=DEFAULT_EIR_URL, help="Eir API base URL")
     parser.add_argument("--kratos-url", type=str, default=DEFAULT_KRATOS_URL, help="Kratos API base URL")
     parser.add_argument("--plutus-url", type=str, default=DEFAULT_PLUTUS_URL, help="Plutus API base URL")
-    parser.add_argument("--kanban-db", type=str, default=KANBAN_DB_PATH, help="Path to kanban.db SQLite store")
     parser.add_argument("--vault-path", type=str, default=OBSIDIAN_VAULT_PATH, help="Path to Obsidian vault")
     parser.add_argument("--output-file", type=str, default=None, help="Save markdown output to specified file path")
-    parser.add_argument("--no-triage", action="store_true", help="Disable automatic dispatch of degraded Swarm services to kanban-gateway triage")
     args = parser.parse_args()
 
     report = run_morning_copilot(
@@ -891,11 +754,9 @@ def main() -> int:
         eir_url=args.eir_url,
         kratos_url=args.kratos_url,
         plutus_url=args.plutus_url,
-        kanban_db_path=args.kanban_db,
         vault_path=args.vault_path,
         save_journal=args.journal,
         section=args.section,
-        auto_triage=not args.no_triage,
     )
 
     if args.require_data and args.section == "training":

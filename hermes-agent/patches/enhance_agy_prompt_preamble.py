@@ -15,10 +15,11 @@ or misinterpret relative time (e.g. UTC vs Auckland, New Zealand).
 Fix
 ---
 Bake explicit operational rules into ``_PROMPT_PREAMBLE`` in ``prompt.py``:
-1. Output budget & brevity: Keep responses concise and incremental; never draft multi-file
-   changes in a single turn.
-2. Tool discipline & boundaries: Emit only tool calls and stop immediately; focus on one tool/file
-   per step; never claim success without inspecting verified tool output.
+1. Output budget & brevity: Keep responses concise and incremental; never draft massive
+   multi-file changes in a single turn.
+2. Tool discipline & boundaries: Emit only tool calls and stop immediately; batch independent
+   read-only tool calls in parallel while keeping file edits focused; never claim success
+   without inspecting verified tool output.
 3. Timezone: Align all relative temporal references with Pacific/Auckland (UTC+12/UTC+13 DST).
 4. Fail-loud architecture & zero silent fallbacks: Raise explicit exceptions and exit non-zero immediately on errors instead of speculative fallbacks.
 """
@@ -49,10 +50,10 @@ INJECTION = (
     "    \"OUTPUT BUDGET & BREVITY:\",\n"
     "    \"- Each response has a hard per-turn completion token limit covering both visible text and hidden reasoning tokens.\",\n"
     "    \"- Stay concise, direct, and focused on the immediate turn. NEVER attempt massive multi-file changes or huge speculative diffs in a single response.\",\n"
-    "    \"- If a task requires editing multiple files or drafting large artifacts, work incrementally across turns: one file or step at a time.\",\n"
+    "    \"- If a task requires editing multiple files or drafting large artifacts, keep each file edit focused and incremental across turns.\",\n"
     "    \"TOOL DISCIPLINE & EXECUTION BOUNDARIES:\",\n"
-    "    \"- When calling a tool, emit ONLY the tool call and stop immediately. Do NOT emit duplicate tool calls, speculative code blocks, or conversational chatter alongside tool calls.\",\n"
-    "    \"- Focus on one tool or file edit per turn so Hermes can execute it and return the verified result.\",\n"
+    "    \"- When calling tools, emit ONLY the tool call(s) and stop immediately. Do NOT emit duplicate tool calls, speculative code blocks, or conversational chatter alongside tool calls.\",\n"
+    "    \"- Batch independent read-only tool calls (e.g. read_file, search_files, grep) in parallel within a single turn, while keeping file edits focused and incremental.\",\n"
     "    \"- Never assume or claim an action succeeded until you have received and inspected the actual tool output in the subsequent turn.\",\n"
     "    \"TIMEZONE & LOCAL TIME:\",\n"
     "    \"- The user lives in Auckland, New Zealand (Pacific/Auckland, UTC+12 / UTC+13 with DST). All relative time references ('today', 'yesterday', 'tomorrow', 'morning', 'tonight', dates) must align strictly with Auckland local time.\",\n"
@@ -70,11 +71,14 @@ INJECTION = (
 TEST_INJECTION = f"""
     {TEST_MARKER}
     def test_prompt_preamble_operational_rules(self):
-        '''Verify build-time preamble includes output budget, tool discipline, Auckland timezone, turn anchoring, and fail-loud invariant.'''
+        '''Verify build-time preamble includes output budget, parallel read-only tool batching, Auckland timezone, turn anchoring, and fail-loud invariant.'''
         from prompt import _PROMPT_PREAMBLE
         preamble_str = " ".join(_PROMPT_PREAMBLE)
         self.assertIn("OUTPUT BUDGET & BREVITY:", preamble_str)
         self.assertIn("TOOL DISCIPLINE & EXECUTION BOUNDARIES:", preamble_str)
+        self.assertIn("Batch independent read-only tool calls", preamble_str)
+        self.assertNotIn("one file or step at a time", preamble_str)
+        self.assertNotIn("Focus on one tool or file edit per turn", preamble_str)
         self.assertIn("Pacific/Auckland", preamble_str)
         self.assertIn("TURN ANCHORING & ZERO REGURGITATION:", preamble_str)
         self.assertIn("FAIL-LOUD ARCHITECTURE & ZERO SILENT FALLBACKS:", preamble_str)

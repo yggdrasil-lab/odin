@@ -69,15 +69,18 @@ class TestAgyVisionProxy(unittest.TestCase):
             '{"merchant": "Costco", "total_amount": 154.93}',
         )
 
-    def test_neon_model_aliases_resolve_to_high(self) -> None:
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-neon"), "gemini-4-neon-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("neon"), "gemini-4-neon-high")
+    def test_default_model_resolves_to_hydrogen_high(self) -> None:
+        self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "gemini-4-hydrogen-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen"), "gemini-4-hydrogen-high")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("hydrogen"), "gemini-4-hydrogen-high")
 
-    def test_carbon_and_argon_model_aliases_resolve_to_high(self) -> None:
+    def test_carbon_model_aliases_resolve_to_high(self) -> None:
         self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-carbon"), "gemini-4-carbon-high")
         self.assertEqual(agy_vision_proxy.resolve_agy_model("carbon"), "gemini-4-carbon-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-argon"), "gemini-4-argon-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("argon"), "gemini-4-argon-high")
+
+    def test_neon_and_argon_aliases_removed(self) -> None:
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("neon"), "neon")
+        self.assertEqual(agy_vision_proxy.resolve_agy_model("argon"), "argon")
 
 
 if __name__ == "__main__":

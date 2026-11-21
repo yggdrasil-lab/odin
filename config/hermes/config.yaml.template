@@ -8,10 +8,10 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a direct model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-4-hydrogen-high, gemini-4-neon-high, gemini-4-carbon-high, gemini-4-argon-high,
-  # claude-sonnet-5-5-high, claude-opus-5-5-high) rather than a muninn alias.
+  # (e.g. gemini-4-hydrogen-high, gemini-4-carbon-high, claude-sonnet-5-5-high,
+  # claude-opus-5-5-high) rather than a muninn alias.
   # Under Gemini AI Ultra, Pool 1 (Gemini) is one shared 5h + weekly quota bucket consumed
-  # proportionally to token cost across Hydrogen, Neon, Carbon, and Argon, while Pool 2
+  # proportionally to token cost across Gemini direct models, while Pool 2
   # (Claude and GPT) is an independent quota bucket. Orchestrator models are intentionally
   # avoided inside Hermes because external <tool_call> turns trigger Plan-Mode overhead on every step.
   default: "${AGENT_MODEL}"
@@ -109,13 +109,13 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# The Claude-primary coordinator runs on Pool 2 (Claude Sonnet 5.5) first,
-# crossing directly to Pool 1 (Gemini 4 Hydrogen) on quota exhaustion (no
+# Minimal single-coordinator Odin runs on Pool 1 (Gemini 4 Hydrogen) first,
+# crossing directly to Pool 2 (Claude Sonnet 5.5) on quota exhaustion (no
 # redundant intra-pool fallback), and finally falling back to agent-loop on
 # muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek V4-Flash).
 fallback_providers:
   - provider: "antigravity-subscription-directsdk"
-    model: "gemini-4-hydrogen-high"
+    model: "claude-sonnet-5-5-high"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
@@ -126,16 +126,16 @@ fallback_providers:
 # =============================================================================
 delegation:
   # Delegated subagents run on the flat-rate Gemini AI Ultra Antigravity subscription via
-  # agy CLI, starting with Pool 1 (Gemini 4 Neon) for strong reasoning, crossing directly
+  # agy CLI, starting with Pool 1 (Gemini 4 Hydrogen), crossing directly
   # to Pool 2 (Claude Sonnet 5.5) on quota exhaustion (no redundant intra-pool Gemini
-  # fallback), before falling back to DeepSeek on muninn.
+  # fallback), before falling back to agent-delegate on muninn.
   provider: "antigravity-subscription-directsdk"
-  model: "gemini-4-neon-high"
+  model: "gemini-4-hydrogen-high"
   fallback_providers:
     - provider: "antigravity-subscription-directsdk"
       model: "claude-sonnet-5-5-high"
     - provider: "custom"
-      model: "agent-loop"
+      model: "agent-delegate"
       base_url: "http://muninn:4000/v1"
       key_env: "MUNINN_MASTER_KEY"
 
@@ -286,18 +286,15 @@ plugins:
     - "jev-approvals"
 
 # =============================================================================
-# Gateway Multiplexing (Court of Odin Specialist Profiles)
+# Gateway Multiplexing (Minimal Single-Coordinator Hermes)
 # =============================================================================
 gateway:
-  multiplex_profiles: true
+  multiplex_profiles: false
 
 # =============================================================================
 # MCP Servers
 # =============================================================================
 # Main 'odin' Coordinator attaches 0 MCP servers to keep base turn overhead minimal.
-# Domain MCP servers are scoped strictly to specialist profiles via render_profiles.py:
-#   - saga: kratos MCP (https://kratos.${DOMAIN_NAME}/mcp)
-#   - forseti: playwright MCP (http://poseidon_playwright:8931/sse)
 mcp_servers: {}
 
 # =============================================================================

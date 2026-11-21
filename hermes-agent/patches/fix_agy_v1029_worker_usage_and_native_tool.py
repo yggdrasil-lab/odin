@@ -11,7 +11,7 @@ Problems
    persistent ``agy`` worker as soon as Turn 1 returns, causing return-code -9 races and
    forcing continuous ``--conversation`` respawns.
 
-2. Baseline wipe & cached token under-count (client.py, stream.py):
+2. Baseline wipe, cached token under-count, and dropped thinking telemetry (client.py, stream.py):
    When respawning a worker with ``--conversation <id>``, ``_terminate_worker_locked()``
    and ``_get_or_spawn_worker()`` unconditionally reset ``_worker_usage_baseline = {}``,
    causing ``_delta_worker_usage()`` to emit raw cumulative counters from ``agy`` SQLite
@@ -20,7 +20,9 @@ Problems
    Chat Completions ``prompt_tokens`` to include cached tokens and subtracts
    ``cache_read_tokens`` back out. Without adding ``cached_tokens`` to ``prompt_tokens``,
    cached turns under-count uncached tokens and cumulative ``cache_read_tokens`` on
-   respawn drives false 160k+ context compactions.
+   respawn drives false 160k+ context compactions. ``stream.py`` also dropped
+   ``thinking_tokens``, causing Hermes ``normalize_usage()`` to record
+   ``reasoning_tokens=0`` in ``state.db``.
 
 3. Native tool neutralization response leak (stream.py, client.py, Issue #52):
    When ``agy`` emits a non-media native tool step (e.g. ``terminal``), v1.0.29 calls
@@ -33,8 +35,10 @@ Fixes
 1. Remove ``PR_SET_PDEATHSIG`` ``preexec_fn`` from ``process.py:_own_process_group()`` while
    preserving ``start_new_session=True`` (``os.setsid()``) and existing cleanup registries.
 2. Preserve ``_worker_usage_baseline`` across ``keep_conversation=True`` / ``--conversation <id>``
-   respawns (reset only on fresh conversations), and map ``prompt_tokens = input_tokens + cached_tokens``
-   and ``total_tokens = max(total_tokens, prompt_tokens + output_tokens)`` in ``stream.py``.
+   respawns (reset only on fresh conversations), map ``prompt_tokens = input_tokens + cached_tokens``
+   and ``total_tokens = max(total_tokens, prompt_tokens + output_tokens)``, and propagate
+   ``thinking_tokens`` through ``_UsageDeltas``, ``_delta_worker_usage``, ``_usage_totals``,
+   and ``completion_tokens_details=SimpleNamespace(reasoning_tokens=thinking_tokens)`` in ``stream.py``.
 3. Keep immediate process termination on non-media native tool steps, never emit
    ``neutralized_text`` with ``finish_reason="stop"``, perform a bounded 1x internal retry
    on a fresh ``agy`` turn with an explicit ``<tool_call>`` reminder when zero chunks were
@@ -391,6 +395,390 @@ def patch_client(plugin_dir: Path) -> None:
     print(f"[odin-patch] patched {target} (preserved usage baseline on resume + native tool retry)")
 
 
+_THINKING_STREAM_PATCHES: tuple[tuple[str, str, str], ...] = (
+    (
+        (
+            "    input_tokens: int\n"
+            "    output_tokens: int\n"
+            "    total_tokens: int\n"
+            "    cache_read_tokens: int\n"
+        ),
+        (
+            "    input_tokens: int\n"
+            "    output_tokens: int\n"
+            "    total_tokens: int\n"
+            "    cache_read_tokens: int\n"
+            "    thinking_tokens: int\n"
+        ),
+        "stream.py:_UsageDeltas",
+    ),
+    (
+        (
+            "    return _UsageDeltas(\n"
+            "        input_tokens=input_delta,\n"
+            "        output_tokens=output_delta,\n"
+            "        total_tokens=total_delta,\n"
+            "        cache_read_tokens=_counter_delta(usage_data, baseline, \"cache_read_tokens\"),\n"
+            "    )\n"
+        ),
+        (
+            "    return _UsageDeltas(\n"
+            "        input_tokens=input_delta,\n"
+            "        output_tokens=output_delta,\n"
+            "        total_tokens=total_delta,\n"
+            "        cache_read_tokens=_counter_delta(usage_data, baseline, \"cache_read_tokens\"),\n"
+            "        thinking_tokens=_counter_delta(usage_data, baseline, \"thinking_tokens\"),\n"
+            "    )\n"
+        ),
+        "stream.py:_delta_worker_usage",
+    ),
+    (
+        "    def _usage_totals(self, usage_data: dict[str, Any]) -> tuple[int, int, int, int]:\n",
+        "    def _usage_totals(self, usage_data: dict[str, Any]) -> tuple[int, int, int, int, int]:\n",
+        "stream.py:_usage_totals signature",
+    ),
+    (
+        (
+            "        if self.is_worker and self.usage_baseline is not None:\n"
+            "            deltas = _delta_worker_usage(usage_data, self.usage_baseline)\n"
+            "            return (\n"
+            "                deltas.input_tokens,\n"
+            "                deltas.output_tokens,\n"
+            "                deltas.total_tokens,\n"
+            "                deltas.cache_read_tokens,\n"
+            "            )\n"
+            "        input_tokens = int(usage_data.get(\"input_tokens\", 0) or 0)\n"
+            "        output_tokens = int(usage_data.get(\"output_tokens\", 0) or 0)\n"
+            "        total_tokens = int(usage_data.get(\"total_tokens\", input_tokens + output_tokens) or 0)\n"
+            "        cached_tokens = int(usage_data.get(\"cache_read_tokens\", 0) or 0)\n"
+            "        return input_tokens, output_tokens, total_tokens, cached_tokens\n"
+        ),
+        (
+            "        if self.is_worker and self.usage_baseline is not None:\n"
+            "            deltas = _delta_worker_usage(usage_data, self.usage_baseline)\n"
+            "            return (\n"
+            "                deltas.input_tokens,\n"
+            "                deltas.output_tokens,\n"
+            "                deltas.total_tokens,\n"
+            "                deltas.cache_read_tokens,\n"
+            "                deltas.thinking_tokens,\n"
+            "            )\n"
+            "        input_tokens = int(usage_data.get(\"input_tokens\", 0) or 0)\n"
+            "        output_tokens = int(usage_data.get(\"output_tokens\", 0) or 0)\n"
+            "        total_tokens = int(usage_data.get(\"total_tokens\", input_tokens + output_tokens) or 0)\n"
+            "        cached_tokens = int(usage_data.get(\"cache_read_tokens\", 0) or 0)\n"
+            "        thinking_tokens = int(usage_data.get(\"thinking_tokens\", 0) or 0)\n"
+            "        return input_tokens, output_tokens, total_tokens, cached_tokens, thinking_tokens\n"
+        ),
+        "stream.py:_usage_totals body",
+    ),
+    (
+        "            input_tokens, output_tokens, total_tokens, cached_tokens = self._usage_totals(usage_data)\n",
+        "            input_tokens, output_tokens, total_tokens, cached_tokens, thinking_tokens = self._usage_totals(usage_data)\n",
+        "stream.py:_usage_totals unpack",
+    ),
+    (
+        (
+            "    if not usage:\n"
+            "        usage = SimpleNamespace(\n"
+            "            prompt_tokens=0,\n"
+            "            completion_tokens=0,\n"
+            "            total_tokens=0,\n"
+            "            prompt_tokens_details=SimpleNamespace(cached_tokens=0),\n"
+            "        )\n"
+        ),
+        (
+            "    if not usage:\n"
+            "        usage = SimpleNamespace(\n"
+            "            prompt_tokens=0,\n"
+            "            completion_tokens=0,\n"
+            "            total_tokens=0,\n"
+            "            prompt_tokens_details=SimpleNamespace(cached_tokens=0),\n"
+            "            completion_tokens_details=SimpleNamespace(reasoning_tokens=0),\n"
+            "        )\n"
+        ),
+        "stream.py:collect_stream_completion fallback usage",
+    ),
+)
+
+
+def _patch_stream_thinking_usage(src: str) -> str:
+    """Propagate thinking_tokens through _UsageDeltas, _delta_worker_usage, _usage_totals, and usage chunks."""
+    for anchor, replacement, label in _THINKING_STREAM_PATCHES:
+        src = _replace_exact(src, anchor, replacement, label)
+    return src
+
+
+_STREAM_CORE_PATCHES: tuple[tuple[str, str, str], ...] = (
+    (
+        (
+            "        delivery_watch: Any = None,\n"
+            "        delivery_sample_key: str = \"\",\n"
+            "    ):\n"
+        ),
+        (
+            "        delivery_watch: Any = None,\n"
+            "        delivery_sample_key: str = \"\",\n"
+            "        tool_choice: Any = None,\n"
+            "        effort: str | None = None,\n"
+            "    ):\n"
+        ),
+        "stream.py:__init__ signature",
+    ),
+    (
+        (
+            "        self.timeout = timeout\n"
+            "        self.has_tools = bool(tools)\n"
+            "        self.is_worker = is_worker\n"
+        ),
+        (
+            "        self.timeout = timeout\n"
+            "        self._tools = tools\n"
+            "        self._tool_choice = tool_choice\n"
+            "        self._effort = effort\n"
+            "        self._native_tool_retry_used = False\n"
+            "        self.has_tools = bool(tools)\n"
+            "        self.is_worker = is_worker\n"
+        ),
+        "stream.py:__init__ attrs",
+    ),
+    (
+        (
+            "        gemini_dir = getattr(self.client, \"_isolated_gemini_dir\", None)\n"
+            "        watchdog_stop = threading.Event()\n"
+            "        watchdog_thread: threading.Thread | None = None\n"
+            "\n"
+            "        if gemini_dir:\n"
+            "            def _watchdog_loop() -> None:\n"
+            "                while not watchdog_stop.wait(timeout=0.3):\n"
+            "                    if time.monotonic() - start_time < 1.0:\n"
+            "                        continue\n"
+            "                    quota_err = _check_early_quota_error(gemini_dir, min_mtime=start_wall)\n"
+            "                    if quota_err:\n"
+            "                        self._early_error = quota_err\n"
+            "                        logger.warning(\n"
+            "                            \"Antigravity process hit early quota limit: %s; terminating to prevent hang.\",\n"
+            "                            quota_err,\n"
+            "                        )\n"
+            "                        self.client._terminate_process(self.proc)\n"
+            "                        break\n"
+            "\n"
+            "            watchdog_thread = threading.Thread(\n"
+            "                target=_watchdog_loop,\n"
+            "                name=\"agy-quota-watchdog\",\n"
+            "                daemon=True,\n"
+            "            )\n"
+            "            watchdog_thread.start()\n"
+            "\n"
+            "        try:\n"
+        ),
+        (
+            f"        {MARKER_STREAM}\n"
+            "        gemini_dir = getattr(self.client, \"_isolated_gemini_dir\", None)\n"
+            "        watchdog_stop = threading.Event()\n"
+            "        watchdog_thread: threading.Thread | None = None\n"
+            "\n"
+            "        def _make_watchdog_target(stop_ev: threading.Event, target_proc: subprocess.Popen, t0: float, w0: float):\n"
+            "            def _watchdog_loop() -> None:\n"
+            "                while not stop_ev.wait(timeout=0.3):\n"
+            "                    if time.monotonic() - t0 < 1.0:\n"
+            "                        continue\n"
+            "                    quota_err = _check_early_quota_error(gemini_dir, min_mtime=w0)\n"
+            "                    if quota_err:\n"
+            "                        self._early_error = quota_err\n"
+            "                        logger.warning(\n"
+            "                            \"Antigravity process hit early quota limit: %s; terminating to prevent hang.\",\n"
+            "                            quota_err,\n"
+            "                        )\n"
+            "                        self.client._terminate_process(target_proc)\n"
+            "                        break\n"
+            "            return _watchdog_loop\n"
+            "\n"
+            "        if gemini_dir:\n"
+            "            watchdog_thread = threading.Thread(\n"
+            "                target=_make_watchdog_target(watchdog_stop, self.proc, start_time, start_wall),\n"
+            "                name=\"agy-quota-watchdog\",\n"
+            "                daemon=True,\n"
+            "            )\n"
+            "            watchdog_thread.start()\n"
+            "\n"
+            "        try:\n"
+        ),
+        "stream.py:_stream_generator head",
+    ),
+    (
+        (
+            "                        else:\n"
+            "                            logger.warning(\n"
+            "                                \"Antigravity attempted native tool invocation '%s'; neutralizing to prevent host execution.\",\n"
+            "                                step.get(\"tool_name\"),\n"
+            "                            )\n"
+            "                            self.close()\n"
+            "                            # Recorded so the post-loop positive-evidence check\n"
+            "                            # does not treat this security abort as an empty\n"
+            "                            # failed turn: the process is terminated right here\n"
+            "                            # on purpose (see\n"
+            "                            # test_native_tool_step_neutralization_in_stream).\n"
+            "                            # The stop cause is recorded too, so diagnostics do\n"
+            "                            # not misreport this deliberate abort as a deadline.\n"
+            "                            neutralized_tool_step = True\n"
+            "                            stop_reason = \"native tool step neutralized\"\n"
+            "                            # Issue #52: a bare empty completion reads as \"no\n"
+            "                            # content or reasoning\", so Hermes nudged, got the\n"
+            "                            # same silence on every retry, and silently failed\n"
+            "                            # the turn over to a different provider while the\n"
+            "                            # quota meter still showed headroom. The block is\n"
+            "                            # surfaced as real content instead: the host sees\n"
+            "                            # WHY the turn stopped, the quota was never denied,\n"
+            "                            # and on any Hermes retry the explanation sits in\n"
+            "                            # the model's history so it can re-issue the step\n"
+            "                            # as a <tool_call> block. Containment is unchanged:\n"
+            "                            # the process dies here, nothing was executed.\n"
+            "                            #\n"
+            "                            # The chunk is emitted in ONE piece together with\n"
+            "                            # the finish reason at the post-loop finish yield:\n"
+            "                            # a yield here would suspend the generator after\n"
+            "                            # close(), and __next__'s ``if self._closed`` guard\n"
+            "                            # would end the stream before the finish chunk\n"
+            "                            # could ever be emitted.\n"
+            "                            has_content = True\n"
+            "                            neutralized_text = (\n"
+            "                                f\"[Antigravity] Native tool invocation '{tool_name}' was blocked by host security policy; \"\n"
+            "                                \"nothing was executed. Re-issue the step as a <tool_call> block using the host's tools \"\n"
+            "                                \"instead of Antigravity's native tools.\"\n"
+            "                            )\n"
+            "                            break\n"
+        ),
+        (
+            "                        else:\n"
+            "                            logger.warning(\n"
+            "                                \"Antigravity attempted native tool invocation '%s'; neutralizing to prevent host execution.\",\n"
+            "                                step.get(\"tool_name\"),\n"
+            "                            )\n"
+            "                            if (\n"
+            "                                not self._native_tool_retry_used\n"
+            "                                and not has_content\n"
+            "                                and not has_tool_calls\n"
+            "                                and self.client is not None\n"
+            "                                and hasattr(self.client, \"_respawn_for_native_tool_retry\")\n"
+            "                            ):\n"
+            "                                self._native_tool_retry_used = True\n"
+            "                                native_tool_retry_name = tool_name\n"
+            "                                break\n"
+            "                            self.close()\n"
+            "                            raise RuntimeError(\n"
+            "                                f\"Antigravity attempted native tool invocation '{tool_name}' \"\n"
+            "                                \"(blocked by host security policy; retry using <tool_call> XML block)\"\n"
+            "                            )\n"
+        ),
+        "stream.py:native tool step",
+    ),
+)
+
+_LOOP_START_ANCHOR = "        try:\n            while time.monotonic() < deadline:\n"
+_LOOP_SUCCESS_TAIL = (
+    "                    success = (\n"
+    "                        status == \"SUCCESS\"\n"
+    "                        and not error_msg\n"
+    "                        and bool(has_content or has_tool_calls or text_buffer or final_resp)\n"
+    "                    )\n"
+    "                    break\n"
+)
+_LOOP_END_ANCHOR = _LOOP_SUCCESS_TAIL + "\n            if not saw_result and stop_reason is None:\n"
+_RETRY_WRAPPER_PREFIX = "            while True:\n                native_tool_retry_name: str | None = None\n"
+_RETRY_WRAPPER_SUFFIX = (
+    "                if native_tool_retry_name is not None:\n"
+    "                    watchdog_stop.set()\n"
+    "                    if watchdog_thread and watchdog_thread.is_alive():\n"
+    "                        watchdog_thread.join(timeout=0.2)\n"
+    "                    new_proc, new_baseline = self.client._respawn_for_native_tool_retry(\n"
+    "                        old_proc=self.proc,\n"
+    "                        is_worker=self.is_worker,\n"
+    "                        model=self.model,\n"
+    "                        effort=self._effort,\n"
+    "                        messages=list(self.messages or []),\n"
+    "                        tools=self._tools,\n"
+    "                        tool_choice=self._tool_choice,\n"
+    "                        tool_name=native_tool_retry_name,\n"
+    "                    )\n"
+    "                    self.proc = new_proc\n"
+    "                    if self.is_worker and new_baseline is not None:\n"
+    "                        self.usage_baseline = new_baseline\n"
+    "                    self.conversation_id = \"\"\n"
+    "                    self._early_error = None\n"
+    "                    text_buffer = \"\"\n"
+    "                    usage_data = {}\n"
+    "                    has_content = False\n"
+    "                    has_tool_calls = False\n"
+    "                    used_tool_call_ids.clear()\n"
+    "                    next_tool_call_index = 0\n"
+    "                    in_tool_call = False\n"
+    "                    md_state = _MarkdownCodeState()\n"
+    "                    error_msg = \"\"\n"
+    "                    status = \"\"\n"
+    "                    saw_result = False\n"
+    "                    success = False\n"
+    "                    stop_reason = None\n"
+    "                    last_stdout_at = None\n"
+    "                    start_time = time.monotonic()\n"
+    "                    start_wall = time.time()\n"
+    "                    deadline = start_time + self.timeout\n"
+    "                    if gemini_dir:\n"
+    "                        watchdog_stop = threading.Event()\n"
+    "                        watchdog_thread = threading.Thread(\n"
+    "                            target=_make_watchdog_target(watchdog_stop, self.proc, start_time, start_wall),\n"
+    "                            name=\"agy-quota-watchdog\",\n"
+    "                            daemon=True,\n"
+    "                        )\n"
+    "                        watchdog_thread.start()\n"
+    "                    continue\n"
+    "                break\n"
+)
+
+_ANCHOR_FINISH_USAGE = (
+    "            if neutralized_tool_step:\n"
+    "                # Issue #52: the security abort carries its explanation and\n"
+    "                # the finish reason in one chunk \u2014 content makes the host\n"
+    "                # treat the turn as answered instead of empty.\n"
+    "                yield self._make_chunk(content=neutralized_text, finish_reason=finish_reason)\n"
+    "            else:\n"
+    "                yield self._make_chunk(finish_reason=finish_reason)\n"
+    "\n"
+    "            usage = SimpleNamespace(\n"
+    "                prompt_tokens=input_tokens,\n"
+    "                completion_tokens=output_tokens,\n"
+    "                total_tokens=total_tokens,\n"
+    "                prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),\n"
+    "            )\n"
+)
+_REPL_FINISH_USAGE = (
+    "            yield self._make_chunk(finish_reason=finish_reason)\n"
+    "\n"
+    "            prompt_tokens = input_tokens + cached_tokens\n"
+    "            usage = SimpleNamespace(\n"
+    "                prompt_tokens=prompt_tokens,\n"
+    "                completion_tokens=output_tokens,\n"
+    "                total_tokens=max(total_tokens, prompt_tokens + output_tokens),\n"
+    "                prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),\n"
+    "                completion_tokens_details=SimpleNamespace(reasoning_tokens=thinking_tokens),\n"
+    "            )\n"
+)
+
+
+def _wrap_stream_native_tool_retry(src: str) -> str:
+    """Wrap the stream read loop in a bounded 1x native-tool retry loop."""
+    if src.count(_LOOP_START_ANCHOR) != 1:
+        raise ValueError(f"stream.py:loop_start_anchor expected count == 1, got {src.count(_LOOP_START_ANCHOR)}")
+    if src.count(_LOOP_END_ANCHOR) != 1:
+        raise ValueError(f"stream.py:loop_end_anchor expected count == 1, got {src.count(_LOOP_END_ANCHOR)}")
+
+    body_start = src.index(_LOOP_START_ANCHOR) + len("        try:\n")
+    break_pos = src.index(_LOOP_END_ANCHOR) + len(_LOOP_SUCCESS_TAIL)
+    loop_slice = src[body_start:break_pos]
+    indented_slice = "".join(("    " + line if line.strip() else line) for line in loop_slice.splitlines(keepends=True))
+    return src[:body_start] + _RETRY_WRAPPER_PREFIX + indented_slice + _RETRY_WRAPPER_SUFFIX + src[break_pos:]
+
+
 def patch_stream(plugin_dir: Path) -> None:
     target = plugin_dir / "stream.py"
     if not target.is_file():
@@ -400,281 +788,15 @@ def patch_stream(plugin_dir: Path) -> None:
         print(f"[odin-patch] {target.name} already patched; skipping")
         return
 
-    anchor_init_sig = (
-        "        delivery_watch: Any = None,\n"
-        "        delivery_sample_key: str = \"\",\n"
-        "    ):\n"
-    )
-    repl_init_sig = (
-        "        delivery_watch: Any = None,\n"
-        "        delivery_sample_key: str = \"\",\n"
-        "        tool_choice: Any = None,\n"
-        "        effort: str | None = None,\n"
-        "    ):\n"
-    )
-    src = _replace_exact(src, anchor_init_sig, repl_init_sig, "stream.py:__init__ signature")
-
-    anchor_init_attrs = (
-        "        self.timeout = timeout\n"
-        "        self.has_tools = bool(tools)\n"
-        "        self.is_worker = is_worker\n"
-    )
-    repl_init_attrs = (
-        "        self.timeout = timeout\n"
-        "        self._tools = tools\n"
-        "        self._tool_choice = tool_choice\n"
-        "        self._effort = effort\n"
-        "        self._native_tool_retry_used = False\n"
-        "        self.has_tools = bool(tools)\n"
-        "        self.is_worker = is_worker\n"
-    )
-    src = _replace_exact(src, anchor_init_attrs, repl_init_attrs, "stream.py:__init__ attrs")
-
-    anchor_gen_head = (
-        "        gemini_dir = getattr(self.client, \"_isolated_gemini_dir\", None)\n"
-        "        watchdog_stop = threading.Event()\n"
-        "        watchdog_thread: threading.Thread | None = None\n"
-        "\n"
-        "        if gemini_dir:\n"
-        "            def _watchdog_loop() -> None:\n"
-        "                while not watchdog_stop.wait(timeout=0.3):\n"
-        "                    if time.monotonic() - start_time < 1.0:\n"
-        "                        continue\n"
-        "                    quota_err = _check_early_quota_error(gemini_dir, min_mtime=start_wall)\n"
-        "                    if quota_err:\n"
-        "                        self._early_error = quota_err\n"
-        "                        logger.warning(\n"
-        "                            \"Antigravity process hit early quota limit: %s; terminating to prevent hang.\",\n"
-        "                            quota_err,\n"
-        "                        )\n"
-        "                        self.client._terminate_process(self.proc)\n"
-        "                        break\n"
-        "\n"
-        "            watchdog_thread = threading.Thread(\n"
-        "                target=_watchdog_loop,\n"
-        "                name=\"agy-quota-watchdog\",\n"
-        "                daemon=True,\n"
-        "            )\n"
-        "            watchdog_thread.start()\n"
-        "\n"
-        "        try:\n"
-    )
-    repl_gen_head = (
-        f"        {MARKER_STREAM}\n"
-        "        gemini_dir = getattr(self.client, \"_isolated_gemini_dir\", None)\n"
-        "        watchdog_stop = threading.Event()\n"
-        "        watchdog_thread: threading.Thread | None = None\n"
-        "\n"
-        "        def _make_watchdog_target(stop_ev: threading.Event, target_proc: subprocess.Popen, t0: float, w0: float):\n"
-        "            def _watchdog_loop() -> None:\n"
-        "                while not stop_ev.wait(timeout=0.3):\n"
-        "                    if time.monotonic() - t0 < 1.0:\n"
-        "                        continue\n"
-        "                    quota_err = _check_early_quota_error(gemini_dir, min_mtime=w0)\n"
-        "                    if quota_err:\n"
-        "                        self._early_error = quota_err\n"
-        "                        logger.warning(\n"
-        "                            \"Antigravity process hit early quota limit: %s; terminating to prevent hang.\",\n"
-        "                            quota_err,\n"
-        "                        )\n"
-        "                        self.client._terminate_process(target_proc)\n"
-        "                        break\n"
-        "            return _watchdog_loop\n"
-        "\n"
-        "        if gemini_dir:\n"
-        "            watchdog_thread = threading.Thread(\n"
-        "                target=_make_watchdog_target(watchdog_stop, self.proc, start_time, start_wall),\n"
-        "                name=\"agy-quota-watchdog\",\n"
-        "                daemon=True,\n"
-        "            )\n"
-        "            watchdog_thread.start()\n"
-        "\n"
-        "        try:\n"
-    )
-    src = _replace_exact(src, anchor_gen_head, repl_gen_head, "stream.py:_stream_generator head")
-
-    anchor_native_tool = (
-        "                        else:\n"
-        "                            logger.warning(\n"
-        "                                \"Antigravity attempted native tool invocation '%s'; neutralizing to prevent host execution.\",\n"
-        "                                step.get(\"tool_name\"),\n"
-        "                            )\n"
-        "                            self.close()\n"
-        "                            # Recorded so the post-loop positive-evidence check\n"
-        "                            # does not treat this security abort as an empty\n"
-        "                            # failed turn: the process is terminated right here\n"
-        "                            # on purpose (see\n"
-        "                            # test_native_tool_step_neutralization_in_stream).\n"
-        "                            # The stop cause is recorded too, so diagnostics do\n"
-        "                            # not misreport this deliberate abort as a deadline.\n"
-        "                            neutralized_tool_step = True\n"
-        "                            stop_reason = \"native tool step neutralized\"\n"
-        "                            # Issue #52: a bare empty completion reads as \"no\n"
-        "                            # content or reasoning\", so Hermes nudged, got the\n"
-        "                            # same silence on every retry, and silently failed\n"
-        "                            # the turn over to a different provider while the\n"
-        "                            # quota meter still showed headroom. The block is\n"
-        "                            # surfaced as real content instead: the host sees\n"
-        "                            # WHY the turn stopped, the quota was never denied,\n"
-        "                            # and on any Hermes retry the explanation sits in\n"
-        "                            # the model's history so it can re-issue the step\n"
-        "                            # as a <tool_call> block. Containment is unchanged:\n"
-        "                            # the process dies here, nothing was executed.\n"
-        "                            #\n"
-        "                            # The chunk is emitted in ONE piece together with\n"
-        "                            # the finish reason at the post-loop finish yield:\n"
-        "                            # a yield here would suspend the generator after\n"
-        "                            # close(), and __next__'s ``if self._closed`` guard\n"
-        "                            # would end the stream before the finish chunk\n"
-        "                            # could ever be emitted.\n"
-        "                            has_content = True\n"
-        "                            neutralized_text = (\n"
-        "                                f\"[Antigravity] Native tool invocation '{tool_name}' was blocked by host security policy; \"\n"
-        "                                \"nothing was executed. Re-issue the step as a <tool_call> block using the host's tools \"\n"
-        "                                \"instead of Antigravity's native tools.\"\n"
-        "                            )\n"
-        "                            break\n"
-    )
-    repl_native_tool = (
-        "                        else:\n"
-        "                            logger.warning(\n"
-        "                                \"Antigravity attempted native tool invocation '%s'; neutralizing to prevent host execution.\",\n"
-        "                                step.get(\"tool_name\"),\n"
-        "                            )\n"
-        "                            if (\n"
-        "                                not self._native_tool_retry_used\n"
-        "                                and not has_content\n"
-        "                                and not has_tool_calls\n"
-        "                                and self.client is not None\n"
-        "                                and hasattr(self.client, \"_respawn_for_native_tool_retry\")\n"
-        "                            ):\n"
-        "                                self._native_tool_retry_used = True\n"
-        "                                native_tool_retry_name = tool_name\n"
-        "                                break\n"
-        "                            self.close()\n"
-        "                            raise RuntimeError(\n"
-        "                                f\"Antigravity attempted native tool invocation '{tool_name}' \"\n"
-        "                                \"(blocked by host security policy; retry using <tool_call> XML block)\"\n"
-        "                            )\n"
-    )
-    src = _replace_exact(src, anchor_native_tool, repl_native_tool, "stream.py:native tool step")
-
-    # Wrap the inner read loop (while time.monotonic() < deadline: ... break) in a bounded retry loop.
-    loop_start_anchor = "        try:\n            while time.monotonic() < deadline:\n"
-    loop_end_anchor = (
-        "                    success = (\n"
-        "                        status == \"SUCCESS\"\n"
-        "                        and not error_msg\n"
-        "                        and bool(has_content or has_tool_calls or text_buffer or final_resp)\n"
-        "                    )\n"
-        "                    break\n"
-        "\n"
-        "            if not saw_result and stop_reason is None:\n"
-    )
-    if src.count(loop_start_anchor) != 1:
-        raise ValueError(f"stream.py:loop_start_anchor expected count == 1, got {src.count(loop_start_anchor)}")
-    if src.count(loop_end_anchor) != 1:
-        raise ValueError(f"stream.py:loop_end_anchor expected count == 1, got {src.count(loop_end_anchor)}")
-
-    try_idx = src.index(loop_start_anchor)
-    body_start = try_idx + len("        try:\n")
-    end_idx = src.index(loop_end_anchor)
-    break_pos = end_idx + len(
-        "                    success = (\n"
-        "                        status == \"SUCCESS\"\n"
-        "                        and not error_msg\n"
-        "                        and bool(has_content or has_tool_calls or text_buffer or final_resp)\n"
-        "                    )\n"
-        "                    break\n"
-    )
-    loop_slice = src[body_start:break_pos]
-    indented_slice = "".join(("    " + line if line.strip() else line) for line in loop_slice.splitlines(keepends=True))
-    retry_wrapper_prefix = (
-        "            while True:\n"
-        "                native_tool_retry_name: str | None = None\n"
-    )
-    retry_wrapper_suffix = (
-        "                if native_tool_retry_name is not None:\n"
-        "                    watchdog_stop.set()\n"
-        "                    if watchdog_thread and watchdog_thread.is_alive():\n"
-        "                        watchdog_thread.join(timeout=0.2)\n"
-        "                    new_proc, new_baseline = self.client._respawn_for_native_tool_retry(\n"
-        "                        old_proc=self.proc,\n"
-        "                        is_worker=self.is_worker,\n"
-        "                        model=self.model,\n"
-        "                        effort=self._effort,\n"
-        "                        messages=list(self.messages or []),\n"
-        "                        tools=self._tools,\n"
-        "                        tool_choice=self._tool_choice,\n"
-        "                        tool_name=native_tool_retry_name,\n"
-        "                    )\n"
-        "                    self.proc = new_proc\n"
-        "                    if self.is_worker and new_baseline is not None:\n"
-        "                        self.usage_baseline = new_baseline\n"
-        "                    self.conversation_id = \"\"\n"
-        "                    self._early_error = None\n"
-        "                    text_buffer = \"\"\n"
-        "                    usage_data = {}\n"
-        "                    has_content = False\n"
-        "                    has_tool_calls = False\n"
-        "                    used_tool_call_ids.clear()\n"
-        "                    next_tool_call_index = 0\n"
-        "                    in_tool_call = False\n"
-        "                    md_state = _MarkdownCodeState()\n"
-        "                    error_msg = \"\"\n"
-        "                    status = \"\"\n"
-        "                    saw_result = False\n"
-        "                    success = False\n"
-        "                    stop_reason = None\n"
-        "                    last_stdout_at = None\n"
-        "                    start_time = time.monotonic()\n"
-        "                    start_wall = time.time()\n"
-        "                    deadline = start_time + self.timeout\n"
-        "                    if gemini_dir:\n"
-        "                        watchdog_stop = threading.Event()\n"
-        "                        watchdog_thread = threading.Thread(\n"
-        "                            target=_make_watchdog_target(watchdog_stop, self.proc, start_time, start_wall),\n"
-        "                            name=\"agy-quota-watchdog\",\n"
-        "                            daemon=True,\n"
-        "                        )\n"
-        "                        watchdog_thread.start()\n"
-        "                    continue\n"
-        "                break\n"
-    )
-    src = src[:body_start] + retry_wrapper_prefix + indented_slice + retry_wrapper_suffix + src[break_pos:]
-
-    anchor_finish_usage = (
-        "            if neutralized_tool_step:\n"
-        "                # Issue #52: the security abort carries its explanation and\n"
-        "                # the finish reason in one chunk \u2014 content makes the host\n"
-        "                # treat the turn as answered instead of empty.\n"
-        "                yield self._make_chunk(content=neutralized_text, finish_reason=finish_reason)\n"
-        "            else:\n"
-        "                yield self._make_chunk(finish_reason=finish_reason)\n"
-        "\n"
-        "            usage = SimpleNamespace(\n"
-        "                prompt_tokens=input_tokens,\n"
-        "                completion_tokens=output_tokens,\n"
-        "                total_tokens=total_tokens,\n"
-        "                prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),\n"
-        "            )\n"
-    )
-    repl_finish_usage = (
-        "            yield self._make_chunk(finish_reason=finish_reason)\n"
-        "\n"
-        "            prompt_tokens = input_tokens + cached_tokens\n"
-        "            usage = SimpleNamespace(\n"
-        "                prompt_tokens=prompt_tokens,\n"
-        "                completion_tokens=output_tokens,\n"
-        "                total_tokens=max(total_tokens, prompt_tokens + output_tokens),\n"
-        "                prompt_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),\n"
-        "            )\n"
-    )
-    src = _replace_exact(src, anchor_finish_usage, repl_finish_usage, "stream.py:finish_and_usage")
+    for anchor, replacement, label in _STREAM_CORE_PATCHES:
+        src = _replace_exact(src, anchor, replacement, label)
+    src = _wrap_stream_native_tool_retry(src)
+    src = _replace_exact(src, _ANCHOR_FINISH_USAGE, _REPL_FINISH_USAGE, "stream.py:finish_and_usage")
+    src = _patch_stream_thinking_usage(src)
 
     target.write_text(src, encoding="utf-8")
     py_compile.compile(str(target), doraise=True)
-    print(f"[odin-patch] patched {target} (prompt_tokens cached fix + native tool recovery)")
+    print(f"[odin-patch] patched {target} (prompt_tokens cached fix + thinking_tokens + native tool recovery)")
 
 
 def patch_tests(plugin_dir: Path) -> None:

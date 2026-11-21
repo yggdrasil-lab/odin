@@ -2,15 +2,12 @@
 """test_audit_swarm_health.py - Unit tests for Swarm Replica & Health Audit Engine."""
 
 import json
-import sqlite3
-import tempfile
 import unittest
 from unittest.mock import patch
 
 from audit_swarm_health import (
     audit_overlay_ipam,
     audit_swarm_services,
-    is_already_tracked_in_kanban,
     query_swarm_services,
 )
 from morning_copilot_aggregator import (
@@ -43,29 +40,11 @@ class TestAuditSwarmHealth(unittest.TestCase):
             jellyfin = next(s for s in services if s["name"] == "apollo-core_jellyfin")
             self.assertFalse(jellyfin["degraded"])
 
-    def test_kanban_deduplication(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            conn = sqlite3.connect(tmp.name)
-            conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT)")
-            conn.execute(
-                "INSERT INTO tasks VALUES (?, ?, ?, ?)",
-                ("kb-test01", "Fix apollo-core_recyclarr degraded", "Task restarting", "ready")
-            )
-            conn.commit()
-            conn.close()
-
-            # Should be detected as already tracked
-            self.assertTrue(is_already_tracked_in_kanban("apollo-core_recyclarr", db_path=tmp.name))
-            # Unknown service should not be tracked
-            self.assertFalse(is_already_tracked_in_kanban("unknown_service", db_path=tmp.name))
-
     @patch("audit_swarm_health.audit_overlay_ipam")
-    @patch("audit_swarm_health.dispatch_to_kanban_triage", return_value="kb-autofix1")
-    @patch("audit_swarm_health.is_already_tracked_in_kanban", return_value=False)
     @patch("audit_swarm_health.query_service_task_state")
     @patch("audit_swarm_health.query_swarm_services")
-    def test_audit_swarm_services_with_triage(
-        self, mock_query, mock_task_state, mock_tracked, mock_dispatch, mock_ipam
+    def test_audit_swarm_services_reports_degraded_without_kanban(
+        self, mock_query, mock_task_state, mock_ipam
     ):
         mock_query.return_value = (
             2,
@@ -94,7 +73,7 @@ class TestAuditSwarmHealth(unittest.TestCase):
             "reason": "",
         }
 
-        report = audit_swarm_services(triage=True, kanban_db_path="/tmp/fake.db")
+        report = audit_swarm_services()
         self.assertEqual(report["status"], "FAIL")
         self.assertEqual(report["total_services"], 2)
         self.assertEqual(report["healthy_services"], 1)
@@ -103,8 +82,9 @@ class TestAuditSwarmHealth(unittest.TestCase):
 
         degraded = report["degraded_services"][0]
         self.assertEqual(degraded["name"], "svc2")
-        self.assertEqual(degraded["triage_id"], "kb-autofix1")
-        mock_dispatch.assert_called_once()
+        self.assertEqual(degraded["task_error"], "task failed")
+        self.assertNotIn("triage_id", degraded)
+        self.assertNotIn("already_tracked", degraded)
 
     @staticmethod
     def _build_inspect_payload(
@@ -193,44 +173,6 @@ class TestAuditSwarmHealth(unittest.TestCase):
         self.assertTrue(res["degraded"])
         self.assertIn("failed", res["reason"])
 
-    @patch("audit_swarm_health.query_swarm_services", return_value=(1, [{"name": "svc1", "replicas": "1/1", "degraded": False}]))
-    def test_audit_swarm_services_ipam_triage_dispatch_and_dedup(self, _mock_query):
-        degraded_ipam = {
-            "network": "aether-net",
-            "subnet": "10.0.1.0/24",
-            "status": "FAIL",
-            "degraded": True,
-            "ips_in_use": 210,
-            "dynamic_ips_available": 46,
-            "real_active_ips": 130,
-            "reserved_ips": 4,
-            "phantom_leaked_ips": 76,
-            "peers": 2,
-            "reason": "phantom_leaked_ips=76 > 25",
-        }
-        # First call: not yet tracked -> should dispatch kanban-gateway triage
-        with patch("audit_swarm_health.audit_overlay_ipam", return_value=dict(degraded_ipam)), \
-             patch("audit_swarm_health.is_already_tracked_in_kanban", return_value=False) as mock_tracked, \
-             patch("audit_swarm_health.run_cmd", return_value=(0, "Created kb-12ab34cd", "")) as mock_cmd:
-            report = audit_swarm_services(triage=True, kanban_db_path="/tmp/fake.db")
-        self.assertEqual(report["status"], "FAIL")
-        self.assertFalse(report["overlay_ipam"]["already_tracked"])
-        self.assertEqual(report["overlay_ipam"]["triage_id"], "kb-12ab34cd")
-        mock_tracked.assert_called_once_with("overlay IPAM: aether-net", "/tmp/fake.db")
-        mock_cmd.assert_called_once()
-        cmd_args = mock_cmd.call_args[0][0]
-        self.assertIn("Investigate Swarm overlay IPAM: aether-net", cmd_args)
-
-        # Second call: already tracked -> should skip dispatch
-        with patch("audit_swarm_health.audit_overlay_ipam", return_value=dict(degraded_ipam)), \
-             patch("audit_swarm_health.is_already_tracked_in_kanban", return_value=True), \
-             patch("audit_swarm_health.run_cmd") as mock_cmd_skip:
-            report_dup = audit_swarm_services(triage=True, kanban_db_path="/tmp/fake.db")
-        self.assertEqual(report_dup["status"], "FAIL")
-        self.assertTrue(report_dup["overlay_ipam"]["already_tracked"])
-        self.assertIsNone(report_dup["overlay_ipam"]["triage_id"])
-        mock_cmd_skip.assert_not_called()
-
     def test_executive_markdown_rendering(self):
         # Case 1: All healthy (with healthy overlay IPAM)
         odin_ok = OdinTelemetry(
@@ -246,8 +188,6 @@ class TestAuditSwarmHealth(unittest.TestCase):
                 "phantom_leaked_ips": 0,
                 "reason": "",
             },
-            total_active_cards=1,
-            active_cards_by_status={"ready": 1},
         )
         report_ok = MorningCopilotReport(
             date="2026-11-14",
@@ -259,6 +199,7 @@ class TestAuditSwarmHealth(unittest.TestCase):
         md_ok = generate_executive_markdown(report_ok, section="executive")
         self.assertIn("75/75 services healthy (0 degraded)", md_ok)
         self.assertIn("Overlay IPAM (`aether-net`)**: 🟢 133 in use, 123 free (~0 phantom).", md_ok)
+        self.assertNotIn("Kanban", md_ok)
 
         # Case 2: Degraded service + degraded overlay IPAM
         odin_degraded = OdinTelemetry(
@@ -269,8 +210,6 @@ class TestAuditSwarmHealth(unittest.TestCase):
                 "replicas": "0/1",
                 "task_state": "Restarting",
                 "task_error": "",
-                "triage_id": "kb-12345678",
-                "already_tracked": False,
             }],
             overlay_ipam={
                 "network": "aether-net",
@@ -281,8 +220,6 @@ class TestAuditSwarmHealth(unittest.TestCase):
                 "phantom_leaked_ips": 76,
                 "reason": "phantom_leaked_ips=76 > 25",
             },
-            total_active_cards=1,
-            active_cards_by_status={"ready": 1},
         )
         report_deg = MorningCopilotReport(
             date="2026-11-14",
@@ -294,7 +231,7 @@ class TestAuditSwarmHealth(unittest.TestCase):
         md_deg = generate_executive_markdown(report_deg, section="executive")
         self.assertIn("Degraded Swarm Services (1)", md_deg)
         self.assertIn("apollo-core_recyclarr", md_deg)
-        self.assertIn("Triaged to Kanban: `kb-12345678`", md_deg)
+        self.assertNotIn("Kanban", md_deg)
         self.assertIn(
             "Overlay IPAM Alert (`aether-net`)**: 210 IPs in use, 46 free (~76 phantom) | phantom_leaked_ips=76 > 25",
             md_deg,

@@ -121,25 +121,9 @@ else
   # 5. Initialize Mnemosyne and run the Hermes Agent gateway
   /opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force
 
-  # 6. Start the Kanban Gateway HTTP API server in background
-  if [ -x /usr/local/bin/kanban-gateway ]; then
-    echo "Starting Kanban Gateway HTTP API on port 8643..."
-    /usr/local/bin/kanban-gateway serve --host 0.0.0.0 --port 8643 &
-  fi
-
-  # 7. Render Court of Odin specialist profiles & symlinked skill trees if roles.json is mounted
-  if [ -f /app/vault/Forge/odin/config/hermes/profiles/render_profiles.py ]; then
-    echo "Rendering Court of Odin specialist profiles..."
-    /opt/hermes/.venv/bin/python /app/vault/Forge/odin/config/hermes/profiles/render_profiles.py \
-      --template /app/vault/Forge/odin/config/hermes/config.yaml.template \
-      --roles /app/vault/Forge/odin/config/hermes/profiles/roles.json \
-      --output-dir /opt/data/profiles \
-      --skills-source /opt/data/skills
-  fi
-
-  # 8. Ensure profile directories and control files satisfy Hermes private-node checks
-  chmod 755 /opt/data /opt/data/profiles /opt/data/profiles/* 2>/dev/null || true
-  chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock /opt/data/profiles/*/gateway.lock 2>/dev/null || true
+  # 6. Ensure /opt/data and control files satisfy Hermes private-node checks
+  chmod 755 /opt/data 2>/dev/null || true
+  chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock 2>/dev/null || true
 
   exec /opt/hermes/.venv/bin/hermes gateway run
 fi
