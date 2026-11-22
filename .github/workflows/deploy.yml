@@ -9,9 +9,6 @@ jobs:
   deploy:
     runs-on: [self-hosted, gaia]
     env:
-      OLLAMA_BASE_MODEL: qwen3.5:9b
-      OLLAMA_MODEL_NAME: local-model:latest
-      OLLAMA_CONTEXT_LENGTH: 16384
       # Four-Pool AI Routing (minimal single-coordinator Hermes on Pool 2 Claude):
       # Odin coordinator (interactive Discord and small crons) is hard-locked to Pool 2 Claude Sonnet 5.5,
       # falling back directly to Muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek).
@@ -19,7 +16,6 @@ jobs:
       AGENT_MODEL: claude-sonnet-5-5-high
       HERMES_AGY_ALLOWED_MODELS: claude-sonnet-5-5
       HERMES_AGY_ALLOWED_EFFORTS: low,medium,high
-      CHAT_MODEL: local-model:latest
       HERMES_ANTIGRAVITY_CONTEXT_LENGTH: 200000
     
     steps:
@@ -28,15 +24,10 @@ jobs:
 
       - name: Setup Secrets
         env:
-          LLDAP_LDAP_USER_PASS: ${{ secrets.LLDAP_LDAP_USER_PASS }}
           HERMES_SSH_KEY: ${{ secrets.HERMES_SSH_KEY }}
-          WEBUI_SECRET_KEY: ${{ secrets.WEBUI_SECRET_KEY }}
         run: |
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/ensure_secret.sh -o /tmp/ensure_secret.sh
           chmod +x /tmp/ensure_secret.sh
-          
-          # Resolve the external LLDAP password secret name from Cerberus
-          echo "LLDAP_LDAP_USER_PASS_NAME=$(echo "$LLDAP_LDAP_USER_PASS" | /tmp/ensure_secret.sh cerberus_lldap_user_pass)" >> $GITHUB_ENV
           
           # Resolve the external Hermes SSH key secret name if provided
           if [ -n "$HERMES_SSH_KEY" ]; then
@@ -44,9 +35,6 @@ jobs:
           else
             echo "HERMES_SSH_KEY_NAME=" >> $GITHUB_ENV
           fi
-
-          # Resolve the external WEBUI_SECRET_KEY secret name
-          echo "WEBUI_SECRET_KEY_NAME=$(echo "$WEBUI_SECRET_KEY" | /tmp/ensure_secret.sh odin_webui_secret_key)" >> $GITHUB_ENV
 
       - name: Log in to Registry
         uses: docker/login-action@v3
@@ -58,7 +46,6 @@ jobs:
       - name: Validate Required Configuration
         env:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
-          LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
           MUNINN_MASTER_KEY: ${{ secrets.MUNINN_MASTER_KEY }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_USER_ID: ${{ vars.DISCORD_USER_ID }}
@@ -66,13 +53,11 @@ jobs:
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
           HERMES_AGY_ALLOWED_MODELS: ${{ env.HERMES_AGY_ALLOWED_MODELS }}
           HERMES_AGY_ALLOWED_EFFORTS: ${{ env.HERMES_AGY_ALLOWED_EFFORTS }}
         run: |
           MISSING=""
           [ -z "$DOMAIN_NAME" ] && MISSING="$MISSING DOMAIN_NAME"
-          [ -z "$LLDAP_LDAP_BASE_DN" ] && MISSING="$MISSING LLDAP_LDAP_BASE_DN"
           [ -z "$MUNINN_MASTER_KEY" ] && MISSING="$MISSING MUNINN_MASTER_KEY"
           [ -z "$DISCORD_BOT_TOKEN" ] && MISSING="$MISSING DISCORD_BOT_TOKEN"
           [ -z "$DISCORD_USER_ID" ] && MISSING="$MISSING DISCORD_USER_ID"
@@ -80,7 +65,6 @@ jobs:
           [ -z "$API_SERVER_KEY" ] && MISSING="$MISSING API_SERVER_KEY"
           [ -z "$GEMINI_API_KEY" ] && MISSING="$MISSING GEMINI_API_KEY"
           [ -z "$GH_TOKEN" ] && MISSING="$MISSING GH_TOKEN"
-          [ -z "$KRATOS_MCP_TOKEN" ] && MISSING="$MISSING KRATOS_MCP_TOKEN"
           [ -z "$HERMES_AGY_ALLOWED_MODELS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_MODELS"
           [ -z "$HERMES_AGY_ALLOWED_EFFORTS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_EFFORTS"
           if [ -n "$MISSING" ]; then
@@ -93,10 +77,7 @@ jobs:
           STACK_NAME: odin
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           OBSIDIAN_VAULT_PATH: ${{ vars.OBSIDIAN_VAULT_PATH || '/opt/atlas/vault' }}
-          LLDAP_LDAP_BASE_DN: ${{ vars.LLDAP_LDAP_BASE_DN }}
-          LLDAP_LDAP_USER_PASS_NAME: ${{ env.LLDAP_LDAP_USER_PASS_NAME }}
           HERMES_SSH_KEY_NAME: ${{ env.HERMES_SSH_KEY_NAME }}
-          WEBUI_SECRET_KEY_NAME: ${{ env.WEBUI_SECRET_KEY_NAME }}
           HERMES_GIT_USER_NAME: ${{ vars.HERMES_GIT_USER_NAME || 'Huginn' }}
           HERMES_GIT_USER_EMAIL: ${{ secrets.HERMES_GIT_USER_EMAIL }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
@@ -120,13 +101,7 @@ jobs:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
           TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
-          # Bearer token for the Kratos MCP endpoint, injected from organization
-          # secret KRATOS_MCP_TOKEN.
-          KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
-          MCP_KRATOS_API_KEY: ${{ secrets.KRATOS_MCP_TOKEN }}
           HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
-          OLLAMA_NUM_THREADS: ${{ vars.OLLAMA_NUM_THREADS }}
-          OLLAMA_CONTEXT_LENGTH: ${{ vars.OLLAMA_CONTEXT_LENGTH || '16384' }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"

@@ -1,6 +1,6 @@
 # Odin: AI Orchestration Stack
 
-Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs Hermes Agent (Huginn), Ollama, Muninn (LiteLLM proxy), Open WebUI, and supporting backup services in Docker Swarm on the Gaia host.
+Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs minimal Hermes Agent (`huginn-gateway` and `huginn-dashboard`), Muninn (LiteLLM proxy), `jev-shim` (TypeSafe Jev translation shim), `mnemosyne-dashboard`, and supporting infrastructure services in Docker Swarm on the Gaia host.
 
 ---
 
@@ -8,17 +8,15 @@ Odin is the central AI stack for the Yggdrasil home server ecosystem. It runs He
 
 | Service | Image | Purpose |
 |---------|-------|---------|
-| ollama | ollama/ollama:latest | Local LLM inference (CPU-only, 4 CPUs / 12GB RAM) |
-| muninn-db | postgres:16-alpine | LiteLLM database |
-| muninn | ghcr.io/berriai/litellm-database:main-latest | API proxy: routes all LLM calls with observability |
-| open-webui | ghcr.io/open-webui/open-webui:main | Chat UI (LLDAP auth via Cerberus) |
-| huginn-gateway | custom (hermes-agent/Dockerfile) | Hermes Agent API server |
-| huginn-dashboard | custom (same Dockerfile) | Hermes web dashboard |
-| mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer |
-| docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only): Swarm service, task and log inspection from Huginn |
-| searxng | searxng/searxng:latest | Self-hosted metasearch engine: Hermes web_search backend |
-| camofox | ghcr.io/redf0x1/camofox-browser | Anti-detection browser: Hermes stealth browser (Firefox + C++ fingerprint spoofing) |
+| muninn-db | postgres:16-alpine | LiteLLM PostgreSQL database |
+| muninn | ghcr.io/berriai/litellm-database:main-latest | API proxy: routes role aliases with spend observability and fallbacks |
+| jev-shim | custom (jev-shim/Dockerfile) | OpenAI-compatible shim for TypeSafe Jev System One decision gates |
+| huginn-gateway | custom (hermes-agent/Dockerfile) | Minimal Hermes Agent API and Discord gateway (`odin` coordinator) |
+| huginn-dashboard | custom (same Dockerfile) | Hermes web dashboard (`huginn.DOMAIN`) |
+| mnemosyne-dashboard | custom (mnemosyne-dashboard/Dockerfile) | Memory visualizer (`mnemosyne.DOMAIN`) |
+| docker-socket-proxy | tecnativa/docker-socket-proxy:latest | Read-only Docker API (GET/HEAD only): Swarm service, task, and log inspection |
 
+External web search (`poseidon_searxng`) and stealth browser (`poseidon_camofox`) services run in the Poseidon stack and are consumed over `aether-net` / internal endpoints via `SEARXNG_URL` and `CAMOFOX_URL`.
 
 ## Architecture
 
@@ -34,20 +32,18 @@ graph TD
         Backup["Backups<br>/mnt/storage/backups/odin/hermes"]
     end
 
-    subgraph Aether ["aether-net (Ingress)"]
+    subgraph Aether ["aether-net (Ingress & Cross-Stack)"]
         Traefik[Traefik]
+        Poseidon["Poseidon Services<br>(searxng, camofox)"]
     end
 
     subgraph Internal ["internal (Overlay)"]
-        OpenWebUI[Open WebUI]
-        Ollama[Ollama]
         Gateway[Huginn Gateway]
         Dashboard[Huginn Dashboard]
         MnemosyneVis[Mnemosyne Dashboard]
         Muninn[Muninn Proxy]
-        SearXNG[SearXNG]
-        Camofox[Camofox Browser]
-        NginxCamofox[Nginx Camofox Proxy]
+        MuninnDB[(Muninn DB)]
+        JevShim[Jev Shim]
     end
 
     subgraph SocketNet ["docker-socket (isolated overlay)"]
@@ -56,21 +52,19 @@ graph TD
     end
 
     Browser -->|HTTPS| Traefik
-    Traefik -->|odin.DOMAIN| OpenWebUI
     Traefik -->|agent.DOMAIN| Gateway
     Traefik -->|huginn.DOMAIN| Dashboard
     Traefik -->|mnemosyne.DOMAIN| MnemosyneVis
+    Traefik -->|muninn.DOMAIN| Muninn
 
-    OpenWebUI -->|API| Muninn
     Gateway -->|API| Muninn
-    Muninn -->|API| Ollama
-    Muninn -.->|Cloud API| DeepSeek
+    Muninn --> MuninnDB
+    Muninn -->|System One| JevShim
     Muninn -.->|Cloud API| Gemini
+    Muninn -.->|Safety Net| DeepSeek
 
     Gateway <-->|rw| Obsidian
-    Gateway -->|search| SearXNG
-    Gateway -->|browser| NginxCamofox
-    NginxCamofox -->|proxy + auth| Camofox
+    Gateway -->|search/browser| Poseidon
     Gateway -->|write| MnemosyneDB
     Dashboard -.->|read| MnemosyneDB
     Gateway -->|backup| Backup
@@ -78,21 +72,33 @@ graph TD
     DockerProxy -->|ro mount| DockerSock
 ```
 
-Three networks: `aether-net` (external, shared with Traefik), `internal` (isolated overlay), and `docker-socket` (isolated overlay whose only members are `huginn-gateway` and `docker-socket-proxy`).
+Three networks: `aether-net` (external, shared with Traefik and Poseidon), `internal` (isolated overlay), and `docker-socket` (isolated overlay whose only members are `huginn-gateway` and `docker-socket-proxy`).
+
+---
+
+## Runtime Architecture (`odin_runtime` & `patch_runner`)
+
+Odin isolates custom Hermes Agent and `antigravity-subscription-directsdk` runtime behavior in an installable stdlib package (`hermes-agent/odin_runtime/`) installed into `/opt/hermes/.venv/lib/python3.14/site-packages/odin_runtime`, driven by declarative build-time hook specs (`hermes-agent/patches/{patch_runner,specs}.py`):
+
+- **`odin_runtime.agy_policy`**: `AgyPolicy.from_env(env)` allowlist enforcement (`HERMES_AGY_ALLOWED_MODELS`, `HERMES_AGY_ALLOWED_EFFORTS`), `$HOME` derivation from resolved token paths, catalog filtering, and operational `PREAMBLE_RULES`.
+- **`odin_runtime.agy_stream_guard`**: `UsageSnapshot` / `account_usage` (prompt = uncached input + cached, reasoning token preservation), bounded 1x `native_tool_decision`, and `is_output_cap` error matching.
+- **`odin_runtime.pm_venv_bridge`**: `link_base_site` (`odin-base-site.pth`) and `merged_pythonpath` preserving image-baked `/opt/hermes/.venv` packages across Hermes PM environments.
+- **`odin_runtime.pre_compress_handover`**: Auckland Daily Journal pre-compression checkpointing, replay suppression, and Discord thread handover behind `DiscordThreadPort` (`UrllibDiscordAdapter` routing strictly via `DISCORD_CHANNEL_INFO_ID`, `FakeDiscordAdapter` in tests).
+- **`patches/patch_runner.py` & `patches/specs.py`**: Declarative `Hunk` / `PatchSpec` engine enforcing `count == 1`, idempotent markers, `retired_probe` negative assertions, `--audit`/`--dry-run` modes, atomic `ast.parse` + `py_compile`, and post-apply upstream plugin unittest verification.
 
 ---
 
 ## LLM Backend
 
-Ollama is installed for local inference but the Gaia host is CPU-only (Qwen 2.5 was too slow for agent workloads). Pivoted to DeepSeek as the primary backend, routed through Muninn to preserve unified observability:
+Role-named aliases are defined in `config/muninn/config.yaml.template` using YAML anchors (`&gemini_38_flash`, `&gemini_35_flash_lite`, `&flash`, `&pro`):
 
-```
-Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
-```
-
-Current models: `agent-loop` (heavy scheduled crons and main agent loop overflow on Gemini 3.8 Flash), `agent-delegate` (delegation primary on Gemini 3.8 Flash), `memory-extract` (Mnemosyne memory consolidation on Gemini 3.8 Flash), `app-synthesize` (Kratos/Plutus synthesis on Gemini 3.8 Flash), `gemini-4-hydrogen` (Plutus receipt vision alias on native Gemini 3.8 Flash, zero `agy-vision:8643` hops), `compress` (Hermes context compression summarizer on Gemini 3.5 Flash-Lite), and `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; upstream slugs are defined via YAML anchors (`&gemini_38_flash`, `&gemini_35_flash_lite`, `&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant; point `AGENT_MODEL` at it to re-enable auto-routing.
-
-Live model switching via `/model` command in any chat interface.
+- `agent-loop`: heavy scheduled crons and Antigravity overflow on Gemini 3.8 Flash -> DeepSeek V4-Flash
+- `agent-delegate`: delegation primary on Gemini 3.8 Flash -> DeepSeek V4-Pro
+- `memory-extract`: Mnemosyne memory consolidation on Gemini 3.8 Flash -> DeepSeek V4-Flash
+- `app-synthesize`: Kratos/Plutus synthesis on Gemini 3.8 Flash -> DeepSeek V4-Flash
+- `gemini-4-hydrogen`: Plutus receipt vision on native Gemini 3.8 Flash -> Gemini 3.5 Flash-Lite -> DeepSeek V4-Flash
+- `compress`: Hermes context compression summarizer on Gemini 3.5 Flash-Lite -> DeepSeek V4-Flash
+- `agent-monitor` / `jev-decision`: TypeSafe Jev System One scoring and binary gating via `jev-shim`
 
 ### Four-Pool AI Routing (`model:`, `delegation:`, `providers.muninn`, `fallback_providers:`)
 
@@ -103,7 +109,7 @@ AI inference is partitioned across four isolated quota pools:
 3. **Free `$40/mo` Gemini API Credits (Muninn, `$35/30d` cap -> DeepSeek safety net)**:
    - Heavy scheduled crons (`daily-briefing`, `weekly-topic-watch`, `mnemosyne-dreaming-consolidation`) pin to named `providers.muninn` (`model: "agent-loop"`, `gemini/gemini-3.8-flash`) authenticated with `MUNINN_MASTER_KEY`.
    - Subagent `delegation` runs primarily on `providers.muninn` `agent-delegate` (`gemini/gemini-3.8-flash`), falling back to `claude-sonnet-5-5-high`.
-   - Stack synthesis (`app-synthesize`), memory extraction (`memory-extract`), and Plutus receipt vision (`gemini-4-hydrogen`) run natively on `gemini/gemini-3.8-flash` (zero `agy-vision:8643` calls), while `compress` stays on `gemini/gemini-3.5-flash-lite`.
+   - Stack synthesis (`app-synthesize`), memory extraction (`memory-extract`), and Plutus receipt vision (`gemini-4-hydrogen`) run natively on `gemini/gemini-3.8-flash`, while `compress` stays on `gemini/gemini-3.5-flash-lite`.
 4. **TypeSafe Jev (`$50` prepaid)**: Unchanged fast zero-output classification and gating (`jev-decision`, `agent-monitor`, `jev-shim`).
 
 ```
@@ -129,32 +135,14 @@ Two prerequisites, both wired in this repo and easy to break:
 - **`agy` binary + plugin.** The Antigravity CLI is installed into the image at `/opt/agy` (symlinked to `/usr/local/bin/agy`), and the model-provider plugin `antigravity-subscription-directsdk` is cloned at the catalog-pinned commit into the **bundled image layer** at `/opt/hermes/plugins/model-providers/`. Installing it under `$HERMES_HOME/plugins` instead would be shadowed by the `/opt/odin/hermes:/opt/data` volume mount and the provider would silently not exist.
 - **Subscription login mounted from host.** `agy` authenticates with an OAuth token, **not** a Gemini API key, and the token is read from a **file** at `$HOME/.gemini/antigravity-cli/` (the plugin looks for `jetski-standalone-oauth-token`, then `antigravity-oauth-token`). The host's `~/.gemini/antigravity-cli` directory is mounted directly into both `huginn-gateway` and `huginn-dashboard` at `/opt/data/home/.gemini/antigravity-cli`.
 
-  You simply authenticate `agy` normally **on the gaia host** under your regular user account from a real TTY:
+  Authenticate `agy` on the Gaia host under your regular user account from a real TTY:
 
   ```bash
   # Run on gaia from your regular user shell:
   agy
   ```
 
-  `agy` opens an interactive menu → **1. Google OAuth** (Enter). It then prints
-  a Google authorization URL. Open that URL in a browser on your laptop, sign
-  in with the account holding the Antigravity subscription, and paste the
-  returned authorization code back into the waiting prompt.
-
-  The token lands in `~/.gemini/antigravity-cli/`; verify before bringing the stack up:
-
-  ```bash
-  ls -la ~/.gemini/antigravity-cli/
-  # expect jetski-standalone-oauth-token (or antigravity-oauth-token)
-  ```
-
-  Because `~/.gemini/antigravity-cli` is bind-mounted directly into the container's `$HOME/.gemini/antigravity-cli`, the container shares the credentials immediately. Token refreshes performed either on host or inside the container persist on the host file.
-
-  `docker exec` is **not** a way to run this login: the socket proxy refuses
-  `exec` (403), and `exec` skips `entrypoint.sh` so it would inherit the image
-  default `HOME=/root` anyway. Always run `agy` directly on Gaia.
-
-  The token is a bearer credential for the signed-in Google account. Keep it host-local; it does not belong in the vault, in git, or in a GitHub Secret.
+  Verify `~/.gemini/antigravity-cli/` holds `jetski-standalone-oauth-token` (or `antigravity-oauth-token`). Because it is bind-mounted directly into the container, token refreshes persist on the host file. Always run interactive `agy` login directly on Gaia rather than via `docker exec` (the socket proxy refuses `exec`).
 
 The fallback leg resolves its credential by variable **name**: the chain uses `key_env: MUNINN_MASTER_KEY`, so `MUNINN_MASTER_KEY` must be present in the gateway container's environment (not merely aliased to `OPENAI_API_KEY`).
 
@@ -168,9 +156,9 @@ For high-frequency, low-complexity gating tasks - such as topic-watch sweep mate
 
 - **Discord Bot**: mention the bot in allowed channels. `/new` to reset.
 - **Huginn Dashboard**: `https://huginn.DOMAIN` (chat, sessions, skills, memory).
-- **Open WebUI**: `https://odin.DOMAIN` (select `hermes-agent` model).
 - **Direct API**: `POST https://agent.DOMAIN/v1/chat/completions` (OpenAI-compatible).
 - **Mnemosyne**: `https://mnemosyne.DOMAIN` (memory constellation map and timeline).
+- **Muninn Dashboard**: `https://muninn.DOMAIN/ui` (LiteLLM observability).
 
 ---
 

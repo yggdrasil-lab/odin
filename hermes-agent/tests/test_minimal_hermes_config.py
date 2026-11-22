@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static regression tests for minimal single-coordinator Hermes and Hydrogen model lock."""
+"""Static regression tests for minimal single-coordinator Hermes and stack cleanup."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import unittest
 from pathlib import Path
 
 ODIN_ROOT = Path(__file__).resolve().parents[2]
-PATCHES_DIR = ODIN_ROOT / "hermes-agent" / "patches"
-if str(PATCHES_DIR) not in sys.path:
-    sys.path.insert(0, str(PATCHES_DIR))
+HERMES_AGENT_DIR = ODIN_ROOT / "hermes-agent"
+if str(HERMES_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(HERMES_AGENT_DIR))
 
-import enhance_agy_prompt_preamble as preamble_patch  # noqa: E402
+from odin_runtime.agy_policy import PREAMBLE_RULES  # noqa: E402
 
 
 def _extract_top_level_yaml_section(text: str, section_name: str) -> str:
@@ -112,7 +112,7 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertIn('key_env: "MUNINN_MASTER_KEY"', title_sec)
         self.assertIn('model: "claude-sonnet-5-5-low"', title_sec)
 
-    def test_deploy_yml_sets_claude_allowlist_and_validates_config(self) -> None:
+    def test_deploy_yml_sets_claude_allowlist_and_retires_dead_vars(self) -> None:
         deploy_path = ODIN_ROOT / ".github" / "workflows" / "deploy.yml"
         text = deploy_path.read_text(encoding="utf-8")
 
@@ -122,20 +122,32 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertRegex(text, r"(?m)^\s*HERMES_AGY_ALLOWED_MODELS:\s*claude-sonnet-5-5\s*$")
         self.assertRegex(text, r"(?m)^\s*HERMES_AGY_ALLOWED_EFFORTS:\s*low,medium,high\s*$")
         self.assertIn("Validate Required Configuration", text)
+        self.assertIn('[ -z "$DISCORD_CHANNEL_INFO_ID" ]', text)
         self.assertIn('[ -z "$HERMES_AGY_ALLOWED_MODELS" ]', text)
         self.assertIn('[ -z "$HERMES_AGY_ALLOWED_EFFORTS" ]', text)
-        self.assertNotIn("KANBAN_", text)
-        self.assertNotIn("render_profiles.py", text)
-        self.assertNotIn("roles.json", text)
-        self.assertNotIn("/opt/data/profiles", text)
+        for retired_var in (
+            "KANBAN_",
+            "OLLAMA_",
+            "CHAT_MODEL",
+            "LLDAP_LDAP_",
+            "WEBUI_SECRET_KEY",
+            "KRATOS_MCP_TOKEN",
+            "MCP_KRATOS_API_KEY",
+            "render_profiles.py",
+            "roles.json",
+            "/opt/data/profiles",
+        ):
+            self.assertNotIn(retired_var, text)
 
-    def test_muninn_config_routes_free_gemini38_and_zero_agy_vision(self) -> None:
+    def test_muninn_config_routes_free_gemini38_and_retires_ollama_and_agent_auto(self) -> None:
         muninn_path = ODIN_ROOT / "config" / "muninn" / "config.yaml.template"
         text = muninn_path.read_text(encoding="utf-8")
 
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2013", text)
-        self.assertNotIn("agy-vision:8643", text)
+        self.assertNotIn("agy-vision", text.lower())
+        self.assertNotIn("ollama", text.lower())
+        self.assertNotIn("agent-auto", text)
         self.assertIn("&gemini_38_flash gemini/gemini-3.8-flash", text)
         self.assertIn("&gemini_35_flash_lite gemini/gemini-3.5-flash-lite", text)
         self.assertIn("budget_limit: 35.0", text)
@@ -155,56 +167,91 @@ class TestMinimalHermesConfig(unittest.TestCase):
         router_sec = _extract_top_level_yaml_section(text, "router_settings")
         self.assertRegex(router_sec, r"(?ms)gemini-4-hydrogen:\s*-\s*gemini-3\.5-flash-lite\s*-\s*agent-loop-deepseek")
 
-    def test_docker_compose_passes_allowlist_zero_defaults_and_no_muninn_ports(self) -> None:
+    def test_docker_compose_uses_common_env_anchor_and_retires_dead_services(self) -> None:
         compose_path = ODIN_ROOT / "docker-compose.yml"
         text = compose_path.read_text(encoding="utf-8")
 
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2013", text)
         self.assertNotIn("KANBAN_", text)
+        self.assertNotIn("KRATOS_MCP_TOKEN", text)
+        self.assertNotIn("MCP_KRATOS_API_KEY", text)
         self.assertIsNone(re.search(r"\$\{[A-Za-z0-9_]+[:-][^}]*\}", text), "Found compose default expansion")
 
-        services_sec = _extract_top_level_yaml_section(text, "services")
-        for svc_name in ("agy-vision", "huginn-gateway", "huginn-dashboard"):
-            svc_sec = _extract_indented_yaml_block(services_sec, svc_name, indent=2)
-            self.assertIn("HERMES_AGY_ALLOWED_MODELS=${HERMES_AGY_ALLOWED_MODELS}", svc_sec, svc_name)
-            self.assertIn("HERMES_AGY_ALLOWED_EFFORTS=${HERMES_AGY_ALLOWED_EFFORTS}", svc_sec, svc_name)
+        anchor_sec = _extract_top_level_yaml_section(text, "x-hermes-common-env")
+        self.assertIn("x-hermes-common-env: &hermes-common-env", anchor_sec)
+        self.assertIn("HERMES_AGY_ALLOWED_MODELS: ${HERMES_AGY_ALLOWED_MODELS}", anchor_sec)
+        self.assertIn("HERMES_AGY_ALLOWED_EFFORTS: ${HERMES_AGY_ALLOWED_EFFORTS}", anchor_sec)
 
-        self.assertIn("AGY_VISION_PORT=8643", _extract_indented_yaml_block(services_sec, "agy-vision", indent=2))
+        services_sec = _extract_top_level_yaml_section(text, "services")
+        for retired_svc in ("ollama", "agy-vision", "open-webui"):
+            self.assertEqual(_extract_indented_yaml_block(services_sec, retired_svc, indent=2), "", retired_svc)
+
+        for svc_name in ("huginn-gateway", "huginn-dashboard"):
+            svc_sec = _extract_indented_yaml_block(services_sec, svc_name, indent=2)
+            self.assertIn("<<: *hermes-common-env", svc_sec, svc_name)
+
         muninn_sec = _extract_indented_yaml_block(services_sec, "muninn", indent=2)
         self.assertIsNone(re.search(r"(?m)^\s+ports\s*:", muninn_sec), "muninn must not publish Swarm ports")
         self.assertIn("endpoint_mode: dnsrr", muninn_sec)
+        self.assertIn("homepage.description=LiteLLM Prompt & Response Observability", muninn_sec)
 
-    def test_retired_kanban_and_profile_files_are_removed(self) -> None:
+        volumes_sec = _extract_top_level_yaml_section(text, "volumes")
+        self.assertNotIn("ollama_data", volumes_sec)
+        self.assertNotIn("open-webui_data", volumes_sec)
+
+        secrets_sec = _extract_top_level_yaml_section(text, "secrets")
+        self.assertNotIn("odin_lldap_user_pass", secrets_sec)
+        self.assertNotIn("odin_webui_secret_key", secrets_sec)
+
+        configs_sec = _extract_top_level_yaml_section(text, "configs")
+        self.assertNotIn("ollama_init_script", configs_sec)
+
+    def test_retired_files_removed_and_odin_runtime_plus_patch_runner_present(self) -> None:
         retired_paths = [
-            ODIN_ROOT / "hermes-agent" / "scripts" / "kanban_jev_gateway.py",
-            ODIN_ROOT / "hermes-agent" / "scripts" / "kanban_gateway",
-            ODIN_ROOT / "hermes-agent" / "tests" / "test_kanban_dependencies_and_wrapup.py",
-            ODIN_ROOT / "hermes-agent" / "tests" / "test_kanban_ide_ownership.py",
-            ODIN_ROOT / "hermes-agent" / "tests" / "test_kanban_role_routing.py",
-            ODIN_ROOT / "hermes-agent" / "tests" / "test_kanban_verification_pipeline.py",
-            ODIN_ROOT / "config" / "hermes" / "profiles",
-            ODIN_ROOT / "hermes-agent" / "tests" / "test_profile_renderer.py",
+            ODIN_ROOT / "config" / "ollama-init" / "init.sh",
+            ODIN_ROOT / "hermes-agent" / "scripts" / "agy_vision_proxy.py",
+            ODIN_ROOT / "hermes-agent" / "tests" / "test_agy_vision_proxy.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "fix_managed_worker_routed_env.py",
+            ODIN_ROOT / "hermes-agent" / "tests" / "test_managed_worker_routed_env.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "fix_agy_output_cap_detection.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "fix_agy_v1029_worker_usage_and_native_tool.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "fix_agy_catalog_and_claude55_aliases.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "enhance_agy_prompt_preamble.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "hook_pre_compress_wrapup.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "route_mnemosyne_to_memory_task.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "enhance_gateway_retry_and_single_query_safety.py",
+            ODIN_ROOT / "hermes-agent" / "patches" / "fix_startup_api_media_sweep_offload.py",
         ]
         for path in retired_paths:
             self.assertFalse(path.exists(), f"Retired path still exists: {path}")
 
-        dockerfile_text = (ODIN_ROOT / "hermes-agent" / "Dockerfile").read_text(encoding="utf-8")
-        self.assertNotIn("kanban-gateway", dockerfile_text)
+        self.assertTrue((HERMES_AGENT_DIR / "odin_runtime" / "__init__.py").is_file())
+        self.assertTrue((HERMES_AGENT_DIR / "patches" / "patch_runner.py").is_file())
+        self.assertTrue((HERMES_AGENT_DIR / "patches" / "specs.py").is_file())
 
-        entrypoint_text = (ODIN_ROOT / "hermes-agent" / "entrypoint.sh").read_text(encoding="utf-8")
+        handover_text = (HERMES_AGENT_DIR / "odin_runtime" / "pre_compress_handover.py").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"\b\d{17,20}\b", handover_text))
+        self.assertNotIn("/opt/data/.env", handover_text)
+        self.assertNotIn("/opt/data/hooks", handover_text)
+
+        dockerfile_text = (HERMES_AGENT_DIR / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY odin_runtime /opt/hermes/.venv/lib/python3.14/site-packages/odin_runtime", dockerfile_text)
+        self.assertIn("patch_runner.py apply", dockerfile_text)
+
+        entrypoint_text = (HERMES_AGENT_DIR / "entrypoint.sh").read_text(encoding="utf-8")
         self.assertNotIn("kanban-gateway", entrypoint_text)
         self.assertNotIn("render_profiles.py", entrypoint_text)
         self.assertIn("chmod 755 /opt/data", entrypoint_text)
         self.assertIn("chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock", entrypoint_text)
 
-    def test_enhance_agy_prompt_preamble_batches_readonly_tools(self) -> None:
-        self.assertNotIn("one file or step at a time", preamble_patch.INJECTION)
-        self.assertNotIn("Focus on one tool or file edit per turn", preamble_patch.INJECTION)
-        self.assertIn("Batch independent read-only tool calls", preamble_patch.INJECTION)
-        self.assertIn("Batch independent read-only tool calls", preamble_patch.TEST_INJECTION)
-        self.assertNotIn("\u2014", preamble_patch.INJECTION)
-        self.assertNotIn("\u2013", preamble_patch.INJECTION)
+    def test_odin_runtime_preamble_batches_readonly_tools(self) -> None:
+        joined = "\n".join(PREAMBLE_RULES)
+        self.assertNotIn("one file or step at a time", joined)
+        self.assertNotIn("Focus on one tool or file edit per turn", joined)
+        self.assertIn("Batch independent read-only tool calls", joined)
+        self.assertNotIn("\u2014", joined)
+        self.assertNotIn("\u2013", joined)
 
 
 if __name__ == "__main__":
