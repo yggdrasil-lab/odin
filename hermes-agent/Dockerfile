@@ -68,6 +68,14 @@ COPY odin_runtime /opt/hermes/.venv/lib/python3.14/site-packages/odin_runtime
 COPY patches/ /tmp/patches/
 RUN /opt/hermes/.venv/bin/python /tmp/patches/patch_runner.py apply && rm -rf /tmp/patches
 
+# Build-time boot smoke check: verify Hermes CLI and PM committed-venv activation with odin_runtime.
+RUN set -eu; \
+    SMOKE_HOME="$(mktemp -d /tmp/hermes-smoke.XXXXXX)"; \
+    trap 'rm -rf "$SMOKE_HOME"' EXIT; \
+    HOME="$SMOKE_HOME" HERMES_HOME="$SMOKE_HOME" PYTHONDONTWRITEBYTECODE=1 /opt/hermes/.venv/bin/hermes --version; \
+    HOME="$SMOKE_HOME" HERMES_HOME="$SMOKE_HOME" PYTHONDONTWRITEBYTECODE=1 /opt/hermes/.venv/bin/python -c 'import hashlib, json, os, pathlib, sys; root = pathlib.Path("/opt/hermes").resolve(); key = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]; gen = pathlib.Path(os.environ["HERMES_HOME"]) / "installs" / key / "environments" / "smoke"; site_dir = gen / "lib" / "python3.14" / "site-packages"; site_dir.mkdir(parents=True, exist_ok=True); (gen / "pyvenv.cfg").write_text("version = 3.14.9\n", encoding="utf-8"); (gen.parents[1] / "facts.json").write_text(json.dumps({"packages": {"venv": {"environment": str(gen)}}}), encoding="utf-8"); base_site = root / ".venv" / "lib" / "python3.14" / "site-packages"; sys.path[:0] = [str(root), str(base_site)]; from pm.environments import activate_dependencies; activate_dependencies(root); pth = site_dir / "odin-base-site.pth"; assert pth.is_file() and pth.read_text(encoding="utf-8").strip() == str(base_site), f"missing bridge pth: {pth}"; import odin_runtime.pm_venv_bridge; print("PM smoke check OK:", pth)'; \
+    HOME="$SMOKE_HOME" HERMES_HOME="$SMOKE_HOME" PYTHONDONTWRITEBYTECODE=1 /opt/hermes/.venv/bin/hermes --version
+
 # Copy helper scripts and make them executable in PATH
 COPY scripts/ /usr/local/bin/
 RUN chmod -R a+rX /usr/local/bin/ \

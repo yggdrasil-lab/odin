@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -166,6 +169,99 @@ class TestPatchRunner(unittest.TestCase):
             self.assertEqual(out[0].status, PatchStatus.PENDING)
             serialized = json.loads(patch_runner._format_outcomes(out, True))
             self.assertEqual(serialized[0]["status"], "PENDING")
+
+    def test_pm_environments_spec_imports_bridge_before_sys_path_clear(self) -> None:
+        by_id = {s.id: s for s in odin_specs.get_specs()}
+        pm_spec = by_id["pm_environments_bridge"]
+        act_hunk = next(h for h in pm_spec.hunks if h.label == "activate_dependencies")
+        import_pos = act_hunk.replacement.index("from odin_runtime.pm_venv_bridge import")
+        clear_pos = act_hunk.replacement.index("sys.path[:] = [entry for entry in sys.path")
+        self.assertLess(import_pos, clear_pos)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root, base_site, selected = _setup_patched_pm_tree(Path(tmpdir), pm_spec)
+            probe = (
+                "import json, os, pathlib, sys; "
+                "from pm.environments import activate_dependencies; "
+                "root = pathlib.Path(sys.argv[1]); "
+                "activate_dependencies(root); "
+                "print(json.dumps({'sys_path': sys.path, 'pythonpath': os.environ['PYTHONPATH']}))"
+            )
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "PYTHONPATH": os.pathsep.join([str(project_root), str(base_site)]),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            res = subprocess.run(
+                [sys.executable, "-c", probe, str(project_root)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            payload = json.loads(res.stdout)
+            pth_file = selected / "odin-base-site.pth"
+            self.assertTrue(pth_file.is_file())
+            self.assertEqual(pth_file.read_text(encoding="utf-8"), f"{base_site}\n")
+            self.assertIn(str(base_site), payload["sys_path"])
+            self.assertIn(str(base_site), payload["pythonpath"].split(os.pathsep))
+
+
+def _setup_patched_pm_tree(tmp_root: Path, pm_spec: PatchSpec) -> tuple[Path, Path, Path]:
+    project_root = tmp_root / "hermes"
+    base_site = project_root / ".venv" / "lib" / "python3.14" / "site-packages"
+    selected = project_root / "installs" / "gen1" / "lib" / "python3.14" / "site-packages"
+    (project_root / "pm").mkdir(parents=True)
+    selected.mkdir(parents=True)
+    shutil.copytree(HERMES_AGENT_DIR / "odin_runtime", base_site / "odin_runtime")
+    (project_root / "pm" / "__init__.py").write_text("", encoding="utf-8")
+    (project_root / "pm" / "environments.py").write_text(
+        _FAKE_PM_ENVIRONMENTS_SRC.format(base_site=str(base_site), selected=str(selected)),
+        encoding="utf-8",
+    )
+    outcomes = apply_all((pm_spec,), {"hermes": project_root})
+    assert outcomes[0].status == PatchStatus.APPLIED
+    return project_root, base_site, selected
+
+
+_FAKE_PM_ENVIRONMENTS_SRC = """from __future__ import annotations
+import os
+from pathlib import Path
+import sys
+
+_BASE_SITE = Path({base_site!r})
+_SELECTED = Path({selected!r})
+
+def base_venv(project_root: Path) -> Path:
+    return project_root / ".venv"
+
+def site_packages(venv: Path) -> Path:
+    return _SELECTED if venv.name == "gen1" else _BASE_SITE
+
+def committed_venv(project_root: Path) -> Path | None:
+    return _SELECTED.parents[2]
+
+def activate_dependencies(project_root: Path) -> None:
+    selected = _SELECTED
+    import site
+
+    sys.path[:] = [entry for entry in sys.path
+                   if Path(entry).name not in ("site-packages", "dist-packages")
+                   and Path(entry).resolve() != project_root.resolve()]
+    # uv editable members are activated by .pth files, not by sys.path alone.
+    site.addsitedir(str(selected))
+    sys.path[:] = [str(project_root.resolve()), str(selected),
+                   *[entry for entry in sys.path if Path(entry).resolve() != selected.resolve()]]
+    os.environ["PYTHONPATH"] = os.pathsep.join([str(project_root.resolve()), str(selected)])
+
+def activation_environment(project_root: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    environment = committed_venv(project_root)
+    env["PYTHONPATH"] = os.pathsep.join([str(project_root.resolve()),
+                                         *([str(site_packages(environment))] if environment else [])])
+    return env
+"""
 
 
 if __name__ == "__main__":

@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -93,6 +97,56 @@ class TestOdinRuntimePmBridge(unittest.TestCase):
             env_py.write_text("v1 = False\n", encoding="utf-8")
             digest2 = bridge_stamp_digest(project)
             self.assertNotEqual(digest1, digest2)
+
+    def test_pre_imported_bridge_survives_sys_path_clear_with_temp_pm_venv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root, base_site, selected = _setup_temp_pm_venv(Path(tmpdir))
+            probe = (
+                "import json, os, site, sys; from pathlib import Path; "
+                "project_root, selected, base_site = map(Path, sys.argv[1:4]); "
+                "from odin_runtime.pm_venv_bridge import link_base_site, merged_pythonpath; "
+                "sys.path[:] = [e for e in sys.path if Path(e).name not in ('site-packages', 'dist-packages') "
+                "and Path(e).resolve() != project_root.resolve()]; "
+                "link_base_site(selected, base_site); site.addsitedir(str(selected)); site.addsitedir(str(base_site)); "
+                "sys.path[:], os.environ['PYTHONPATH'] = merged_pythonpath(project_root, selected, sys.path, base_site=base_site); "
+                "import odin_runtime; "
+                "print(json.dumps({'sys_path': sys.path, 'pythonpath': os.environ['PYTHONPATH']}))"
+            )
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "PYTHONPATH": os.pathsep.join([str(project_root), str(base_site)]),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            res = subprocess.run(
+                [sys.executable, "-c", probe, str(project_root), str(selected), str(base_site)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            payload = json.loads(res.stdout)
+            self.assertEqual((selected / PTH_FILENAME).read_text(encoding="utf-8"), f"{base_site}\n")
+            expected = [str(project_root.resolve()), str(selected), str(base_site)]
+            self.assertEqual(payload["sys_path"][:3], expected)
+            self.assertEqual(payload["pythonpath"].split(os.pathsep), expected)
+
+
+def _setup_temp_pm_venv(root: Path) -> tuple[Path, Path, Path]:
+    project_root = root / "hermes"
+    base_site = project_root / ".venv" / "lib" / "python3.14" / "site-packages"
+    install_key = hashlib.sha256(str(project_root.resolve()).encode("utf-8")).hexdigest()[:16]
+    gen_dir = root / "home" / "installs" / install_key / "environments" / "gen1"
+    selected = gen_dir / "lib" / "python3.14" / "site-packages"
+    base_site.mkdir(parents=True)
+    selected.mkdir(parents=True)
+    (gen_dir / "pyvenv.cfg").write_text("version = 3.14.9\n", encoding="utf-8")
+    (gen_dir.parents[1] / "facts.json").write_text(
+        json.dumps({"packages": {"venv": {"environment": str(gen_dir)}}}),
+        encoding="utf-8",
+    )
+    shutil.copytree(HERMES_AGENT_DIR / "odin_runtime", base_site / "odin_runtime")
+    return project_root, base_site, selected
 
 
 if __name__ == "__main__":
