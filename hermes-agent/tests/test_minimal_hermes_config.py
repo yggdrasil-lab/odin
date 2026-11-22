@@ -54,6 +54,26 @@ def _extract_indented_yaml_block(text: str, key_name: str, indent: int = 2) -> s
     return "\n".join(captured)
 
 
+def _extract_workflow_step(text: str, step_name: str) -> str:
+    """Return text for a GitHub Actions workflow step block by name."""
+    lines = text.splitlines()
+    captured: list[str] = []
+    in_step = False
+    target = f"      - name: {step_name}"
+    for line in lines:
+        if not in_step:
+            if line.strip() == target.strip() and line.startswith("      - name:"):
+                in_step = True
+                captured.append(line)
+            continue
+        if line.startswith("      - name:") or (
+            line and not line.startswith(("        ", "\t", "#"))
+        ):
+            break
+        captured.append(line)
+    return "\n".join(captured)
+
+
 class TestMinimalHermesConfig(unittest.TestCase):
     """Static invariants for minimal single-coordinator Odin stack configuration."""
 
@@ -252,6 +272,31 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertIn("Batch independent read-only tool calls", joined)
         self.assertNotIn("\u2014", joined)
         self.assertNotIn("\u2013", joined)
+
+    def test_deploy_yml_has_post_deploy_swarm_stability_gate(self) -> None:
+        text = (ODIN_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+        deploy_idx = text.find('/tmp/deploy.sh "odin" docker-compose.yml')
+        gate_idx = text.find("- name: Verify Post-Deploy Swarm Convergence")
+        self.assertGreater(deploy_idx, -1)
+        self.assertGreater(gate_idx, deploy_idx)
+
+        step_text = _extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence")
+        self.assertNotIn("\u2014", step_text)
+        self.assertNotIn("\u2013", step_text)
+
+        curl_cmd = (
+            "curl -fsSL "
+            "https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/verify_convergence.sh "
+            "-o /tmp/verify_convergence.sh"
+        )
+        chmod_cmd = "chmod +x /tmp/verify_convergence.sh"
+        run_cmd = '/tmp/verify_convergence.sh "odin" odin_huginn-gateway odin_huginn-dashboard'
+        curl_idx = step_text.find(curl_cmd)
+        chmod_idx = step_text.find(chmod_cmd)
+        run_idx = step_text.find(run_cmd)
+        self.assertGreater(curl_idx, -1)
+        self.assertGreater(chmod_idx, curl_idx)
+        self.assertGreater(run_idx, chmod_idx)
 
 
 if __name__ == "__main__":
