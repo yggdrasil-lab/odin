@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -24,7 +25,7 @@ class TestAgyVisionProxy(unittest.TestCase):
         with patch.dict("os.environ", {"API_SERVER_KEY": "secret-123"}):
             res = self.client.post(
                 "/v1/chat/completions",
-                json={"model": "gemini-4-hydrogen", "messages": [{"role": "user", "content": "hi"}]},
+                json={"model": "claude-sonnet-5-5", "messages": [{"role": "user", "content": "hi"}]},
             )
             self.assertEqual(res.status_code, 401)
 
@@ -39,110 +40,107 @@ class TestAgyVisionProxy(unittest.TestCase):
             captured["has_dir"] = work_dir is not None and (work_dir / "image_1.jpg").is_file()
             return '{"merchant": "Costco", "total_amount": 154.93}'
 
-        with (
-            patch.dict(
-                "os.environ",
+        env = {
+            "API_SERVER_KEY": "secret-123",
+            "HERMES_AGY_ALLOWED_MODELS": "claude-sonnet-5-5",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        payload = {
+            "model": "claude-sonnet-5-5",
+            "messages": [
                 {
-                    "API_SERVER_KEY": "secret-123",
-                    "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
-                    "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
-                },
-            ),
-            patch.object(agy_vision_proxy, "run_agy_prompt", side_effect=fake_run),
-        ):
-            res = self.client.post(
-                "/v1/chat/completions",
-                headers={"Authorization": "Bearer secret-123"},
-                json={
-                    "model": "gemini-4-hydrogen",
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Parse this receipt."},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                            ],
-                        }
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Parse this receipt."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     ],
-                },
-            )
+                }
+            ],
+        }
+        with patch.dict("os.environ", env), patch.object(agy_vision_proxy, "run_agy_prompt", side_effect=fake_run):
+            res = self.client.post("/v1/chat/completions", headers={"Authorization": "Bearer secret-123"}, json=payload)
 
         self.assertEqual(res.status_code, 200)
-        body = res.json()
-        self.assertEqual(captured["model"], "gemini-4-hydrogen-high")
+        self.assertEqual(captured["model"], "claude-sonnet-5-5-high")
         self.assertTrue(captured["has_dir"])
         self.assertIn("Parse this receipt.", str(captured["prompt"]))
-        self.assertEqual(
-            body["choices"][0]["message"]["content"],
-            '{"merchant": "Costco", "total_amount": 154.93}',
-        )
+        self.assertEqual(res.json()["choices"][0]["message"]["content"], '{"merchant": "Costco", "total_amount": 154.93}')
 
-    def test_accepts_hydrogen_variants_and_aliases(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
-                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
-            },
-        ):
+    def test_accepts_claude_sonnet_55_and_explicit_allowlist_defaults(self) -> None:
+        env = {
+            "HERMES_AGY_ALLOWED_MODELS": "claude-sonnet-5-5",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        with patch.dict("os.environ", env):
+            self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "claude-sonnet-5-5-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5"), "claude-sonnet-5-5-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("sonnet"), "claude-sonnet-5-5-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("claude-sonnet"), "claude-sonnet-5-5-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5-low"), "claude-sonnet-5-5-low")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5-medium"), "claude-sonnet-5-5-medium")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("openai/claude-sonnet-5-5-high"), "claude-sonnet-5-5-high")
+
+        with patch.dict("os.environ", {"HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen", "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high"}):
             self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "gemini-4-hydrogen-high")
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen"), "gemini-4-hydrogen-high")
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("hydrogen"), "gemini-4-hydrogen-high")
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-low"), "gemini-4-hydrogen-low")
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-medium"), "gemini-4-hydrogen-medium")
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("openai/gemini-4-hydrogen-high"), "gemini-4-hydrogen-high")
 
-    def test_rejects_disallowed_models_and_removed_aliases_with_400(self) -> None:
+        clean_env = {k: v for k, v in os.environ.items() if k not in ("HERMES_AGY_ALLOWED_MODELS", "HERMES_AGY_ALLOWED_EFFORTS")}
+        with patch.dict("os.environ", clean_env, clear=True):
+            self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "claude-sonnet-5-5-high")
+            with self.assertRaises(HTTPException) as ctx:
+                agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-high")
+            self.assertEqual(ctx.exception.status_code, 400)
+
+    def _assert_rejected_400(self, model_name: str) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            agy_vision_proxy.resolve_agy_model(model_name)
+        self.assertEqual(ctx.exception.status_code, 400)
+        res = self.client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer secret-123"},
+            json={"model": model_name, "messages": [{"role": "user", "content": "hi"}]},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_rejects_pool1_gemini_and_disallowed_models_with_400(self) -> None:
         disallowed = (
+            "gemini-4-hydrogen",
+            "hydrogen",
+            "gemini-4-hydrogen-high",
             "gemini-4-carbon",
-            "carbon",
             "gemini-4-carbon-high",
             "gemini-4-neon-high",
             "neon",
             "gemini-4-argon-high",
             "argon",
-            "claude-sonnet-5-5-high",
+            "claude-opus-5-5-high",
             "gpt-oss-120b",
             "gemini-3.8-flash",
         )
-        with patch.dict(
-            "os.environ",
-            {
-                "API_SERVER_KEY": "secret-123",
-                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
-                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
-            },
-        ), patch.object(agy_vision_proxy, "run_agy_prompt") as mock_run:
+        env = {
+            "API_SERVER_KEY": "secret-123",
+            "HERMES_AGY_ALLOWED_MODELS": "claude-sonnet-5-5",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        with patch.dict("os.environ", env), patch.object(agy_vision_proxy, "run_agy_prompt") as mock_run:
             for model_name in disallowed:
-                with self.subTest(model_name=model_name):
-                    with self.assertRaises(HTTPException) as ctx:
-                        agy_vision_proxy.resolve_agy_model(model_name)
-                    self.assertEqual(ctx.exception.status_code, 400)
-
-                    res = self.client.post(
-                        "/v1/chat/completions",
-                        headers={"Authorization": "Bearer secret-123"},
-                        json={"model": model_name, "messages": [{"role": "user", "content": "hi"}]},
-                    )
-                    self.assertEqual(res.status_code, 400)
+                self._assert_rejected_400(model_name)
             mock_run.assert_not_called()
 
     def test_rejects_disallowed_efforts_and_empty_allowlist(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
-                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium",
-            },
-        ):
-            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-low"), "gemini-4-hydrogen-low")
+        env = {
+            "HERMES_AGY_ALLOWED_MODELS": "claude-sonnet-5-5",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium",
+        }
+        with patch.dict("os.environ", env):
+            self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "claude-sonnet-5-5-medium")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5-low"), "claude-sonnet-5-5-low")
             with self.assertRaises(HTTPException) as ctx:
-                agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-high")
+                agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5-high")
             self.assertEqual(ctx.exception.status_code, 400)
 
-        with patch.dict("os.environ", {"HERMES_AGY_ALLOWED_MODELS": ""}):
-            with self.assertRaises(HTTPException) as ctx:
-                agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-high")
+        for bad_env in ({"HERMES_AGY_ALLOWED_MODELS": ""}, {"HERMES_AGY_ALLOWED_EFFORTS": ""}):
+            with patch.dict("os.environ", bad_env), self.assertRaises(HTTPException) as ctx:
+                agy_vision_proxy.resolve_agy_model("claude-sonnet-5-5-high")
             self.assertEqual(ctx.exception.status_code, 400)
 
 

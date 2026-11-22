@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stateless OpenAI-compatible vision/completion proxy backed by Antigravity CLI (agy).
 
-Exposes POST /v1/chat/completions on the internal Swarm network so Muninn can route
-multimodal requests (such as Plutus receipt parsing) to Gemini 4 Hydrogen without
-entering Huginn Gateway's stateful tool/approval loop.
+Exposes POST /v1/chat/completions on the internal Swarm network, enforcing fail-closed
+HERMES_AGY_ALLOWED_MODELS and HERMES_AGY_ALLOWED_EFFORTS allowlists before invoking agy
+without entering Huginn Gateway's stateful tool/approval loop.
 """
 
 from __future__ import annotations
@@ -24,7 +24,8 @@ import uvicorn
 
 DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTALL)
 MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
-DEFAULT_ALLOWED_MODELS = ("gemini-4-hydrogen",)
+DEFAULT_ALLOWED_MODELS = ("claude-sonnet-5-5",)
+DEFAULT_EFFORT = "high"
 EFFORT_SUFFIXES = (
     ("-xhigh", "high"),
     ("-high", "high"),
@@ -33,6 +34,9 @@ EFFORT_SUFFIXES = (
 )
 
 MODEL_ALIASES = {
+    "claude-sonnet-5-5": "claude-sonnet-5-5-high",
+    "sonnet": "claude-sonnet-5-5-high",
+    "claude-sonnet": "claude-sonnet-5-5-high",
     "gemini-4-hydrogen": "gemini-4-hydrogen-high",
     "hydrogen": "gemini-4-hydrogen-high",
 }
@@ -85,9 +89,38 @@ def _split_model_and_effort(model_name: str) -> tuple[str, str | None]:
     return model_name, None
 
 
+def _allowed_model_and_effort_lists() -> tuple[tuple[str, ...], tuple[str, ...] | None]:
+    """Return active allowlists for base models and efforts, failing closed when empty."""
+    env_models = _parse_allowed_csv("HERMES_AGY_ALLOWED_MODELS")
+    allowed_models = DEFAULT_ALLOWED_MODELS if env_models is None else env_models
+    if not allowed_models:
+        raise HTTPException(
+            status_code=400,
+            detail="No models are allowed by HERMES_AGY_ALLOWED_MODELS",
+        )
+    allowed_efforts = _parse_allowed_csv("HERMES_AGY_ALLOWED_EFFORTS")
+    if allowed_efforts is not None and not allowed_efforts:
+        raise HTTPException(
+            status_code=400,
+            detail="No efforts are allowed by HERMES_AGY_ALLOWED_EFFORTS",
+        )
+    return allowed_models, allowed_efforts
+
+
+def _default_agy_model(
+    allowed_models: tuple[str, ...], allowed_efforts: tuple[str, ...] | None
+) -> str:
+    """Derive default model-effort ID from the active fail-closed allowlists."""
+    effort = DEFAULT_EFFORT
+    if allowed_efforts is not None and effort not in allowed_efforts:
+        effort = allowed_efforts[-1]
+    return f"{allowed_models[0]}-{effort}"
+
+
 def resolve_agy_model(requested: str | None) -> str:
     """Resolve OpenAI/Muninn model names to an allowlisted agy CLI model identifier."""
-    raw = (requested or "gemini-4-hydrogen-high").strip()
+    allowed_models, allowed_efforts = _allowed_model_and_effort_lists()
+    raw = (requested or _default_agy_model(allowed_models, allowed_efforts)).strip()
     if "/" in raw:
         raw = raw.rsplit("/", 1)[-1]
     resolved = MODEL_ALIASES.get(raw.lower(), raw)
@@ -95,21 +128,16 @@ def resolve_agy_model(requested: str | None) -> str:
         raise HTTPException(status_code=400, detail=f"Invalid model identifier: {raw}")
 
     base_model, effort = _split_model_and_effort(resolved)
-    env_models = _parse_allowed_csv("HERMES_AGY_ALLOWED_MODELS")
-    allowed_models = DEFAULT_ALLOWED_MODELS if env_models is None else env_models
-    if not allowed_models or base_model.lower() not in allowed_models:
+    if base_model.lower() not in allowed_models:
         raise HTTPException(
             status_code=400,
             detail=f"Model '{raw}' (base '{base_model}') is not allowed by HERMES_AGY_ALLOWED_MODELS",
         )
-
-    allowed_efforts = _parse_allowed_csv("HERMES_AGY_ALLOWED_EFFORTS")
-    if allowed_efforts is not None:
-        if not allowed_efforts or (effort is not None and effort not in allowed_efforts):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Effort '{effort}' for model '{raw}' is not allowed by HERMES_AGY_ALLOWED_EFFORTS",
-            )
+    if allowed_efforts is not None and effort is not None and effort not in allowed_efforts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Effort '{effort}' for model '{raw}' is not allowed by HERMES_AGY_ALLOWED_EFFORTS",
+        )
     return resolved
 
 
