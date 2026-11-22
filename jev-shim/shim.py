@@ -40,6 +40,9 @@ DEFAULT_MODEL = os.environ.get("TYPESAFE_DEFAULT_MODEL", "jev-latest")
 
 VALID_QUESTION_TYPES = frozenset({"choice", "noul", "score", "box"})
 MAX_CHOICE_OPTIONS = 255
+MIN_SCORE_LEVELS = 2
+MAX_SCORE_LEVELS = 10
+DEFAULT_SCORE_LEVELS = 4
 
 
 class SchemaValidationError(ValueError):
@@ -79,6 +82,26 @@ def validate_questions_schema(questions: Dict[str, Any]) -> None:
                     f"Choice question '{key}' must define 'criteria' as a non-empty dict or list "
                     f"with 1 to {MAX_CHOICE_OPTIONS} options (got {type(criteria).__name__} of length {count})."
                 )
+        elif q_type == "score":
+            _validate_score_spec(key, spec)
+
+
+def _validate_score_spec(key: str, spec: Dict[str, Any]) -> None:
+    """Validate optional score criteria or levels bounds (2..10)."""
+    if "criteria" in spec and spec["criteria"] is not None:
+        criteria = spec["criteria"]
+        if not isinstance(criteria, (list, tuple, dict)) or not (MIN_SCORE_LEVELS <= len(criteria) <= MAX_SCORE_LEVELS):
+            count = len(criteria) if isinstance(criteria, (list, tuple, dict)) else 0
+            raise SchemaValidationError(
+                f"Score question '{key}' criteria must contain {MIN_SCORE_LEVELS} to {MAX_SCORE_LEVELS} "
+                f"rubric levels (got {type(criteria).__name__} of length {count})."
+            )
+    if "levels" in spec and spec["levels"] is not None:
+        levels = spec["levels"]
+        if isinstance(levels, bool) or not isinstance(levels, int) or not (MIN_SCORE_LEVELS <= levels <= MAX_SCORE_LEVELS):
+            raise SchemaValidationError(
+                f"Score question '{key}' levels must be an integer between {MIN_SCORE_LEVELS} and {MAX_SCORE_LEVELS} (got {levels!r})."
+            )
 
 
 def call_typesafe_systemone(
@@ -274,7 +297,39 @@ def infer_question_from_messages(messages: List[Dict[str, str]]) -> Tuple[str, D
     return full_prompt, questions
 
 
-def extract_verdict(val: Any) -> Optional[str]:
+def _resolve_score_levels(
+    val: Any,
+    question_spec: Optional[Dict[str, Any]] = None,
+    score_levels: Optional[int] = None,
+) -> int:
+    """Resolve declared score rubric level count (2..10), defaulting to 4."""
+    if score_levels is not None:
+        if isinstance(score_levels, bool) or not isinstance(score_levels, int) or not (MIN_SCORE_LEVELS <= score_levels <= MAX_SCORE_LEVELS):
+            raise ValueError(f"score_levels must be an int between {MIN_SCORE_LEVELS} and {MAX_SCORE_LEVELS} (got {score_levels!r})")
+        return score_levels
+
+    if isinstance(question_spec, dict):
+        criteria = question_spec.get("criteria")
+        if isinstance(criteria, (list, tuple, dict)) and MIN_SCORE_LEVELS <= len(criteria) <= MAX_SCORE_LEVELS:
+            return len(criteria)
+        spec_levels = question_spec.get("levels")
+        if not isinstance(spec_levels, bool) and isinstance(spec_levels, int) and MIN_SCORE_LEVELS <= spec_levels <= MAX_SCORE_LEVELS:
+            return spec_levels
+
+    if isinstance(val, dict):
+        val_levels = val.get("levels")
+        if not isinstance(val_levels, bool) and isinstance(val_levels, int) and MIN_SCORE_LEVELS <= val_levels <= MAX_SCORE_LEVELS:
+            return val_levels
+
+    return DEFAULT_SCORE_LEVELS
+
+
+def extract_verdict(
+    val: Any,
+    question_spec: Optional[Dict[str, Any]] = None,
+    *,
+    score_levels: Optional[int] = None,
+) -> Optional[str]:
     """Extracts a normalized string verdict from a single Jev answer entry."""
     if not isinstance(val, dict):
         return None
@@ -282,12 +337,61 @@ def extract_verdict(val: Any) -> Optional[str]:
         return str(val.get("choice", ""))
     if "score" in val:
         raw_score = float(val.get("score", 0.0))
-        scaled = int(round(1 + (raw_score / 3.0) * 9))
-        return str(scaled)
+        levels = _resolve_score_levels(val, question_spec, score_levels)
+        scaled = int(round(1 + (raw_score / float(levels - 1)) * 9))
+        return str(max(1, min(10, scaled)))
     if "noul" in val:
         prob = float(val.get("noul", 0.0))
         return "true" if prob >= 0.5 else "false"
+    if "box" in val:
+        box_val = val.get("box")
+        if box_val is None:
+            return None
+        if isinstance(box_val, str):
+            return box_val
+        return json.dumps(box_val)
     return None
+
+
+def _extract_question_confidences(answers: Dict[str, Any]) -> Dict[str, float]:
+    """Extract per-question confidence scores from Jev answer entries."""
+    question_confidences: Dict[str, float] = {}
+    for key, val in answers.items():
+        if not isinstance(val, dict):
+            continue
+        if val.get("confidence") is not None:
+            question_confidences[key] = float(val["confidence"])
+        elif "noul" in val and val["noul"] is not None:
+            question_confidences[key] = round(abs(float(val["noul"]) - 0.5) * 2.0, 4)
+    return question_confidences
+
+
+def _build_completion_content(
+    verdicts: Dict[str, str],
+    answers: Dict[str, Any],
+    raw_response: Dict[str, Any],
+    response_format: Optional[Dict[str, Any]],
+    include_meta: bool,
+) -> str:
+    """Serialize normalized verdicts and optional calibrated confidence metadata."""
+    force_json = isinstance(response_format, dict) and response_format.get("type") == "json_object"
+    if include_meta:
+        question_confidences = _extract_question_confidences(answers)
+        if isinstance(raw_response, dict) and raw_response.get("confidence") is not None:
+            overall_conf: Optional[float] = float(raw_response["confidence"])
+        elif question_confidences:
+            overall_conf = min(question_confidences.values())
+        else:
+            overall_conf = None
+        output: Dict[str, Any] = dict(verdicts)
+        output["_confidence"] = overall_conf
+        output["_question_confidence"] = question_confidences
+        return json.dumps(output)
+    if not verdicts:
+        return json.dumps(answers)
+    if len(answers) > 1 or len(verdicts) > 1 or force_json:
+        return json.dumps(verdicts)
+    return next(iter(verdicts.values()))
 
 
 def format_openai_completion(
@@ -296,80 +400,37 @@ def format_openai_completion(
     raw_response: Dict[str, Any],
     response_format: Optional[Dict[str, Any]] = None,
     include_meta: bool = False,
+    questions: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Converts Jev answers dictionary into an OpenAI completion envelope.
-
-    Single-question requests return a plain string verdict for backwards compatibility,
-    unless response_format={"type": "json_object"} or include_meta=True is requested.
-    Multi-question requests (len(answers) > 1) return a JSON object mapping each
-    question key to its normalized string verdict.
-    When include_meta=True, returns a JSON object containing verdicts plus calibrated
-    _confidence and _question_confidence metadata.
-    """
+    """Converts Jev answers dictionary into an OpenAI completion envelope."""
     verdicts: Dict[str, str] = {}
     for key, val in answers.items():
-        verdict = extract_verdict(val)
+        q_spec = questions.get(key) if isinstance(questions, dict) else None
+        verdict = extract_verdict(val, question_spec=q_spec)
         if verdict is not None:
             verdicts[key] = verdict
 
-    force_json = isinstance(response_format, dict) and response_format.get("type") == "json_object"
-
-    if include_meta:
-        question_confidences: Dict[str, float] = {}
-        for key, val in answers.items():
-            if not isinstance(val, dict):
-                continue
-            if val.get("confidence") is not None:
-                question_confidences[key] = float(val["confidence"])
-            elif "noul" in val and val["noul"] is not None:
-                question_confidences[key] = round(abs(float(val["noul"]) - 0.5) * 2.0, 4)
-
-        overall_conf: Optional[float]
-        if isinstance(raw_response, dict) and raw_response.get("confidence") is not None:
-            overall_conf = float(raw_response["confidence"])
-        elif question_confidences:
-            overall_conf = min(question_confidences.values())
-        else:
-            overall_conf = None
-
-        output: Dict[str, Any] = dict(verdicts)
-        output["_confidence"] = overall_conf
-        output["_question_confidence"] = question_confidences
-        content = json.dumps(output)
-    elif not verdicts:
-        content = json.dumps(answers)
-    elif len(answers) > 1 or len(verdicts) > 1 or force_json:
-        content = json.dumps(verdicts)
-    else:
-        content = next(iter(verdicts.values()))
-
-    completion_id = f"chatcmpl-jev-{uuid.uuid4().hex[:12]}"
-    created = int(time.time())
-
+    content = _build_completion_content(verdicts, answers, raw_response, response_format, include_meta)
+    prompt_tokens = len(json.dumps(answers)) // 4
+    completion_tokens = len(content) // 4 + 1
     return {
-        "id": completion_id,
+        "id": f"chatcmpl-jev-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
-        "created": created,
+        "created": int(time.time()),
         "model": model,
         "choices": [
             {
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": content,
-                },
+                "message": {"role": "assistant", "content": content},
                 "finish_reason": "stop",
             }
         ],
         "usage": {
-            "prompt_tokens": len(json.dumps(answers)) // 4,
-            "completion_tokens": len(content) // 4 + 1,
-            "total_tokens": (len(json.dumps(answers)) // 4) + len(content) // 4 + 1,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
         },
-        "_jev_meta": {
-            "answers": answers,
-            "raw": raw_response,
-        },
+        "_jev_meta": {"answers": answers, "raw": raw_response},
     }
 
 
@@ -381,6 +442,25 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+    def _resolve_request_api_key(self) -> str:
+        """Resolve TypeSafe API key from Bearer header or configured shim default."""
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            extracted = auth_header[7:].strip()
+            if extracted and not extracted.startswith("sk-dummy") and extracted != "dummy":
+                return extracted
+        return self.api_key
+
+    def _parse_json_body(self) -> Optional[Dict[str, Any]]:
+        """Read and decode JSON body, writing HTTP 400 on malformed JSON."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+        try:
+            return json.loads(post_data.decode("utf-8"))
+        except Exception as e:
+            self._send_json(400, {"error": f"Invalid JSON payload: {e}"})
+            return None
 
     def do_GET(self):
         if self.path == "/health" or self.path == "/":
@@ -399,61 +479,24 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def do_POST(self):
-        if self.path not in ("/v1/chat/completions", "/chat/completions"):
-            self._send_json(404, {"error": f"Endpoint {self.path} not supported"})
-            return
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_data = self.rfile.read(content_length)
-
-        try:
-            body = json.loads(post_data.decode("utf-8"))
-        except Exception as e:
-            self._send_json(400, {"error": f"Invalid JSON payload: {e}"})
-            return
-
-        messages = body.get("messages", [])
-        requested_model = body.get("model", DEFAULT_MODEL)
-        response_format = body.get("response_format")
-        upstream_model = DEFAULT_MODEL if "jev" in requested_model else DEFAULT_MODEL
-
-        # Resolve API key from header or environment
-        auth_header = self.headers.get("Authorization", "")
-        api_key = self.api_key
-        if auth_header.startswith("Bearer "):
-            extracted = auth_header[7:].strip()
-            # If client passed an actual TypeSafe key, prioritize it
-            if extracted and not extracted.startswith("sk-dummy") and not extracted == "dummy":
-                api_key = extracted
-
-        if not api_key:
-            self._send_json(401, {"error": "TYPESAFE_API_KEY is not configured on shim or request header"})
-            return
-
-        state, questions = infer_question_from_messages(messages)
-        explicit_questions = _extract_questions_dict(body.get("questions"))
-        if explicit_questions:
-            questions = explicit_questions
-
-        try:
-            validate_questions_schema(questions)
-        except SchemaValidationError as e:
-            logger.warning("Invalid Jev questions schema: %s", e)
-            self._send_json(400, {"error": str(e)})
-            return
-
+    def _dispatch_completion(
+        self,
+        body: Dict[str, Any],
+        state: str,
+        questions: Dict[str, Any],
+        api_key: str,
+    ) -> None:
+        """Forward validated questions to TypeSafe System One and write OpenAI JSON."""
         logger.info("Routing request to Jev. Questions: %s", list(questions.keys()))
-
         try:
-            jev_res = call_typesafe_systemone(state, questions, api_key, model=upstream_model)
-            answers = jev_res.get("answers", {})
+            jev_res = call_typesafe_systemone(state, questions, api_key, model=DEFAULT_MODEL)
             completion = format_openai_completion(
-                requested_model,
-                answers,
+                body.get("model", DEFAULT_MODEL),
+                jev_res.get("answers", {}),
                 jev_res,
-                response_format=response_format,
-                include_meta=_extract_include_meta(messages, body),
+                response_format=body.get("response_format"),
+                include_meta=_extract_include_meta(body.get("messages", []), body),
+                questions=questions,
             )
             self._send_json(200, completion)
         except TypeSafeAPIError as e:
@@ -463,6 +506,35 @@ class JevOpenAIHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Error processing completion: %s", e)
             self._send_json(502, {"error": str(e)})
+
+    def do_POST(self):
+        if self.path not in ("/v1/chat/completions", "/chat/completions"):
+            self._send_json(404, {"error": f"Endpoint {self.path} not supported"})
+            return
+        body = self._parse_json_body()
+        if body is None:
+            return
+        api_key = self._resolve_request_api_key()
+        if not api_key:
+            self._send_json(401, {"error": "TYPESAFE_API_KEY is not configured on shim or request header"})
+            return
+
+        state, questions = infer_question_from_messages(body.get("messages", []))
+        questions = _extract_questions_dict(body.get("questions")) or questions
+        try:
+            validate_questions_schema(questions)
+        except SchemaValidationError as e:
+            logger.warning("Invalid Jev questions schema: %s", e)
+            self._send_json(400, {"error": str(e)})
+            return
+        self._dispatch_completion(body, state, questions, api_key)
+
+
+def create_server(host: str, port: int) -> http.server.ThreadingHTTPServer:
+    """Create a multi-threaded HTTP server bound to (host, port)."""
+    server = http.server.ThreadingHTTPServer((host, port), JevOpenAIHandler)
+    server.daemon_threads = True
+    return server
 
 
 def main():
@@ -480,7 +552,7 @@ def main():
         logger.info("Loaded TYPESAFE_API_KEY (starts with '%s...')", api_key[:6])
 
     JevOpenAIHandler.api_key = api_key
-    server = http.server.HTTPServer((args.host, args.port), JevOpenAIHandler)
+    server = create_server(args.host, args.port)
     logger.info("Starting Jev OpenAI Translation Shim on http://%s:%d", args.host, args.port)
     try:
         server.serve_forever()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import http.client
 import http.server
 import io
@@ -455,6 +456,155 @@ class TestJevOpenAIHandlerValidationAnd4xx(unittest.TestCase):
         self.assertEqual(mock_call.call_count, 1)
         self.assertEqual(data["object"], "chat.completion")
         self.assertEqual(data["choices"][0]["message"]["content"], "DINING")
+
+
+class TestJevBoxScoreAndConcurrency(unittest.TestCase):
+    """Tests box verdict preservation, variable-level score scaling, and ThreadingHTTPServer."""
+
+    def test_extract_verdict_preserves_box_coordinates(self) -> None:
+        self.assertEqual(
+            shim.extract_verdict({"box": [0.1, 0.2, 0.8, 0.9], "confidence": 0.92}),
+            "[0.1, 0.2, 0.8, 0.9]",
+        )
+        dict_box = {"xmin": 10, "ymin": 20, "xmax": 120, "ymax": 240}
+        self.assertEqual(
+            json.loads(shim.extract_verdict({"box": dict_box}) or ""),
+            dict_box,
+        )
+        self.assertIsNone(shim.extract_verdict({"box": None}))
+
+    def test_format_openai_completion_preserves_box_with_and_without_meta(self) -> None:
+        answers = {
+            "receipt_total_box": {"box": [12, 34, 56, 78], "confidence": 0.91},
+            "merchant": {"choice": "COSTCO", "confidence": 0.95},
+        }
+        res_plain = shim.format_openai_completion("jev-decision", answers, {"answers": answers})
+        parsed_plain = json.loads(res_plain["choices"][0]["message"]["content"])
+        self.assertEqual(json.loads(parsed_plain["receipt_total_box"]), [12, 34, 56, 78])
+        self.assertEqual(parsed_plain["merchant"], "COSTCO")
+
+        res_meta = shim.format_openai_completion(
+            "jev-decision",
+            answers,
+            {"answers": answers},
+            include_meta=True,
+        )
+        parsed_meta = json.loads(res_meta["choices"][0]["message"]["content"])
+        self.assertEqual(json.loads(parsed_meta["receipt_total_box"]), [12, 34, 56, 78])
+        self.assertEqual(parsed_meta["_confidence"], 0.91)
+        self.assertEqual(parsed_meta["_question_confidence"]["receipt_total_box"], 0.91)
+
+    def test_extract_verdict_scales_variable_score_rubrics(self) -> None:
+        spec_4 = {"type": "score", "criteria": ["L0", "L1", "L2", "L3"]}
+        self.assertEqual(shim.extract_verdict({"score": 0.0}, spec_4), "1")
+        self.assertEqual(shim.extract_verdict({"score": 2.0}, spec_4), "7")
+        self.assertEqual(shim.extract_verdict({"score": 3.0}, spec_4), "10")
+
+        spec_5 = {"type": "score", "criteria": ["L0", "L1", "L2", "L3", "L4"]}
+        self.assertEqual(shim.extract_verdict({"score": 0.0}, spec_5), "1")
+        self.assertEqual(shim.extract_verdict({"score": 2.0}, spec_5), "6")
+        self.assertEqual(shim.extract_verdict({"score": 4.0}, spec_5), "10")
+
+        spec_10 = {"type": "score", "criteria": [f"L{i}" for i in range(10)]}
+        self.assertEqual(shim.extract_verdict({"score": 0.0}, spec_10), "1")
+        self.assertEqual(shim.extract_verdict({"score": 4.0}, spec_10), "5")
+        self.assertEqual(shim.extract_verdict({"score": 9.0}, spec_10), "10")
+
+        self.assertEqual(shim.extract_verdict({"score": 4.0}, score_levels=5), "10")
+        with self.assertRaises(ValueError):
+            shim.extract_verdict({"score": 1.0}, score_levels=1)
+        with self.assertRaises(ValueError):
+            shim.extract_verdict({"score": 1.0}, score_levels=11)
+
+    def test_validate_questions_schema_checks_score_rubric_bounds(self) -> None:
+        with self.assertRaises(shim.SchemaValidationError):
+            shim.validate_questions_schema({"q": {"type": "score", "criteria": ["OnlyOne"]}})
+        with self.assertRaises(shim.SchemaValidationError):
+            shim.validate_questions_schema({"q": {"type": "score", "criteria": [f"L{i}" for i in range(11)]}})
+        with self.assertRaises(shim.SchemaValidationError):
+            shim.validate_questions_schema({"q": {"type": "score", "levels": 1}})
+
+    def _with_threaded_server(self):
+        shim.JevOpenAIHandler.api_key = "ts-test-key"
+        server = shim.create_server("127.0.0.1", 0)
+        self.assertIsInstance(server, http.server.ThreadingHTTPServer)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    @staticmethod
+    def _post_json(port: int, payload: dict) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": "Bearer dummy"},
+            )
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+        finally:
+            conn.close()
+
+    def test_http_end_to_end_score_rubric_and_box(self) -> None:
+        server = self._with_threaded_server()
+        port = server.server_address[1]
+        try:
+            schema = {
+                "questions": {
+                    "risk": {"type": "score", "criteria": [f"L{i}" for i in range(10)]},
+                    "total_box": {"type": "box", "instructions": "Locate total"},
+                }
+            }
+            payload = {
+                "model": "jev-decision",
+                "messages": [
+                    {"role": "system", "content": f"```json\n{json.dumps(schema)}\n```"},
+                    {"role": "user", "content": "Evaluate risk and box"},
+                ],
+            }
+            mock_res = {
+                "answers": {
+                    "risk": {"score": 4.0, "confidence": 0.9},
+                    "total_box": {"box": [1, 2, 3, 4], "confidence": 0.85},
+                }
+            }
+            with patch.object(shim, "call_typesafe_systemone", return_value=mock_res):
+                status, data = self._post_json(port, payload)
+            self.assertEqual(status, 200)
+            parsed = json.loads(data["choices"][0]["message"]["content"])
+            self.assertEqual(parsed["risk"], "5")
+            self.assertEqual(json.loads(parsed["total_box"]), [1, 2, 3, 4])
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_http_concurrent_threaded_requests(self) -> None:
+        server = self._with_threaded_server()
+        port = server.server_address[1]
+        barrier = threading.Barrier(4, timeout=3.0)
+
+        def concurrent_upstream(state: str, questions: dict, api_key: str, model: str = "jev-latest") -> dict:
+            barrier.wait()
+            return {"answers": {"decision": {"noul": 0.9}}}
+
+        def send_one(idx: int) -> tuple[int, str]:
+            req_payload = {
+                "model": "jev-decision",
+                "messages": [{"role": "user", "content": f"Is item {idx} actionable? true/false"}],
+            }
+            status, body = self._post_json(port, req_payload)
+            return status, body["choices"][0]["message"]["content"]
+
+        try:
+            with patch.object(shim, "call_typesafe_systemone", side_effect=concurrent_upstream):
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    results = list(pool.map(send_one, range(4)))
+            self.assertEqual(results, [(200, "true")] * 4)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

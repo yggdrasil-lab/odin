@@ -24,12 +24,17 @@ import uvicorn
 
 DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTALL)
 MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
+DEFAULT_ALLOWED_MODELS = ("gemini-4-hydrogen",)
+EFFORT_SUFFIXES = (
+    ("-xhigh", "high"),
+    ("-high", "high"),
+    ("-medium", "medium"),
+    ("-low", "low"),
+)
 
 MODEL_ALIASES = {
     "gemini-4-hydrogen": "gemini-4-hydrogen-high",
     "hydrogen": "gemini-4-hydrogen-high",
-    "gemini-4-carbon": "gemini-4-carbon-high",
-    "carbon": "gemini-4-carbon-high",
 }
 
 MIME_EXTENSIONS = {
@@ -63,14 +68,48 @@ def require_bearer_auth(authorization: str = Header(default="")) -> None:
         )
 
 
+def _parse_allowed_csv(var_name: str) -> tuple[str, ...] | None:
+    """Parse an env allowlist CSV into ordered lowercase values, or None if unset."""
+    raw = os.environ.get(var_name)
+    if raw is None:
+        return None
+    return tuple(dict.fromkeys(item.strip().lower() for item in raw.split(",") if item.strip()))
+
+
+def _split_model_and_effort(model_name: str) -> tuple[str, str | None]:
+    """Split optional trailing effort suffix from an agy model name."""
+    lowered = model_name.lower()
+    for suffix, effort in EFFORT_SUFFIXES:
+        if lowered.endswith(suffix):
+            return model_name[: -len(suffix)], effort
+    return model_name, None
+
+
 def resolve_agy_model(requested: str | None) -> str:
-    """Resolve OpenAI/Muninn model names to a valid agy CLI model identifier."""
+    """Resolve OpenAI/Muninn model names to an allowlisted agy CLI model identifier."""
     raw = (requested or "gemini-4-hydrogen-high").strip()
     if "/" in raw:
         raw = raw.rsplit("/", 1)[-1]
-    resolved = MODEL_ALIASES.get(raw, raw)
+    resolved = MODEL_ALIASES.get(raw.lower(), raw)
     if not MODEL_NAME_RE.match(resolved):
         raise HTTPException(status_code=400, detail=f"Invalid model identifier: {raw}")
+
+    base_model, effort = _split_model_and_effort(resolved)
+    env_models = _parse_allowed_csv("HERMES_AGY_ALLOWED_MODELS")
+    allowed_models = DEFAULT_ALLOWED_MODELS if env_models is None else env_models
+    if not allowed_models or base_model.lower() not in allowed_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{raw}' (base '{base_model}') is not allowed by HERMES_AGY_ALLOWED_MODELS",
+        )
+
+    allowed_efforts = _parse_allowed_csv("HERMES_AGY_ALLOWED_EFFORTS")
+    if allowed_efforts is not None:
+        if not allowed_efforts or (effort is not None and effort not in allowed_efforts):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Effort '{effort}' for model '{raw}' is not allowed by HERMES_AGY_ALLOWED_EFFORTS",
+            )
     return resolved
 
 

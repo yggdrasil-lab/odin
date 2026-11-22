@@ -8,12 +8,11 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a direct model exposed by the Antigravity subscription plugin
-  # (e.g. gemini-4-hydrogen-high, gemini-4-carbon-high, claude-sonnet-5-5-high,
-  # claude-opus-5-5-high) rather than a muninn alias.
-  # Under Gemini AI Ultra, Pool 1 (Gemini) is one shared 5h + weekly quota bucket consumed
-  # proportionally to token cost across Gemini direct models, while Pool 2
-  # (Claude and GPT) is an independent quota bucket. Orchestrator models are intentionally
-  # avoided inside Hermes because external <tool_call> turns trigger Plan-Mode overhead on every step.
+  # (gemini-4-hydrogen-high) rather than a muninn alias.
+  # Minimal Hermes and agy-vision are strictly locked to Pool 1 gemini-4-hydrogen via
+  # HERMES_AGY_ALLOWED_MODELS to reserve shared Google AI Ultra Pool 2 Claude headroom
+  # for Antigravity IDE. Orchestrator models are avoided inside Hermes because external
+  # <tool_call> turns trigger Plan-Mode overhead on every step.
   default: "${AGENT_MODEL}"
 
   # Inference provider selection: the bundled Antigravity plugin, which shells
@@ -42,8 +41,8 @@ model:
 auxiliary:
   compression:
     # Compression runs primarily on Muninn compress (Gemini 3.5 Flash-Lite, 1M context,
-    # falling back to DeepSeek on Muninn) to offload Pool 1/Pool 2 subscription quotas,
-    # with Antigravity medium-effort tiers (Pool 2 Claude -> Pool 1 Gemini) as fallback.
+    # falling back to DeepSeek on Muninn) to offload Pool 1 subscription quotas,
+    # with Antigravity Pool 1 Gemini 4 Hydrogen Medium as fallback.
     provider: "custom"
     model: "compress"
     base_url: "http://muninn:4000/v1"
@@ -52,17 +51,14 @@ auxiliary:
     timeout: 60
     fallback_chain: &compression_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-medium"
-        timeout: 120
-      - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-hydrogen-medium"
         timeout: 120
     fallback_providers: *compression_fallbacks
 
   memory:
     # Mnemosyne memory consolidation and structured fact extraction run primarily on Muninn
-    # memory-extract (Gemini 3.5 Flash-Lite -> DeepSeek), falling back across Antigravity
-    # medium-effort tiers (Pool 2 Claude Sonnet 5.5 Medium -> Pool 1 Gemini 4 Hydrogen Medium).
+    # memory-extract (Gemini 3.5 Flash-Lite -> DeepSeek), falling back strictly to
+    # Antigravity Pool 1 Gemini 4 Hydrogen Medium.
     provider: "custom"
     model: "memory-extract"
     base_url: "http://muninn:4000/v1"
@@ -70,25 +66,32 @@ auxiliary:
     timeout: 120
     fallback_chain: &memory_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-medium"
-      - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-hydrogen-medium"
     fallback_providers: *memory_fallbacks
 
   background_review:
     # Background skill reviews run primarily on Muninn app-synthesize (Gemini 3.5 Flash-Lite ->
-    # DeepSeek), falling back across Antigravity medium-effort tiers (Pool 2 Sonnet Medium ->
-    # Pool 1 Hydrogen Medium).
+    # DeepSeek), falling back strictly to Antigravity Pool 1 Gemini 4 Hydrogen Medium.
     provider: "custom"
     model: "app-synthesize"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
     fallback_chain: &background_review_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "claude-sonnet-5-5-medium"
-      - provider: "antigravity-subscription-directsdk"
         model: "gemini-4-hydrogen-medium"
     fallback_providers: *background_review_fallbacks
+
+  title_generation:
+    # Session and thread title generation runs primarily on Muninn compress (Gemini 3.5 Flash-Lite
+    # -> DeepSeek), falling back strictly to Antigravity Pool 1 Gemini 4 Hydrogen Low.
+    provider: "custom"
+    model: "compress"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
+    fallback_chain: &title_generation_fallbacks
+      - provider: "antigravity-subscription-directsdk"
+        model: "gemini-4-hydrogen-low"
+    fallback_providers: *title_generation_fallbacks
 
   approval:
     # Fast, low-cost smart command approval using TypeSafe Jev System One decision model.
@@ -109,13 +112,10 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# Minimal single-coordinator Odin runs on Pool 1 (Gemini 4 Hydrogen) first,
-# crossing directly to Pool 2 (Claude Sonnet 5.5) on quota exhaustion (no
-# redundant intra-pool fallback), and finally falling back to agent-loop on
-# muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek V4-Flash).
+# Minimal single-coordinator Odin runs strictly on Pool 1 (Gemini 4 Hydrogen) first
+# and falls back directly to agent-loop on muninn (Gemini 3.8 Flash with USD 35/30d
+# cap -> DeepSeek V4-Flash), keeping Pool 2 Claude headroom reserved for Antigravity IDE.
 fallback_providers:
-  - provider: "antigravity-subscription-directsdk"
-    model: "claude-sonnet-5-5-high"
   - provider: "custom"
     model: "agent-loop"
     base_url: "http://muninn:4000/v1"
@@ -125,15 +125,11 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run on the flat-rate Gemini AI Ultra Antigravity subscription via
-  # agy CLI, starting with Pool 1 (Gemini 4 Hydrogen), crossing directly
-  # to Pool 2 (Claude Sonnet 5.5) on quota exhaustion (no redundant intra-pool Gemini
-  # fallback), before falling back to agent-delegate on muninn.
+  # Delegated subagents run strictly on Pool 1 (Gemini 4 Hydrogen) and fall back
+  # directly to agent-delegate on muninn (zero Pool 2 Claude usage).
   provider: "antigravity-subscription-directsdk"
   model: "gemini-4-hydrogen-high"
   fallback_providers:
-    - provider: "antigravity-subscription-directsdk"
-      model: "claude-sonnet-5-5-high"
     - provider: "custom"
       model: "agent-delegate"
       base_url: "http://muninn:4000/v1"
@@ -284,12 +280,6 @@ plugins:
     - "mnemosyne"
     - "antigravity-subscription-directsdk"
     - "jev-approvals"
-
-# =============================================================================
-# Gateway Multiplexing (Minimal Single-Coordinator Hermes)
-# =============================================================================
-gateway:
-  multiplex_profiles: false
 
 # =============================================================================
 # MCP Servers

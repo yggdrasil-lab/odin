@@ -6,8 +6,9 @@ import base64
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -39,7 +40,14 @@ class TestAgyVisionProxy(unittest.TestCase):
             return '{"merchant": "Costco", "total_amount": 154.93}'
 
         with (
-            patch.dict("os.environ", {"API_SERVER_KEY": "secret-123"}),
+            patch.dict(
+                "os.environ",
+                {
+                    "API_SERVER_KEY": "secret-123",
+                    "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+                    "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+                },
+            ),
             patch.object(agy_vision_proxy, "run_agy_prompt", side_effect=fake_run),
         ):
             res = self.client.post(
@@ -69,18 +77,73 @@ class TestAgyVisionProxy(unittest.TestCase):
             '{"merchant": "Costco", "total_amount": 154.93}',
         )
 
-    def test_default_model_resolves_to_hydrogen_high(self) -> None:
-        self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "gemini-4-hydrogen-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen"), "gemini-4-hydrogen-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("hydrogen"), "gemini-4-hydrogen-high")
+    def test_accepts_hydrogen_variants_and_aliases(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+            },
+        ):
+            self.assertEqual(agy_vision_proxy.resolve_agy_model(None), "gemini-4-hydrogen-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen"), "gemini-4-hydrogen-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("hydrogen"), "gemini-4-hydrogen-high")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-low"), "gemini-4-hydrogen-low")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-medium"), "gemini-4-hydrogen-medium")
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("openai/gemini-4-hydrogen-high"), "gemini-4-hydrogen-high")
 
-    def test_carbon_model_aliases_resolve_to_high(self) -> None:
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-carbon"), "gemini-4-carbon-high")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("carbon"), "gemini-4-carbon-high")
+    def test_rejects_disallowed_models_and_removed_aliases_with_400(self) -> None:
+        disallowed = (
+            "gemini-4-carbon",
+            "carbon",
+            "gemini-4-carbon-high",
+            "gemini-4-neon-high",
+            "neon",
+            "gemini-4-argon-high",
+            "argon",
+            "claude-sonnet-5-5-high",
+            "gpt-oss-120b",
+            "gemini-3.8-flash",
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "API_SERVER_KEY": "secret-123",
+                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+            },
+        ), patch.object(agy_vision_proxy, "run_agy_prompt") as mock_run:
+            for model_name in disallowed:
+                with self.subTest(model_name=model_name):
+                    with self.assertRaises(HTTPException) as ctx:
+                        agy_vision_proxy.resolve_agy_model(model_name)
+                    self.assertEqual(ctx.exception.status_code, 400)
 
-    def test_neon_and_argon_aliases_removed(self) -> None:
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("neon"), "neon")
-        self.assertEqual(agy_vision_proxy.resolve_agy_model("argon"), "argon")
+                    res = self.client.post(
+                        "/v1/chat/completions",
+                        headers={"Authorization": "Bearer secret-123"},
+                        json={"model": model_name, "messages": [{"role": "user", "content": "hi"}]},
+                    )
+                    self.assertEqual(res.status_code, 400)
+            mock_run.assert_not_called()
+
+    def test_rejects_disallowed_efforts_and_empty_allowlist(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium",
+            },
+        ):
+            self.assertEqual(agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-low"), "gemini-4-hydrogen-low")
+            with self.assertRaises(HTTPException) as ctx:
+                agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-high")
+            self.assertEqual(ctx.exception.status_code, 400)
+
+        with patch.dict("os.environ", {"HERMES_AGY_ALLOWED_MODELS": ""}):
+            with self.assertRaises(HTTPException) as ctx:
+                agy_vision_proxy.resolve_agy_model("gemini-4-hydrogen-high")
+            self.assertEqual(ctx.exception.status_code, 400)
 
 
 if __name__ == "__main__":
