@@ -111,7 +111,7 @@ Compression, memory consolidation, background review, and title generation run p
 
 Hermes runs strictly in minimal single-coordinator mode (`odin` only, zero sub-profiles) for cron jobs, Discord, and auto-ingestions on `gemini-4-hydrogen-high` -> Muninn (`agent-loop` / `agent-delegate`). All 5 Court of Odin specialists (`huginn`, `sindri`, `forseti`, `vor`, `saga`) run natively inside Antigravity IDE.
 
-Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). Both fixed-fee Gemini and Claude pools are exhausted before any metered API is touched.
+Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). Antigravity Pool 1 (`gemini-4-hydrogen`) and Muninn primary (`agent-loop` / `agent-delegate`) are exhausted before any metered fallback is touched, reserving Pool 2 Claude exclusively for Antigravity IDE.
 
 Two prerequisites, both wired in this repo and easy to break:
 

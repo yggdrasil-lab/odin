@@ -516,7 +516,8 @@ class TestAgyCatalogAndClaude55Aliases(unittest.TestCase):
                         self.assertEqual(mod.resolve_model_and_effort("claude-opus-5-5", "high"), ("claude-opus-5-5-high", "high"))
                         self.assertEqual(mod.resolve_model_and_effort("sonnet", "medium"), ("claude-sonnet-5-5-medium", "medium"))
 
-    def test_strict_hydrogen_lock_filters_catalog_aliases_and_rejects_disallowed_models(self) -> None:
+    @contextlib.contextmanager
+    def _patched_loaded_plugin(self, env_overrides: dict[str, str], prefix: str):
         with tempfile.TemporaryDirectory() as tmpdir:
             plugin_dir = Path(tmpdir)
             _write_plugin_tree(
@@ -526,84 +527,117 @@ class TestAgyCatalogAndClaude55Aliases(unittest.TestCase):
                 tests_src=_build_upstream_test_fixture(include_anchor=True),
             )
             self.assertEqual(alias_patch.main(["--plugin-dir", str(plugin_dir)]), 0)
+            with patch.dict(os.environ, env_overrides, clear=False), _load_patched_plugin(plugin_dir, None, prefix) as mods:
+                yield mods
 
-            locked_env = {
-                "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
-                "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
-            }
-            with patch.dict(os.environ, locked_env, clear=False), _load_patched_plugin(plugin_dir, None, "locked_test") as (mod, init_mod):
-                profile = init_mod.antigravity_profile
+    def test_strict_hydrogen_lock_filters_catalog_and_profile(self) -> None:
+        locked_env = {
+            "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        raw_catalog = (
+            "gemini-4-hydrogen-low\n"
+            "gemini-4-hydrogen-medium\n"
+            "gemini-4-hydrogen-high\n"
+            "gemini-4-hydrogen-xhigh\n"
+            "gemini-4-neon-high\n"
+            "gemini-4-argon-high\n"
+            "gemini-4-carbon-high\n"
+            "claude-sonnet-5-5-high\n"
+            "gemini-3.8-flash-high\n"
+            "gpt-oss-120b-medium\n"
+        )
+        with self._patched_loaded_plugin(locked_env, "locked_catalog") as (mod, init_mod):
+            profile = init_mod.antigravity_profile
+            self.assertEqual(mod._KNOWN_EFFORTS, {"gemini-4-hydrogen": ("low", "medium", "high")})
+            self.assertEqual(mod._FALLBACK_MODELS, ["gemini-4-hydrogen"])
+            self.assertEqual(mod._MODEL_ALIASES["default"], "gemini-4-hydrogen")
+            self.assertEqual(mod._MODEL_ALIASES["flash"], "gemini-4-hydrogen")
+            self.assertEqual(profile.default_aux_model, "gemini-4-hydrogen-low")
+            self.assertEqual(profile.resolve_aux_model(), "gemini-4-hydrogen-low")
+            self.assertEqual(mod.parse_catalog(raw_catalog), {"gemini-4-hydrogen": ("low", "medium", "high")})
 
-                self.assertEqual(mod._KNOWN_EFFORTS, {"gemini-4-hydrogen": ("low", "medium", "high")})
-                self.assertEqual(mod._FALLBACK_MODELS, ["gemini-4-hydrogen"])
-                self.assertEqual(mod._MODEL_ALIASES["default"], "gemini-4-hydrogen")
-                self.assertEqual(mod._MODEL_ALIASES["flash"], "gemini-4-hydrogen")
-                self.assertEqual(profile.default_aux_model, "gemini-4-hydrogen-low")
-                self.assertEqual(profile.resolve_aux_model(), "gemini-4-hydrogen-low")
+            with patch.object(mod.subprocess, "run", return_value=SimpleNamespace(stdout=raw_catalog)):
+                self.assertEqual(profile.fetch_models(), ["gemini-4-hydrogen"])
+            with patch.object(mod, "_catalog_cache", None), patch.object(mod.subprocess, "run", side_effect=FileNotFoundError("agy")):
+                self.assertEqual(profile.fetch_models(), ["gemini-4-hydrogen"])
+            self.assertEqual(profile.supported_reasoning_efforts("gemini-4-hydrogen"), ("low", "medium", "high"))
+            self.assertEqual(profile.supported_reasoning_efforts("claude-sonnet-5-5"), ())
+            self.assertIsNotNone(profile.model_capabilities.get("gemini-4-hydrogen-high"))
+            self.assertIsNone(profile.model_capabilities.get("claude-sonnet-5-5-high"))
 
-                raw_catalog = (
-                    "gemini-4-hydrogen-low\n"
-                    "gemini-4-hydrogen-medium\n"
-                    "gemini-4-hydrogen-high\n"
-                    "gemini-4-hydrogen-xhigh\n"
-                    "gemini-4-neon-high\n"
-                    "gemini-4-argon-high\n"
-                    "gemini-4-carbon-high\n"
-                    "claude-sonnet-5-5-high\n"
-                    "gemini-3.8-flash-high\n"
-                    "gpt-oss-120b-medium\n"
-                )
-                parsed = mod.parse_catalog(raw_catalog)
-                self.assertEqual(parsed, {"gemini-4-hydrogen": ("low", "medium", "high")})
+    def test_strict_hydrogen_lock_resolves_allowed_and_rejects_disallowed(self) -> None:
+        locked_env = {
+            "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        parsed = {"gemini-4-hydrogen": ("low", "medium", "high")}
+        disallowed = (
+            "claude-sonnet-5-5-high",
+            "gemini-4-neon-high",
+            "gemini-4-argon-high",
+            "gemini-4-carbon-high",
+            "gpt-oss-120b",
+            "sonnet",
+            "opus",
+            "gemini-3.8-flash",
+        )
+        with self._patched_loaded_plugin(locked_env, "locked_resolve") as (mod, _):
+            with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value=parsed):
+                self.assertEqual(mod.resolve_model_alias("default", parsed), "gemini-4-hydrogen")
+                self.assertEqual(mod.resolve_model_alias("flash", parsed), "gemini-4-hydrogen")
+                self.assertEqual(mod.resolve_model_and_effort(None), ("gemini-4-hydrogen-medium", "medium"))
+                self.assertEqual(mod.resolve_model_and_effort("default", "low"), ("gemini-4-hydrogen-low", "low"))
+                self.assertEqual(mod.resolve_model_and_effort("flash", "high"), ("gemini-4-hydrogen-high", "high"))
+                self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen", "high"), ("gemini-4-hydrogen-high", "high"))
+                self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen-low"), ("gemini-4-hydrogen-low", "low"))
+                for bad_model in disallowed:
+                    with self.subTest(bad_model=bad_model), self.assertRaises(ValueError):
+                        mod.resolve_model_and_effort(bad_model)
 
-                with patch.object(mod.subprocess, "run", return_value=SimpleNamespace(stdout=raw_catalog)):
-                    self.assertEqual(profile.fetch_models(), ["gemini-4-hydrogen"])
-                with patch.object(mod, "_catalog_cache", None), patch.object(mod.subprocess, "run", side_effect=FileNotFoundError("agy")):
-                    self.assertEqual(profile.fetch_models(), ["gemini-4-hydrogen"])
+            with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value={}):
+                self.assertEqual(mod.resolve_model_alias("Gemini-4-Hydrogen", {}), "gemini-4-hydrogen")
+                self.assertEqual(mod.resolve_model_and_effort("Gemini-4-Hydrogen", "high"), ("gemini-4-hydrogen-high", "high"))
+                self.assertEqual(mod.resolve_model_and_effort("Gemini-4-Hydrogen-Low"), ("gemini-4-hydrogen-low", "low"))
 
-                self.assertEqual(profile.supported_reasoning_efforts("gemini-4-hydrogen"), ("low", "medium", "high"))
-                self.assertEqual(profile.supported_reasoning_efforts("claude-sonnet-5-5"), ())
-                self.assertIsNotNone(profile.model_capabilities.get("gemini-4-hydrogen-high"))
-                self.assertIsNone(profile.model_capabilities.get("claude-sonnet-5-5-high"))
+    def test_restricted_efforts_allowlist_enforced(self) -> None:
+        restricted_env = {
+            "HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium",
+        }
+        raw_catalog = "gemini-4-hydrogen-low\ngemini-4-hydrogen-medium\ngemini-4-hydrogen-high\n"
+        with self._patched_loaded_plugin(restricted_env, "restricted_efforts") as (mod, init_mod):
+            self.assertEqual(mod.parse_catalog(raw_catalog), {"gemini-4-hydrogen": ("low", "medium")})
+            self.assertEqual(init_mod.antigravity_profile.supported_reasoning_efforts("gemini-4-hydrogen"), ("low", "medium"))
+            with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value={}):
+                self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen", "low"), ("gemini-4-hydrogen-low", "low"))
+                for args in (("gemini-4-hydrogen", "high"), ("gemini-4-hydrogen-high", None), ("gemini-4-hydrogen", "invalid")):
+                    with self.assertRaises(ValueError):
+                        mod.resolve_model_and_effort(*args)
 
-                with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value=parsed):
-                    self.assertEqual(mod.resolve_model_alias("default", parsed), "gemini-4-hydrogen")
-                    self.assertEqual(mod.resolve_model_alias("flash", parsed), "gemini-4-hydrogen")
-                    self.assertEqual(mod.resolve_model_and_effort(None), ("gemini-4-hydrogen-medium", "medium"))
-                    self.assertEqual(mod.resolve_model_and_effort("default", "low"), ("gemini-4-hydrogen-low", "low"))
-                    self.assertEqual(mod.resolve_model_and_effort("flash", "high"), ("gemini-4-hydrogen-high", "high"))
-                    self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen", "high"), ("gemini-4-hydrogen-high", "high"))
-                    self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen-low"), ("gemini-4-hydrogen-low", "low"))
+    def test_empty_allowlist_strings_fail_loud_and_return_empty_catalog(self) -> None:
+        empty_models_env = {"HERMES_AGY_ALLOWED_MODELS": "", "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high"}
+        with self._patched_loaded_plugin({"HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen"}, "empty_allowlists") as (mod, init_mod):
+            profile = init_mod.antigravity_profile
+            with patch.dict(os.environ, empty_models_env, clear=False):
+                self.assertEqual(mod.parse_catalog("gemini-4-hydrogen-high\nclaude-sonnet-5-5-high\n"), {})
+                self.assertEqual(profile.fetch_models(), [])
+                with self.assertRaises(ValueError):
+                    mod.default_model_name()
+                with self.assertRaises(ValueError):
+                    mod.default_aux_model_name()
+                with self.assertRaises(ValueError):
+                    _ = profile.default_aux_model
+                with self.assertRaises(ValueError):
+                    mod.resolve_model_and_effort("gemini-4-hydrogen")
 
-                    disallowed = (
-                        "claude-sonnet-5-5-high",
-                        "gemini-4-neon-high",
-                        "gemini-4-argon-high",
-                        "gemini-4-carbon-high",
-                        "gpt-oss-120b",
-                        "sonnet",
-                        "opus",
-                        "gemini-3.8-flash",
-                    )
-                    for bad_model in disallowed:
-                        with self.subTest(bad_model=bad_model):
-                            with self.assertRaises(ValueError):
-                                mod.resolve_model_and_effort(bad_model)
-
-                with patch.dict(os.environ, {"HERMES_AGY_ALLOWED_EFFORTS": "low,medium"}, clear=False):
-                    self.assertEqual(
-                        mod.parse_catalog(raw_catalog),
-                        {"gemini-4-hydrogen": ("low", "medium")},
-                    )
-                    self.assertEqual(profile.supported_reasoning_efforts("gemini-4-hydrogen"), ("low", "medium"))
-                    with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value={}):
-                        with self.assertRaises(ValueError):
-                            mod.resolve_model_and_effort("gemini-4-hydrogen", "high")
-                        with self.assertRaises(ValueError):
-                            mod.resolve_model_and_effort("gemini-4-hydrogen-high")
-                        with self.assertRaises(ValueError):
-                            mod.resolve_model_and_effort("gemini-4-hydrogen", "invalid")
-                        self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen", "low"), ("gemini-4-hydrogen-low", "low"))
+            empty_efforts_env = {"HERMES_AGY_ALLOWED_MODELS": "gemini-4-hydrogen", "HERMES_AGY_ALLOWED_EFFORTS": ""}
+            with patch.dict(os.environ, empty_efforts_env, clear=False):
+                self.assertEqual(mod.parse_catalog("gemini-4-hydrogen-low\n"), {})
+                with self.assertRaises(ValueError):
+                    mod.default_aux_model_name()
+                with self.assertRaises(ValueError):
+                    mod.resolve_model_and_effort("gemini-4-hydrogen", "low")
 
 
 if __name__ == "__main__":

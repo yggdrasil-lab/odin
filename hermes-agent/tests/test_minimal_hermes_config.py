@@ -80,6 +80,15 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertIn('model: "gemini-4-hydrogen-high"', delegation_sec)
         self.assertIn('model: "agent-delegate"', delegation_sec)
 
+        plugins_sec = _extract_top_level_yaml_section(text, "plugins")
+        self.assertIn('"mnemosyne"', plugins_sec)
+
+        toolsets_sec = _extract_top_level_yaml_section(text, "platform_toolsets")
+        for expected_toolset in ("clarify", "cronjob", "delegation", "discord", "file", "memory", "skills", "terminal"):
+            self.assertIn(expected_toolset, toolsets_sec)
+
+    def test_config_template_auxiliary_chains_and_title_generation(self) -> None:
+        text = (ODIN_ROOT / "config" / "hermes" / "config.yaml.template").read_text(encoding="utf-8")
         aux_sec = _extract_top_level_yaml_section(text, "auxiliary")
         for task_name in ("compression", "memory", "background_review"):
             task_sec = _extract_indented_yaml_block(aux_sec, task_name, indent=2)
@@ -91,13 +100,6 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertIn('base_url: "http://muninn:4000/v1"', title_sec)
         self.assertIn('key_env: "MUNINN_MASTER_KEY"', title_sec)
         self.assertIn('model: "gemini-4-hydrogen-low"', title_sec)
-
-        plugins_sec = _extract_top_level_yaml_section(text, "plugins")
-        self.assertIn('"mnemosyne"', plugins_sec)
-
-        toolsets_sec = _extract_top_level_yaml_section(text, "platform_toolsets")
-        for expected_toolset in ("clarify", "cronjob", "delegation", "discord", "file", "memory", "skills", "terminal"):
-            self.assertIn(expected_toolset, toolsets_sec)
 
     def test_deploy_yml_sets_hydrogen_allowlist_and_validates_config(self) -> None:
         deploy_path = ODIN_ROOT / ".github" / "workflows" / "deploy.yml"
@@ -133,7 +135,7 @@ class TestMinimalHermesConfig(unittest.TestCase):
 
         self.assertIn("AGY_VISION_PORT=8643", _extract_indented_yaml_block(services_sec, "agy-vision", indent=2))
         muninn_sec = _extract_indented_yaml_block(services_sec, "muninn", indent=2)
-        self.assertIsNone(re.search(r"(?m)^\s+ports:\s*$", muninn_sec), "muninn must not publish Swarm ports")
+        self.assertIsNone(re.search(r"(?m)^\s+ports\s*:", muninn_sec), "muninn must not publish Swarm ports")
         self.assertIn("endpoint_mode: dnsrr", muninn_sec)
 
     def test_retired_kanban_and_profile_files_are_removed(self) -> None:

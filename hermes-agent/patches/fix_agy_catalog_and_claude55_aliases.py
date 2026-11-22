@@ -122,7 +122,7 @@ _RECOGNIZED_EFFORTS = frozenset({"none", "off", "minimal", "low", "medium", "hig
 def _parse_allowed_env(var_name: str) -> tuple[str, ...] | None:
     """Parse a comma-separated allowlist env var into ordered lowercase tokens, or None if unset."""
     raw = os.environ.get(var_name)
-    if raw is None or not raw.strip():
+    if raw is None:
         return None
     return tuple(dict.fromkeys(part.strip().lower() for part in raw.split(",") if part.strip()))
 
@@ -185,25 +185,32 @@ def effective_model_aliases() -> dict[str, str]:
 
 
 def default_model_name() -> str:
-    """Return active default base model (first allowed model when locked)."""
+    """Return active default base model, failing loud if allowlist is explicitly empty."""
     models_allow = allowed_models()
-    if models_allow:
-        return models_allow[0]
-    return "gemini-3.8-flash"
+    if models_allow is None:
+        return "gemini-3.8-flash"
+    if not models_allow:
+        raise ValueError(f"{_ALLOWED_MODELS_ENV} is set but empty; no Antigravity models are permitted")
+    return models_allow[0]
 
 
 def default_aux_model_name() -> str:
-    """Return default auxiliary model (e.g. gemini-4-hydrogen-low when locked)."""
+    """Return default auxiliary model, failing loud if an allowlist is explicitly empty."""
     models_allow = allowed_models()
-    if not models_allow:
+    if models_allow is None:
+        efforts_allow = allowed_efforts()
+        if efforts_allow is not None and not efforts_allow:
+            raise ValueError(f"{_ALLOWED_EFFORTS_ENV} is set but empty; no reasoning efforts are permitted")
         return "gemini-3.8-flash"
+    if not models_allow:
+        raise ValueError(f"{_ALLOWED_MODELS_ENV} is set but empty; no Antigravity models are permitted")
     base = models_allow[0]
     efforts_allow = allowed_efforts()
-    if efforts_allow is None or "low" in efforts_allow:
+    if efforts_allow is None:
         return f"{base}-low"
-    if efforts_allow:
-        return f"{base}-{efforts_allow[0]}"
-    return base
+    if not efforts_allow:
+        raise ValueError(f"{_ALLOWED_EFFORTS_ENV} is set but empty; no reasoning efforts are permitted")
+    return f"{base}-low" if "low" in efforts_allow else f"{base}-{efforts_allow[0]}"
 
 
 _KNOWN_EFFORTS: dict[str, tuple[str, ...]] = effective_known_efforts()
@@ -312,18 +319,19 @@ REPL_CACHED_AND_EFFORTS = '''def _cached_catalog() -> dict[str, tuple[str, ...]]
 
 def model_efforts(base_model: str, *, refresh: bool = True) -> tuple[str, ...] | None:
     """Efforts agy accepts for `base_model`; () means bare name, None means unknown."""
+    base_key = base_model.lower()
     models_allow = allowed_models()
-    if models_allow is not None and base_model.lower() not in models_allow:
+    if models_allow is not None and base_key not in models_allow:
         return None
     efforts_allow = allowed_efforts()
     cached = _cached_catalog()
-    if cached is not None and base_model in cached:
-        return cached[base_model]
+    if cached is not None and base_key in cached:
+        return cached[base_key]
     known = effective_known_efforts()
-    if base_model in known:
-        return known[base_model]
+    if base_key in known:
+        return known[base_key]
     if refresh and cached is None:
-        efforts = load_catalog(only_if_stale=True).get(base_model)
+        efforts = load_catalog(only_if_stale=True).get(base_key)
         if efforts is not None and efforts_allow is not None:
             return tuple(e for e in efforts if e in efforts_allow)
         return efforts
@@ -465,7 +473,7 @@ def resolve_model_alias(
     fallback = aliases.get(base, base)
     if suffix and fallback != base:
         return f"{fallback}-{suffix}"
-    return aliases.get(lower_m, m)
+    return aliases.get(lower_m, lower_m)
 
 
 def _validate_allowed_request(
@@ -476,14 +484,19 @@ def _validate_allowed_request(
 ) -> None:
     """Raise ValueError when HERMES_AGY_ALLOWED_MODELS or HERMES_AGY_ALLOWED_EFFORTS rejects the request."""
     models_allow = allowed_models()
-    if models_allow is not None and base_model.lower() not in models_allow:
-        raise ValueError(
-            f"Model {raw_model!r} (resolved base {base_model!r}) is not permitted by "
-            f"{_ALLOWED_MODELS_ENV}={','.join(models_allow)}"
-        )
+    if models_allow is not None:
+        if not models_allow:
+            raise ValueError(f"{_ALLOWED_MODELS_ENV} is set but empty; no Antigravity models are permitted")
+        if base_model.lower() not in models_allow:
+            raise ValueError(
+                f"Model {raw_model!r} (resolved base {base_model!r}) is not permitted by "
+                f"{_ALLOWED_MODELS_ENV}={','.join(models_allow)}"
+            )
     efforts_allow = allowed_efforts()
     if efforts_allow is None:
         return
+    if not efforts_allow:
+        raise ValueError(f"{_ALLOWED_EFFORTS_ENV} is set but empty; no reasoning efforts are permitted")
     if suffix_effort is not None and suffix_effort not in efforts_allow:
         raise ValueError(
             f"Reasoning effort {suffix_effort!r} from model {raw_model!r} is not permitted by "
@@ -668,8 +681,8 @@ REPL_INIT_FETCH_MODELS = (
     "\n"
     "    @property\n"
     "    def default_aux_model(self) -> str:\n"
-    '        """Return env-locked default auxiliary model when HERMES_AGY_ALLOWED_MODELS is active."""\n'
-    "        if allowed_models() is not None:\n"
+    '        """Return env-locked default auxiliary model when allowlist env vars are active."""\n'
+    "        if allowed_models() is not None or allowed_efforts() is not None:\n"
     "            return default_aux_model_name()\n"
     '        return getattr(self, "_default_aux_model", "gemini-3.8-flash")\n'
     "\n"
@@ -679,7 +692,7 @@ REPL_INIT_FETCH_MODELS = (
     "\n"
     "    def resolve_aux_model(self, *, vision: bool = False) -> str:\n"
     '        """Return locked auxiliary model for title generation/aux callers when allowlist is active."""\n'
-    "        if allowed_models() is not None:\n"
+    "        if allowed_models() is not None or allowed_efforts() is not None:\n"
     "            return default_aux_model_name()\n"
     '        return ""\n'
 )
