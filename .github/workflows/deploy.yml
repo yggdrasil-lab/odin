@@ -13,9 +13,11 @@ jobs:
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
       # Minimal single-coordinator Hermes routing:
-      # Odin coordinator runs on Pool 1 Gemini 4 Hydrogen, crossing to Pool 2
-      # Claude Sonnet 5.5, then Muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek).
+      # Odin coordinator and agy-vision are hard-locked to Pool 1 Gemini 4 Hydrogen,
+      # falling back directly to Muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek).
       AGENT_MODEL: gemini-4-hydrogen-high
+      HERMES_AGY_ALLOWED_MODELS: gemini-4-hydrogen
+      HERMES_AGY_ALLOWED_EFFORTS: low,medium,high
       CHAT_MODEL: local-model:latest
       HERMES_ANTIGRAVITY_CONTEXT_LENGTH: 200000
     
@@ -64,6 +66,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           KRATOS_MCP_TOKEN: ${{ secrets.KRATOS_MCP_TOKEN }}
+          HERMES_AGY_ALLOWED_MODELS: ${{ env.HERMES_AGY_ALLOWED_MODELS }}
+          HERMES_AGY_ALLOWED_EFFORTS: ${{ env.HERMES_AGY_ALLOWED_EFFORTS }}
         run: |
           MISSING=""
           [ -z "$DOMAIN_NAME" ] && MISSING="$MISSING DOMAIN_NAME"
@@ -76,6 +80,8 @@ jobs:
           [ -z "$GEMINI_API_KEY" ] && MISSING="$MISSING GEMINI_API_KEY"
           [ -z "$GH_TOKEN" ] && MISSING="$MISSING GH_TOKEN"
           [ -z "$KRATOS_MCP_TOKEN" ] && MISSING="$MISSING KRATOS_MCP_TOKEN"
+          [ -z "$HERMES_AGY_ALLOWED_MODELS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_MODELS"
+          [ -z "$HERMES_AGY_ALLOWED_EFFORTS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_EFFORTS"
           if [ -n "$MISSING" ]; then
             echo "::error::Deployment halted: missing required configuration:$MISSING" >&2
             exit 1
