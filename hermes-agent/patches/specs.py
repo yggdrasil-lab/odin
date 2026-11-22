@@ -1597,6 +1597,10 @@ _PM_ENVIRONMENTS_SPEC = PatchSpec(
         Hunk(
             label="activate_dependencies",
             anchor=(
+                "    import site\n\n"
+                "    sys.path[:] = [entry for entry in sys.path\n"
+                '                   if Path(entry).name not in ("site-packages", "dist-packages")\n'
+                "                   and Path(entry).resolve() != project_root.resolve()]\n"
                 "    # uv editable members are activated by .pth files, not by sys.path alone.\n"
                 "    site.addsitedir(str(selected))\n"
                 "    sys.path[:] = [str(project_root.resolve()), str(selected),\n"
@@ -1604,9 +1608,13 @@ _PM_ENVIRONMENTS_SPEC = PatchSpec(
                 '    os.environ["PYTHONPATH"] = os.pathsep.join([str(project_root.resolve()), str(selected)])\n'
             ),
             replacement=(
+                "    import site\n\n"
                 f"    {_MARKER_PM_ENV}\n"
                 "    from odin_runtime.pm_venv_bridge import link_base_site, merged_pythonpath\n"
                 "    base_site = site_packages(base_venv(project_root))\n"
+                "    sys.path[:] = [entry for entry in sys.path\n"
+                '                   if Path(entry).name not in ("site-packages", "dist-packages")\n'
+                "                   and Path(entry).resolve() != project_root.resolve()]\n"
                 "    link_base_site(selected, base_site)\n"
                 "    site.addsitedir(str(selected))\n"
                 "    if base_site.is_dir() and base_site.resolve() != selected.resolve():\n"
