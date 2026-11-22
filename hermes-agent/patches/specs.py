@@ -1564,7 +1564,7 @@ _PRE_COMPRESS_SPEC = PatchSpec(
                 "            summary = self._fallback_summary_for_window(\n"
                 "                telemetry, turns_to_summarize, compress_end - compress_start, feasibility_skip,\n"
                 "            )\n"
-                "        # Phase 4: Assemble compressed message list\n"
+                "        # Phase 4: the summary exists, so archive what the compaction drops or shortens, then assemble.\n"
             ),
             replacement=(
                 "        if not summary:\n"
@@ -1582,7 +1582,7 @@ _PRE_COMPRESS_SPEC = PatchSpec(
                 "            )\n"
                 "        except Exception as _wrapup_err:\n"
                 '            logger.warning("odin-patch: pre-compression wrapup failed: %s", _wrapup_err, exc_info=True)\n'
-                "        # Phase 4: Assemble compressed message list\n"
+                "        # Phase 4: the summary exists, so archive what the compaction drops or shortens, then assemble.\n"
             ),
         ),
     ),
@@ -1809,9 +1809,10 @@ _MEDIA_SWEEP_OFFLOAD_SPEC = PatchSpec(
             anchor=(
                 "    from gateway.session_ingress_media import collect_unheld_api_images\n"
                 "    import logging\n"
-                "    collect_unheld_api_images(authority.db)\n"
+                "    store = authority_persistence(authority)\n"
+                "    collect_unheld_api_images(store)\n"
                 "    from gateway.session_api_media import compact_settled_api_payloads\n"
-                "    compact_settled_api_payloads(authority.db)\n"
+                "    compact_settled_api_payloads(store)\n"
             ),
             replacement=(
                 f"    {_MARKER_MEDIA_SWEEP}\n"
@@ -1819,12 +1820,13 @@ _MEDIA_SWEEP_OFFLOAD_SPEC = PatchSpec(
                 "    from gateway.session_ingress_media import collect_unheld_api_images\n"
                 "    from gateway.session_api_media import compact_settled_api_payloads\n"
                 "    import logging\n"
-                "    import threading\n\n"
+                "    import threading\n"
+                "    store = authority_persistence(authority)\n\n"
                 "    def _run_startup_api_media_sweep() -> None:\n"
                 "        try:\n"
                 "            with owner_scope(authority):\n"
-                "                collect_unheld_api_images(authority.db)\n"
-                "                compact_settled_api_payloads(authority.db)\n"
+                "                collect_unheld_api_images(store)\n"
+                "                compact_settled_api_payloads(store)\n"
                 "        except Exception as exc:\n"
                 "            logging.getLogger(__name__).warning(\n"
                 '                "Startup API media sweep failed for authority %s: %s",\n'

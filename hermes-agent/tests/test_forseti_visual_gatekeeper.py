@@ -224,10 +224,10 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         self.assertTrue(target_ios.is_file())
 
     def test_resolve_visual_gate_script_container_vault_root(self) -> None:
-        """Verify container /app/vault resolution to Court of Odin domain-skills."""
+        """Verify container /app/vault resolution to Court of Odin skills."""
         expected_vault = Path("/app/vault")
         expected_script = Path(
-            "/app/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+            "/app/vault/.agents/plugins/court-of-odin/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
         )
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -238,10 +238,10 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
             self.assertEqual(resolve_visual_gate_script(), expected_script)
 
     def test_resolve_visual_gate_script_host_vault_root(self) -> None:
-        """Verify host /opt/atlas/vault resolution to Court of Odin domain-skills."""
+        """Verify host /opt/atlas/vault resolution to Court of Odin skills."""
         expected_vault = Path("/opt/atlas/vault")
         expected_script = Path(
-            "/opt/atlas/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+            "/opt/atlas/vault/.agents/plugins/court-of-odin/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
         )
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -254,7 +254,7 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
     def test_resolve_visual_gate_script_env_and_explicit_vault(self) -> None:
         """Verify VAULT, OBSIDIAN_VAULT_PATH, and explicit vault_path resolution."""
         vault = Path(self.temp_dir) / "vault"
-        script = vault / ".agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        script = vault / ".agents/plugins/court-of-odin/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
         script.parent.mkdir(parents=True)
         script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
 
@@ -270,6 +270,12 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         legacy_vault_script = vault / ".agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
         legacy_vault_script.parent.mkdir(parents=True)
         legacy_vault_script.write_text("# legacy\n", encoding="utf-8")
+        legacy_domain_script = (
+            vault
+            / ".agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        )
+        legacy_domain_script.parent.mkdir(parents=True)
+        legacy_domain_script.write_text("# legacy domain-skills\n", encoding="utf-8")
 
         with self.assertRaises(FileNotFoundError):
             resolve_visual_gate_script(vault_path=vault)
@@ -279,6 +285,12 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
             Path("/opt/data/skills/devops/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
             Path("/app/vault/.agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
             Path("/opt/atlas/vault/.agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
+            Path(
+                "/app/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+            ),
+            Path(
+                "/opt/atlas/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+            ),
         }
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -292,12 +304,12 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 resolve_visual_gate_script()
 
-    def test_run_visual_test_harness_executes_domain_skill_script(self) -> None:
-        """Verify harness runs resolved domain-skills visual gate script."""
+    def test_run_visual_test_harness_executes_skill_script(self) -> None:
+        """Verify harness runs resolved Court of Odin skills visual gate script."""
         vault = Path(self.temp_dir) / "vault"
         repo = vault / "Forge" / "ui"
         repo.mkdir(parents=True)
-        script = vault / ".agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        script = vault / ".agents/plugins/court-of-odin/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
         script.parent.mkdir(parents=True)
         script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
 
