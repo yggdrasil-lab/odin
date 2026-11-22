@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 import sys
 import unittest
@@ -72,6 +73,23 @@ def _extract_workflow_step(text: str, step_name: str) -> str:
             break
         captured.append(line)
     return "\n".join(captured)
+
+
+@dataclass(frozen=True)
+class _EntrypointBranches:
+    dashboard: str
+    gateway: str
+
+
+def _extract_entrypoint_branches(text: str) -> _EntrypointBranches:
+    """Split entrypoint.sh into dashboard and gateway mode blocks."""
+    match = re.search(
+        r'(?ms)^if \[ "\$MODE" = "dashboard" \]; then\n(.*?)\nelse\n(.*?)\nfi\s*\Z',
+        text,
+    )
+    if match is None:
+        raise AssertionError("entrypoint.sh missing top-level dashboard/gateway branch")
+    return _EntrypointBranches(dashboard=match.group(1), gateway=match.group(2))
 
 
 class TestMinimalHermesConfig(unittest.TestCase):
@@ -297,6 +315,43 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertGreater(curl_idx, -1)
         self.assertGreater(chmod_idx, curl_idx)
         self.assertGreater(run_idx, chmod_idx)
+
+    def test_entrypoint_opts_out_of_upstream_bundled_skills(self) -> None:
+        text = (HERMES_AGENT_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+        self.assertNotIn("\u2014", text)
+        self.assertNotIn("\u2013", text)
+
+        branches = _extract_entrypoint_branches(text)
+        marker_cmd = "touch /opt/data/.no-bundled-skills"
+
+        root_chown_match = re.search(
+            r'(?ms)^  if \[ "\$\(id -u\)" = "0" \]; then\n(.*?)^  fi\n',
+            branches.dashboard,
+        )
+        self.assertIsNotNone(root_chown_match, "dashboard root chown block missing")
+        root_block = root_chown_match.group(1) if root_chown_match else ""
+        root_touch = root_block.find(marker_cmd)
+        root_chown = root_block.find('chown -R "$TARGET_UID:$TARGET_GID" /opt/data')
+        self.assertGreater(root_touch, -1, "dashboard root branch must create .no-bundled-skills")
+        self.assertGreater(root_chown, root_touch, "marker must be created before chown -R")
+
+        non_root_match = re.search(
+            r'(?ms)^  if \[ "\$\(id -u\)" = "0" \]; then\n(?:(?!^  fi\b).)*?^  else\n(.*?)^  fi',
+            branches.dashboard,
+        )
+        self.assertIsNotNone(non_root_match, "dashboard non-root else block missing")
+        non_root_block = non_root_match.group(1) if non_root_match else ""
+        non_root_touch = non_root_block.find(marker_cmd)
+        dash_exec = non_root_block.find("hermes dashboard")
+        self.assertGreater(non_root_touch, -1, "dashboard else branch must create .no-bundled-skills")
+        self.assertGreater(dash_exec, non_root_touch, "marker must be created before hermes dashboard")
+
+        gw_chmod = branches.gateway.find("chmod 755 /opt/data")
+        gw_touch = branches.gateway.find(marker_cmd)
+        gw_exec = branches.gateway.find("exec /opt/hermes/.venv/bin/hermes gateway run")
+        self.assertGreater(gw_chmod, -1)
+        self.assertGreater(gw_touch, gw_chmod, "gateway branch must create .no-bundled-skills after chmod 755")
+        self.assertGreater(gw_exec, gw_touch, "gateway marker must precede hermes gateway run")
 
 
 if __name__ == "__main__":

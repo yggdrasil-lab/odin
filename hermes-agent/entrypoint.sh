@@ -37,6 +37,8 @@ if [ "$MODE" = "dashboard" ]; then
   if [ "$(id -u)" = "0" ]; then
     groupmod -o -g "$TARGET_GID" hermes 2>/dev/null || true
     usermod -o -u "$TARGET_UID" -g "$TARGET_GID" hermes 2>/dev/null || true
+    # Create NO_BUNDLED_SKILLS_MARKER before chown so ownership matches hermes under the 2-Root Skill Split.
+    touch /opt/data/.no-bundled-skills
     chown -R "$TARGET_UID:$TARGET_GID" /opt/data 2>/dev/null || true
   fi
 
@@ -65,6 +67,8 @@ EOF
       exec su -s /bin/bash hermes -c "(/opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force) && exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure"
     fi
   else
+    # Non-root dashboard launch still ensures NO_BUNDLED_SKILLS_MARKER exists under the 2-Root Skill Split.
+    touch /opt/data/.no-bundled-skills
     /opt/hermes/.venv/bin/python -m mnemosyne.install --status >/dev/null 2>&1 || /opt/hermes/.venv/bin/python -m mnemosyne.install --force
     exec /usr/bin/tini -s -- /opt/hermes/.venv/bin/hermes dashboard --host 127.0.0.1 --insecure
   fi
@@ -124,6 +128,11 @@ else
   # 6. Ensure /opt/data and control files satisfy Hermes private-node checks
   chmod 755 /opt/data 2>/dev/null || true
   chmod 600 /opt/data/gateway.sock /opt/data/gateway.lock 2>/dev/null || true
+
+  # 7. Opt out of full upstream bundled skills seeding (NO_BUNDLED_SKILLS_MARKER)
+  # under the 2-Root Skill Split so retired court-of-odin skill categories and
+  # em-dash DESCRIPTION.md files are not re-seeded into /opt/data/skills on startup.
+  touch /opt/data/.no-bundled-skills
 
   exec /opt/hermes/.venv/bin/hermes gateway run
 fi
