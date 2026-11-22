@@ -3,13 +3,8 @@
 
 from __future__ import annotations
 
-import os
 import re
-import stat
-import subprocess
 import sys
-import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
@@ -77,86 +72,6 @@ def _extract_workflow_step(text: str, step_name: str) -> str:
             break
         captured.append(line)
     return "\n".join(captured)
-
-
-def _extract_step_run_script(step_text: str) -> str:
-    """Return dedented shell script from a workflow step's `run: |` block."""
-    lines = step_text.splitlines()
-    captured: list[str] = []
-    in_run = False
-    for line in lines:
-        if not in_run:
-            if line.strip() == "run: |":
-                in_run = True
-            continue
-        if line and not line.startswith("          "):
-            break
-        captured.append(line)
-    return textwrap.dedent("\n".join(captured))
-
-
-def _write_exec(path: Path, content: str) -> None:
-    """Write an executable script file with 0755 permissions."""
-    path.write_text(content, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
-def _run_stability_gate_script(
-    script: str,
-    docker_script: str,
-    date_script: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Execute extracted convergence step script against stubbed docker/sleep/date CLIs."""
-    with tempfile.TemporaryDirectory() as tmp:
-        bin_dir = Path(tmp) / "bin"
-        bin_dir.mkdir()
-        _write_exec(bin_dir / "docker", docker_script)
-        _write_exec(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
-        if date_script is not None:
-            _write_exec(bin_dir / "date", date_script)
-        env = os.environ.copy()
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
-        env["STATE_DIR"] = tmp
-        return subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=15,
-        )
-
-
-def _build_dwell_docker_stub(second_gw_line: str) -> str:
-    """Build a fake docker CLI that passes baseline then emits second_gw_line on dwell."""
-    return textwrap.dedent(
-        f"""\
-        #!/bin/sh
-        case "$1 $2" in
-          "service ls") printf "odin_huginn-gateway|1/1\\nodin_huginn-dashboard|1/1\\n" ;;
-          "service inspect") echo "" ;;
-          "service ps")
-            case "$*" in
-              *"--filter desired-state=running"*)
-                if [ "$3" = "odin_huginn-gateway" ]; then
-                  n=$(cat "$STATE_DIR/gw_n" 2>/dev/null || echo 0)
-                  n=$((n + 1))
-                  echo "$n" > "$STATE_DIR/gw_n"
-                  if [ "$n" -le 1 ]; then
-                    echo "gw-task-1|Running 3 seconds ago|"
-                  else
-                    echo "{second_gw_line}"
-                  fi
-                else
-                  echo "dash-task-1|Running 10 seconds ago|"
-                fi
-                ;;
-              *) echo "DIAG_PS:$3" ;;
-            esac
-            ;;
-          "service logs") echo "DIAG_LOGS:$*" ;;
-        esac
-        """
-    )
 
 
 class TestMinimalHermesConfig(unittest.TestCase):
@@ -368,107 +283,20 @@ class TestMinimalHermesConfig(unittest.TestCase):
         step_text = _extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence")
         self.assertNotIn("\u2014", step_text)
         self.assertNotIn("\u2013", step_text)
-        for required in (
-            "odin_huginn-gateway",
-            "odin_huginn-dashboard",
-            'docker service ls --filter name=odin_ --format "{{.Name}}|{{.Replicas}}"',
-            'docker service ps "$svc" --filter desired-state=running --no-trunc --format "{{.ID}}|{{.CurrentState}}|{{.Error}}"',
-            "DWELL_CHECKS=3",
-            "DWELL_INTERVAL=10",
-            "docker service ps",
-            "docker service logs --tail 80",
-            "exit 1",
-        ):
-            self.assertIn(required, step_text)
 
-    def test_post_deploy_convergence_gate_passes_when_tasks_stay_stable(self) -> None:
-        text = (ODIN_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
-        script = _extract_step_run_script(_extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence"))
-        self.assertTrue(script.strip())
-
-        docker_stub = textwrap.dedent(
-            """\
-            #!/bin/sh
-            case "$1 $2" in
-              "service ls")
-                n=$(cat "$STATE_DIR/ls_n" 2>/dev/null || echo 0)
-                n=$((n + 1))
-                echo "$n" > "$STATE_DIR/ls_n"
-                if [ "$n" -eq 1 ]; then
-                  printf "odin_huginn-gateway|0/1\\nodin_huginn-dashboard|1/1\\n"
-                else
-                  printf "odin_huginn-gateway|1/1\\nodin_huginn-dashboard|1/1\\n"
-                fi
-                ;;
-              "service inspect") echo "completed" ;;
-              "service ps")
-                case "$3" in
-                  odin_huginn-gateway) echo "gw-task-1|Running 10 seconds ago|" ;;
-                  odin_huginn-dashboard) echo "dash-task-1|Running 10 seconds ago|" ;;
-                esac
-                ;;
-            esac
-            """
+        curl_cmd = (
+            "curl -fsSL "
+            "https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/verify_convergence.sh "
+            "-o /tmp/verify_convergence.sh"
         )
-        proc = _run_stability_gate_script(script, docker_stub)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Dwell check 3/3 passed", proc.stdout)
-
-    def test_post_deploy_convergence_gate_fails_on_task_id_churn(self) -> None:
-        text = (ODIN_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
-        script = _extract_step_run_script(_extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence"))
-        self.assertTrue(script.strip())
-
-        proc = _run_stability_gate_script(script, _build_dwell_docker_stub("gw-task-2|Running 1 second ago|"))
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("Task ID churn detected", proc.stderr)
-        self.assertIn("DIAG_PS:odin_huginn-gateway", proc.stderr)
-        self.assertIn("DIAG_LOGS:service logs --tail 80 odin_huginn-gateway", proc.stderr)
-
-    def test_post_deploy_convergence_gate_fails_on_task_error_and_non_running_state(self) -> None:
-        text = (ODIN_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
-        script = _extract_step_run_script(_extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence"))
-        self.assertTrue(script.strip())
-
-        for dwell_line in ("gw-task-1|Running 2 seconds ago|task: non-zero exit (1)", "gw-task-1|Starting 1 second ago|"):
-            proc = _run_stability_gate_script(script, _build_dwell_docker_stub(dwell_line))
-            self.assertEqual(proc.returncode, 1, dwell_line)
-            self.assertIn("Stability dwell check", proc.stderr)
-            self.assertIn("DIAG_LOGS:service logs --tail 80 odin_huginn-gateway", proc.stderr)
-
-    def test_post_deploy_convergence_gate_fails_on_convergence_timeout(self) -> None:
-        text = (ODIN_ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
-        script = _extract_step_run_script(_extract_workflow_step(text, "Verify Post-Deploy Swarm Convergence"))
-        self.assertTrue(script.strip())
-
-        docker_stub = textwrap.dedent(
-            """\
-            #!/bin/sh
-            case "$1 $2" in
-              "service ls") printf "odin_huginn-gateway|0/1\\nodin_huginn-dashboard|1/1\\n" ;;
-              "service ps") echo "DIAG_PS:$3" ;;
-              "service logs") echo "DIAG_LOGS:$*" ;;
-            esac
-            """
-        )
-        date_stub = textwrap.dedent(
-            """\
-            #!/bin/sh
-            n=$(cat "$STATE_DIR/date_n" 2>/dev/null || echo 0)
-            n=$((n + 1))
-            echo "$n" > "$STATE_DIR/date_n"
-            if [ "$n" -eq 1 ]; then
-              echo 1000
-            else
-              echo 1200
-            fi
-            """
-        )
-        proc = _run_stability_gate_script(script, docker_stub, date_stub)
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("timed out", proc.stderr)
-        self.assertIn("DIAG_PS:odin_huginn-gateway", proc.stderr)
-        self.assertIn("DIAG_LOGS:service logs --tail 80 odin_huginn-gateway", proc.stderr)
+        chmod_cmd = "chmod +x /tmp/verify_convergence.sh"
+        run_cmd = '/tmp/verify_convergence.sh "odin" odin_huginn-gateway odin_huginn-dashboard'
+        curl_idx = step_text.find(curl_cmd)
+        chmod_idx = step_text.find(chmod_cmd)
+        run_idx = step_text.find(run_cmd)
+        self.assertGreater(curl_idx, -1)
+        self.assertGreater(chmod_idx, curl_idx)
+        self.assertGreater(run_idx, chmod_idx)
 
 
 if __name__ == "__main__":
