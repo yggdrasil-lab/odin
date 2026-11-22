@@ -129,10 +129,19 @@ class TestPatchRunner(unittest.TestCase):
 
     def test_audit_cli_json_and_specs_clean_of_dashes_and_retired_targets(self) -> None:
         specs = odin_specs.get_specs()
-        ids = {s.id for s in specs}
-        self.assertIn("pm_environments_bridge", ids)
-        self.assertIn("pm_packages_bridge", ids)
-        self.assertNotIn("fix_managed_worker_routed_env", ids)
+        self.assertEqual(len(specs), 19)
+        by_id = {s.id: s for s in specs}
+        self.assertIn("pm_environments_bridge", by_id)
+        self.assertIn("pm_packages_bridge", by_id)
+        self.assertNotIn("fix_managed_worker_routed_env", by_id)
+        self.assertIn(
+            "# Phase 4: the summary exists, so archive what the compaction drops or shortens, then assemble.",
+            by_id["pre_compress_handover"].hunks[-1].anchor,
+        )
+        self.assertIn(
+            "store = authority_persistence(authority)",
+            by_id["startup_api_media_sweep_offload"].hunks[0].anchor,
+        )
         raw_specs_text = (PATCHES_DIR / "specs.py").read_text(encoding="utf-8")
         self.assertNotIn("hermes_memory_provider", raw_specs_text)
         self.assertNotIn("\u2014", raw_specs_text)

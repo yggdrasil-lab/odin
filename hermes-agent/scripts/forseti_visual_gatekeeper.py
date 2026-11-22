@@ -67,7 +67,7 @@ VISUAL_GATE_SCRIPT_RELPATH = (
     Path(".agents")
     / "plugins"
     / "court-of-odin"
-    / "domain-skills"
+    / "skills"
     / "forge-pr-workflow"
     / "scripts"
     / "run_frontend_visual_gate.py"
@@ -93,13 +93,13 @@ def resolve_vault_path() -> Path:
 
 
 def resolve_visual_gate_script(vault_path: Optional[Path] = None) -> Path:
-    """Resolve run_frontend_visual_gate.py under the Court of Odin domain-skills root."""
+    """Resolve run_frontend_visual_gate.py under the Court of Odin skills root."""
     vault = Path(vault_path).resolve() if vault_path is not None else resolve_vault_path()
     gate_script = vault / VISUAL_GATE_SCRIPT_RELPATH
     if not gate_script.is_file():
         raise FileNotFoundError(
             f"Required visual gate script not found at {gate_script}. "
-            "Ensure Court of Odin domain-skills are available under the resolved vault root."
+            "Ensure Court of Odin skills are available under the resolved vault root."
         )
     return gate_script
 
