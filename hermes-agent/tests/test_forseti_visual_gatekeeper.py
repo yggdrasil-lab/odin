@@ -29,6 +29,8 @@ from forseti_visual_gatekeeper import (
     resolve_browserless_ws,
     resolve_repo_path,
     resolve_vault_path,
+    resolve_visual_gate_script,
+    run_visual_test_harness,
     sync_snapshots_to_obsidian,
 )
 
@@ -220,6 +222,120 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
 
         target_ios = vault / "second-brain" / "Areas" / "90-Infrastructure" / "Ui" / "Screenshots" / "ios" / "01-app-shell.png"
         self.assertTrue(target_ios.is_file())
+
+    def test_resolve_visual_gate_script_container_vault_root(self) -> None:
+        """Verify container /app/vault resolution to Court of Odin domain-skills."""
+        expected_vault = Path("/app/vault")
+        expected_script = Path(
+            "/app/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        )
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, "is_dir", autospec=True, side_effect=lambda p: p == expected_vault),
+            patch.object(Path, "is_file", autospec=True, side_effect=lambda p: p == expected_script),
+        ):
+            self.assertEqual(resolve_vault_path(), expected_vault)
+            self.assertEqual(resolve_visual_gate_script(), expected_script)
+
+    def test_resolve_visual_gate_script_host_vault_root(self) -> None:
+        """Verify host /opt/atlas/vault resolution to Court of Odin domain-skills."""
+        expected_vault = Path("/opt/atlas/vault")
+        expected_script = Path(
+            "/opt/atlas/vault/.agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        )
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, "is_dir", autospec=True, side_effect=lambda p: p == expected_vault),
+            patch.object(Path, "is_file", autospec=True, side_effect=lambda p: p == expected_script),
+        ):
+            self.assertEqual(resolve_vault_path(), expected_vault)
+            self.assertEqual(resolve_visual_gate_script(), expected_script)
+
+    def test_resolve_visual_gate_script_env_and_explicit_vault(self) -> None:
+        """Verify VAULT, OBSIDIAN_VAULT_PATH, and explicit vault_path resolution."""
+        vault = Path(self.temp_dir) / "vault"
+        script = vault / ".agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+        self.assertEqual(resolve_visual_gate_script(vault_path=vault), script.resolve())
+        with patch.dict(os.environ, {"VAULT": str(vault)}, clear=True):
+            self.assertEqual(resolve_visual_gate_script(), script.resolve())
+        with patch.dict(os.environ, {"OBSIDIAN_VAULT_PATH": str(vault)}, clear=True):
+            self.assertEqual(resolve_visual_gate_script(), script.resolve())
+
+    def test_resolve_visual_gate_script_fails_loud_and_ignores_legacy_paths(self) -> None:
+        """Verify missing gate script raises FileNotFoundError and ignores legacy paths."""
+        vault = Path(self.temp_dir) / "legacy_only_vault"
+        legacy_vault_script = vault / ".agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        legacy_vault_script.parent.mkdir(parents=True)
+        legacy_vault_script.write_text("# legacy\n", encoding="utf-8")
+
+        with self.assertRaises(FileNotFoundError):
+            resolve_visual_gate_script(vault_path=vault)
+
+        legacy_paths = {
+            Path("/opt/odin/hermes/skills/devops/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
+            Path("/opt/data/skills/devops/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
+            Path("/app/vault/.agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
+            Path("/opt/atlas/vault/.agents/skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
+        }
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, "is_dir", autospec=True, side_effect=lambda p: p == Path("/app/vault")),
+            patch.object(Path, "is_file", autospec=True, side_effect=lambda p: p in legacy_paths),
+        ):
+            with self.assertRaises(FileNotFoundError):
+                resolve_visual_gate_script()
+
+        with patch.dict(os.environ, {"VAULT": str(Path(self.temp_dir) / "missing_vault")}, clear=True):
+            with self.assertRaises(FileNotFoundError):
+                resolve_visual_gate_script()
+
+    def test_run_visual_test_harness_executes_domain_skill_script(self) -> None:
+        """Verify harness runs resolved domain-skills visual gate script."""
+        vault = Path(self.temp_dir) / "vault"
+        repo = vault / "Forge" / "ui"
+        repo.mkdir(parents=True)
+        script = vault / ".agents/plugins/court-of-odin/domain-skills/forge-pr-workflow/scripts/run_frontend_visual_gate.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+        fake_proc = MagicMock(returncode=0, stdout="Visual checks passed\n")
+        with patch("subprocess.run", return_value=fake_proc) as mock_run:
+            passed, output = run_visual_test_harness(
+                repo_path=repo,
+                browserless_ws="ws://poseidon_browserless:3000",
+                sync_vault=True,
+                vault_path=vault,
+            )
+
+        self.assertTrue(passed)
+        self.assertEqual(output, "Visual checks passed")
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args.args[0]
+        self.assertEqual(cmd, ["python3", str(script.resolve()), str(repo), "--sync-vault"])
+        self.assertEqual(mock_run.call_args.kwargs["env"]["BROWSERLESS_WS_ENDPOINT"], "ws://poseidon_browserless:3000")
+
+    def test_run_visual_test_harness_fails_loud_without_docker_fallback(self) -> None:
+        """Verify harness raises FileNotFoundError and skips docker fallback when missing."""
+        vault = Path(self.temp_dir) / "empty_vault"
+        repo = vault / "Forge" / "ui"
+        repo.mkdir(parents=True)
+
+        with patch("subprocess.run") as mock_run:
+            with self.assertRaises(FileNotFoundError):
+                run_visual_test_harness(repo_path=repo, vault_path=vault)
+            mock_run.assert_not_called()
+
+    def test_resolve_vault_path_fails_loud_when_missing(self) -> None:
+        """Verify resolve_vault_path raises FileNotFoundError when no vault root exists."""
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, "is_dir", autospec=True, return_value=False),
+        ):
+            with self.assertRaises(FileNotFoundError):
+                resolve_vault_path()
 
 
 if __name__ == "__main__":
