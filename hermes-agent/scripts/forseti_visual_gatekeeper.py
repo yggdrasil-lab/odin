@@ -58,22 +58,50 @@ VIEWPORT_PIXEL_7 = {
 
 STANDARD_VIEWPORTS = [VIEWPORT_IPHONE_14, VIEWPORT_PIXEL_7]
 
+VAULT_ROOT_CANDIDATES = (
+    Path("/app/vault"),
+    Path("/opt/atlas/vault"),
+)
+
+VISUAL_GATE_SCRIPT_RELPATH = (
+    Path(".agents")
+    / "plugins"
+    / "court-of-odin"
+    / "domain-skills"
+    / "forge-pr-workflow"
+    / "scripts"
+    / "run_frontend_visual_gate.py"
+)
+
 
 def resolve_vault_path() -> Path:
     """Resolve the authoritative Obsidian vault path across host and container."""
-    env_vault = os.environ.get("VAULT") or os.environ.get("OBSIDIAN_VAULT_PATH")
-    if env_vault and os.path.isdir(env_vault):
-        return Path(env_vault).resolve()
+    env_vault = (os.environ.get("VAULT") or os.environ.get("OBSIDIAN_VAULT_PATH") or "").strip()
+    if env_vault:
+        env_path = Path(env_vault)
+        if not env_path.is_dir():
+            raise FileNotFoundError(f"Configured vault directory does not exist: {env_vault}")
+        return env_path.resolve()
 
-    candidates = [
-        Path("/app/vault"),
-        Path("/opt/atlas/vault"),
-    ]
-    for candidate in candidates:
+    for candidate in VAULT_ROOT_CANDIDATES:
         if candidate.is_dir():
             return candidate.resolve()
 
-    return Path.cwd().resolve()
+    raise FileNotFoundError(
+        "Could not resolve Obsidian vault across container (/app/vault) or host (/opt/atlas/vault)."
+    )
+
+
+def resolve_visual_gate_script(vault_path: Optional[Path] = None) -> Path:
+    """Resolve run_frontend_visual_gate.py under the Court of Odin domain-skills root."""
+    vault = Path(vault_path).resolve() if vault_path is not None else resolve_vault_path()
+    gate_script = vault / VISUAL_GATE_SCRIPT_RELPATH
+    if not gate_script.is_file():
+        raise FileNotFoundError(
+            f"Required visual gate script not found at {gate_script}. "
+            "Ensure Court of Odin domain-skills are available under the resolved vault root."
+        )
+    return gate_script
 
 
 def resolve_repo_path(repo_arg: str, vault_path: Optional[Path] = None) -> Path:
@@ -279,70 +307,25 @@ def run_visual_test_harness(
     browserless_ws: Optional[str] = None,
     sync_vault: bool = False,
     timeout_sec: int = 240,
+    vault_path: Optional[Path] = None,
 ) -> Tuple[bool, str]:
     """Execute the mobile Playwright visual gate harness across the specified repository."""
     ws = browserless_ws or resolve_browserless_ws()
-    vault = resolve_vault_path()
-
-    # Look for run_frontend_visual_gate.py in known locations
-    gate_script_candidates = [
-        Path("/opt/odin/hermes/skills/devops/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
-        Path("/opt/data/skills/devops/forge-pr-workflow/scripts/run_frontend_visual_gate.py"),
-        vault / ".agents" / "skills" / "forge-pr-workflow" / "scripts" / "run_frontend_visual_gate.py",
-    ]
-
-    gate_script: Optional[Path] = None
-    for cand in gate_script_candidates:
-        if cand.is_file():
-            gate_script = cand
-            break
-
-    if not gate_script:
-        # Fallback to direct container invocation if gate script is absent
-        logger.warning("run_frontend_visual_gate.py not found on host; attempting container harness")
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "aether-net",
-            "-e",
-            f"BROWSERLESS_WS_ENDPOINT={ws}",
-            "-v",
-            f"{repo_path}:/app",
-            "-w",
-            "/app",
-            "mcr.microsoft.com/playwright:v1.49.1-noble",
-            "sh",
-            "-c",
-            "npx playwright test",
-        ]
-    else:
-        cmd = ["python3", str(gate_script), str(repo_path)]
-        if sync_vault:
-            cmd.append("--sync-vault")
-
+    gate_script = resolve_visual_gate_script(vault_path=vault_path)
+    cmd = ["python3", str(gate_script), str(repo_path), *(["--sync-vault"] if sync_vault else [])]
     logger.info("Executing visual test harness: %s", " ".join(cmd))
-    env = os.environ.copy()
-    env["BROWSERLESS_WS_ENDPOINT"] = ws
-
+    env = {**os.environ, "BROWSERLESS_WS_ENDPOINT": ws}
     try:
         proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout_sec, env=env
         )
         passed = proc.returncode == 0
-        output = proc.stdout.strip()
         if passed:
             logger.info("Visual inspection harness PASSED for %s", repo_path.name)
         else:
             logger.warning("Visual inspection harness FAILED for %s (exit code %d)", repo_path.name, proc.returncode)
-        return passed, output
-    except subprocess.TimeoutExpired as exc:
+        return passed, proc.stdout.strip()
+    except subprocess.TimeoutExpired:
         err_msg = f"Visual inspection harness timed out after {timeout_sec}s for {repo_path.name}"
         logger.error(err_msg)
         return False, err_msg
