@@ -63,27 +63,10 @@ RUN git clone --quiet https://github.com/anpicasso/hermes-jev-approvals /tmp/jev
     && chmod -R a+rX /opt/hermes/plugins/model-providers/jev-approvals
 
 
-# Patch Hermes so agy's "response was cut off ... exceeded the output token limit"
-# is recognised as an output-cap error instead of a context overflow. Without it
-# Hermes reports a misleading "server rejected the request as too large" notice.
-# See patches/fix_agy_output_cap_detection.py for details. Fails the build if the
-# upstream anchor moves so the fix is never silently dropped.
-#
-# Also patch ContextCompressor to trigger an automated pre-compression wrapup checkpoint
-# that preserves dialogue snapshots, key decisions, and context usage in the Auckland
-# daily Obsidian journal (/app/vault/second-brain/Journal/YYYY/MM/YYYY-MM-DD.md).
-# See patches/hook_pre_compress_wrapup.py for details.
-COPY patches/ /tmp/odin-patches/
-RUN /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_output_cap_detection.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_v1029_worker_usage_and_native_tool.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_agy_catalog_and_claude55_aliases.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_agy_prompt_preamble.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/hook_pre_compress_wrapup.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/route_mnemosyne_to_memory_task.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/enhance_gateway_retry_and_single_query_safety.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_startup_api_media_sweep_offload.py \
-    && /opt/hermes/.venv/bin/python /tmp/odin-patches/fix_managed_worker_routed_env.py \
-    && rm -rf /tmp/odin-patches
+# Install Odin runtime package into Hermes base venv and apply declarative build-time hooks.
+COPY odin_runtime /opt/hermes/.venv/lib/python3.14/site-packages/odin_runtime
+COPY patches/ /tmp/patches/
+RUN /opt/hermes/.venv/bin/python /tmp/patches/patch_runner.py apply && rm -rf /tmp/patches
 
 # Copy helper scripts and make them executable in PATH
 COPY scripts/ /usr/local/bin/

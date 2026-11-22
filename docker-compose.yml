@@ -1,35 +1,41 @@
-services:
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    configs:
-      - source: ollama_init_script
-        target: /init.sh
-    environment:
-      - OLLAMA_DEBUG=1
-      - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_KV_CACHE_TYPE=q4_0
-      - OLLAMA_BASE_MODEL=${OLLAMA_BASE_MODEL}
-      - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME}
-      - HERMES_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH}
-      - OLLAMA_NUM_THREADS=${OLLAMA_NUM_THREADS}
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_MAX_QUEUE=512
-    entrypoint: ["/bin/sh", "/init.sh"]
-    networks:
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
+x-hermes-common-env: &hermes-common-env
+  TZ: Pacific/Auckland
+  OPENAI_API_KEY: ${MUNINN_MASTER_KEY}
+  # The delegation fallback leg (DeepSeek via muninn, model agent-loop)
+  # resolves its credential by variable NAME at runtime (key_env:
+  # MUNINN_MASTER_KEY), so the name itself must exist in this container.
+  # Aliasing it to OPENAI_API_KEY alone is not enough.
+  MUNINN_MASTER_KEY: ${MUNINN_MASTER_KEY}
+  # The gateway/dashboard processes end up with HOME=/opt/data (their passwd home,
+  # set by s6/setuidgid), NOT /opt/data/home. The agy token is mounted at
+  # /opt/data/home/.gemini/antigravity-cli, so point the plugin's documented
+  # override at the mount regardless of HOME.
+  ANTIGRAVITY_CONFIG_DIR: /opt/data/home/.gemini/antigravity-cli
+  HERMES_ANTIGRAVITY_CONTEXT_LENGTH: ${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}
+  HERMES_AGY_ALLOWED_MODELS: ${HERMES_AGY_ALLOWED_MODELS}
+  HERMES_AGY_ALLOWED_EFFORTS: ${HERMES_AGY_ALLOWED_EFFORTS}
+  AGENT_MODEL: ${AGENT_MODEL}
+  HERMES_CONFIG_SHA: ${HERMES_CONFIG_SHA}
+  API_SERVER_KEY: ${API_SERVER_KEY}
+  HERMES_API_TIMEOUT: "1800"
+  HERMES_STREAM_READ_TIMEOUT: "1800"
+  HERMES_STREAM_STALE_TIMEOUT: "1800"
+  HERMES_UID: "1000"
+  HERMES_GID: "1000"
+  DOMAIN_NAME: ${DOMAIN_NAME}
+  # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
+  TYPESAFE_API_KEY: ${TYPESAFE_API_KEY}
+  MNEMOSYNE_DB_PATH: /opt/data/.hermes/mnemosyne/data/mnemosyne.db
+  MNEMOSYNE_DATA_DIR: /opt/data/.hermes/mnemosyne/data
+  MNEMOSYNE_HOST_LLM_ENABLED: "true"
+  MNEMOSYNE_HOST_LLM_TIMEOUT: "120"
+  MNEMOSYNE_LLM_ENABLED: ${MNEMOSYNE_LLM_ENABLED}
+  MNEMOSYNE_LLM_BASE_URL: ${MNEMOSYNE_LLM_BASE_URL}
+  MNEMOSYNE_LLM_API_KEY: ${MUNINN_MASTER_KEY}
+  MNEMOSYNE_LLM_MODEL: ${MNEMOSYNE_LLM_MODEL}
+  MNEMOSYNE_SKIP_CONTEXTS: flush,subagent,background,skill_loop
 
+services:
   muninn-db:
     image: postgres:16-alpine
     volumes:
@@ -90,7 +96,7 @@ services:
         - "homepage.name=Muninn Dashboard"
         - "homepage.icon=litellm.png"
         - "homepage.href=https://muninn.${DOMAIN_NAME}/ui"
-        - "homepage.description=Ollama Prompt & Response Observability"
+        - "homepage.description=LiteLLM Prompt & Response Observability"
 
   jev-shim:
     image: ${REGISTRY_PREFIX}jev-shim:${STACK_NAME}
@@ -115,88 +121,6 @@ services:
       restart_policy:
         condition: any
 
-  agy-vision:
-    image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
-    user: "1000:1000"
-    entrypoint: ["/bin/sh", "-c", "mkdir -p /tmp/agy-home/.gemini && ln -sfn /agy-auth /tmp/agy-home/.gemini/antigravity-cli && exec /opt/hermes/.venv/bin/python /usr/local/bin/agy_vision_proxy.py"]
-    volumes:
-      - ${HOST_AGY_CONFIG_DIR}:/agy-auth
-    environment:
-      - HOME=/tmp/agy-home
-      - ANTIGRAVITY_CONFIG_DIR=/tmp/agy-home/.gemini/antigravity-cli
-      - API_SERVER_KEY=${API_SERVER_KEY}
-      - AGY_VISION_PORT=8643
-      - HERMES_AGY_ALLOWED_MODELS=${HERMES_AGY_ALLOWED_MODELS}
-      - HERMES_AGY_ALLOWED_EFFORTS=${HERMES_AGY_ALLOWED_EFFORTS}
-    networks:
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
-
-  open-webui:
-
-    image: ghcr.io/open-webui/open-webui:main
-    volumes:
-      - open-webui_data:/app/backend/data
-    environment:
-      - ENABLE_OLLAMA_API=False
-      # LDAP Configuration
-      - ENABLE_LDAP=true
-      - LDAP_SERVER_HOST=cerberus_lldap
-      - LDAP_SERVER_PORT=3890
-      - LDAP_USE_TLS=false
-      - LDAP_APP_DN=uid=admin,ou=people,${LLDAP_LDAP_BASE_DN}
-      - LDAP_SEARCH_BASE=ou=people,${LLDAP_LDAP_BASE_DN}
-      - LDAP_ATTRIBUTE_FOR_USERNAME=uid
-      - LDAP_ATTRIBUTE_FOR_MAIL=mail
-      - ENABLE_PERSISTENT_CONFIG=false
-      - ENABLE_FOLLOW_UP_GENERATION=False
-      - DEFAULT_MODELS=${CHAT_MODEL}
-      - OPENAI_API_BASE_URLS=http://muninn:4000/v1;http://huginn-gateway:8642/v1
-      - OPENAI_API_KEYS=${MUNINN_MASTER_KEY};${API_SERVER_KEY}
-      - WEBUI_SECRET_KEY_FILE=/run/secrets/odin_webui_secret_key
-      - AIOHTTP_CLIENT_TIMEOUT=900
-      - AIOHTTP_CLIENT_STREAM_IDLE_TIMEOUT=900
-    entrypoint: [ "bash", "-c", "if [ -f /run/secrets/odin_lldap_user_pass ]; then export LDAP_APP_PASSWORD=$$(cat /run/secrets/odin_lldap_user_pass); fi; exec bash start.sh" ]
-    secrets:
-      - odin_lldap_user_pass
-      - odin_webui_secret_key
-    networks:
-      - aether-net
-      - internal
-    labels:
-      - "com.docker.compose.project=${STACK_NAME}"
-    deploy:
-      mode: replicated
-      replicas: 1
-      endpoint_mode: dnsrr
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.odin-webui.rule=Host(`odin.${DOMAIN_NAME}`)"
-        - "traefik.http.routers.odin-webui.entrypoints=websecure"
-        - "traefik.http.routers.odin-webui.tls=true"
-        - "traefik.http.routers.odin-webui.tls.certresolver=cloudflare"
-        - "traefik.http.services.odin-webui.loadbalancer.server.port=8080"
-        - "traefik.docker.network=aether-net"
-        - "homepage.group=AI Lab"
-        - "homepage.name=Odin Chat"
-        - "homepage.icon=open-webui.png"
-        - "homepage.href=https://odin.${DOMAIN_NAME}"
-        - "homepage.description=Local LLM Chat Interface"
-
   huginn-gateway:
     image: ${REGISTRY_PREFIX}hermes-agent:${STACK_NAME}
     build:
@@ -210,79 +134,37 @@ services:
       - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
       - ${OBSIDIAN_VAULT_PATH}:/app/vault:rw
     environment:
-      - TZ=Pacific/Auckland
-      - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
-      # The delegation fallback leg (DeepSeek via muninn, model agent-loop)
-      # resolves its credential by variable NAME at runtime (key_env:
-      # MUNINN_MASTER_KEY), so the name itself must exist in this container.
-      # Aliasing it to OPENAI_API_KEY alone is not enough.
-      - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
-      # The gateway process ends up with HOME=/opt/data (its passwd home, set
-      # by s6/setuidgid), NOT the /opt/data/home the entrypoint exports. The
-      # agy token is mounted at /opt/data/home/.gemini/antigravity-cli, so the
-      # plugin's default lookup (Path.home()/.gemini/antigravity-cli) points at
-      # the empty /opt/data/.gemini/antigravity-cli and reports "not
-      # authenticated", silently failing over to DeepSeek. Point the plugin's
-      # documented override at the mount and it resolves the token regardless
-      # of HOME.
-      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
-      - HERMES_ANTIGRAVITY_CONTEXT_LENGTH=${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}
-      - HERMES_AGY_ALLOWED_MODELS=${HERMES_AGY_ALLOWED_MODELS}
-      - HERMES_AGY_ALLOWED_EFFORTS=${HERMES_AGY_ALLOWED_EFFORTS}
-      - AGENT_MODEL=${AGENT_MODEL}
-      - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
-      - API_SERVER_ENABLED=true
-      - API_SERVER_HOST=0.0.0.0
-      - API_SERVER_PORT=8642
-      - API_SERVER_KEY=${API_SERVER_KEY}
-      - GATEWAY_ALLOW_ALL_USERS=true
-      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-      - DISCORD_ALLOWED_USERS=${DISCORD_USER_ID}
-      - DISCORD_USER_ID=${DISCORD_USER_ID}
-      - DISCORD_CHANNEL_INFO_ID=${DISCORD_CHANNEL_INFO_ID}
-      - DISCORD_CHANNEL_HEALTH_ID=${DISCORD_CHANNEL_HEALTH_ID}
-      - DISCORD_CHANNEL_WEALTH_ID=${DISCORD_CHANNEL_WEALTH_ID}
-      - DISCORD_CHANNEL_WATCH_ID=${DISCORD_CHANNEL_WATCH_ID}
-      - DISCORD_CHANNEL_ALERT_ID=${DISCORD_CHANNEL_ALERT_ID}
-      - HERMES_API_TIMEOUT=1800
-      - HERMES_STREAM_READ_TIMEOUT=1800
-      - HERMES_STREAM_STALE_TIMEOUT=1800
-      - HERMES_UID=1000
-      - HERMES_GID=1000
+      <<: *hermes-common-env
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      GATEWAY_ALLOW_ALL_USERS: "true"
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_ALLOWED_USERS: ${DISCORD_USER_ID}
+      DISCORD_USER_ID: ${DISCORD_USER_ID}
+      DISCORD_CHANNEL_INFO_ID: ${DISCORD_CHANNEL_INFO_ID}
+      DISCORD_CHANNEL_HEALTH_ID: ${DISCORD_CHANNEL_HEALTH_ID}
+      DISCORD_CHANNEL_WEALTH_ID: ${DISCORD_CHANNEL_WEALTH_ID}
+      DISCORD_CHANNEL_WATCH_ID: ${DISCORD_CHANNEL_WATCH_ID}
+      DISCORD_CHANNEL_ALERT_ID: ${DISCORD_CHANNEL_ALERT_ID}
       # write_file/patch are confined to HERMES_WRITE_SAFE_ROOT, which the base
       # image pins to /opt/data. Without /app/vault in the list, every edit to the
       # vault bind mount is denied and has to be routed around via the terminal.
       # The credential denylist is evaluated separately and stays in force.
-      - HERMES_WRITE_SAFE_ROOT=/opt/data:/app/vault
-      - SEARXNG_URL=http://poseidon_searxng:8080
-      - CAMOFOX_URL=http://poseidon_camofox:9377
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      # Bearer token for the Kratos MCP endpoint. Sourced from the organization
-      # secret KRATOS_MCP_TOKEN.
-      - DOMAIN_NAME=${DOMAIN_NAME}
-      - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
-      - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
-      # TypeSafe Jev API key for high-frequency decision, classification, and triage tasks
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
-      - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
-      - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
-      - MNEMOSYNE_HOST_LLM_ENABLED=true
-      - MNEMOSYNE_HOST_LLM_TIMEOUT=120
-      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED}
-      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL}
-      - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
-      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL}
-      - MNEMOSYNE_SKIP_CONTEXTS=flush,subagent,background,skill_loop
-      - GIT_USER_NAME=${HERMES_GIT_USER_NAME}
-      - GIT_USER_EMAIL=${HERMES_GIT_USER_EMAIL}
-      - GH_SETUP_TOKEN=${GH_TOKEN}
-      - GH_CONFIG_DIR=/opt/data/.config/gh
+      HERMES_WRITE_SAFE_ROOT: /opt/data:/app/vault
+      SEARXNG_URL: http://poseidon_searxng:8080
+      CAMOFOX_URL: http://poseidon_camofox:9377
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      GIT_USER_NAME: ${HERMES_GIT_USER_NAME}
+      GIT_USER_EMAIL: ${HERMES_GIT_USER_EMAIL}
+      GH_SETUP_TOKEN: ${GH_TOKEN}
+      GH_CONFIG_DIR: /opt/data/.config/gh
       # Read-only Docker API for investigating Swarm services, tasks and logs
       # from inside this container. The socket is NOT mounted here -- only into
       # docker-socket-proxy, which enforces GET/HEAD-only at the API level.
       # Mutations (stack deploy, service update, exec) stay on the PR +
       # `gh workflow run deploy` path, which is the point of the split.
-      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
     secrets:
       - source: hermes_ssh_key
         target: hermes_ssh_key
@@ -324,40 +206,8 @@ services:
       - /opt/odin/mnemosyne:/opt/data/.hermes/mnemosyne
       - ${HOST_AGY_CONFIG_DIR}:/opt/data/home/.gemini/antigravity-cli
     environment:
-      - TZ=Pacific/Auckland
-      - GATEWAY_HEALTH_URL=http://huginn-gateway:8642
-      - API_SERVER_KEY=${API_SERVER_KEY}
-      - OPENAI_API_KEY=${MUNINN_MASTER_KEY}
-      - MUNINN_MASTER_KEY=${MUNINN_MASTER_KEY}
-      # Same HOME mismatch as the gateway: the dashboard's hermes processes run
-      # with passwd HOME=/opt/data while the agy token is mounted at
-      # /opt/data/home/.gemini/antigravity-cli. Point the override at the mount.
-      - ANTIGRAVITY_CONFIG_DIR=/opt/data/home/.gemini/antigravity-cli
-      - HERMES_ANTIGRAVITY_CONTEXT_LENGTH=${HERMES_ANTIGRAVITY_CONTEXT_LENGTH}
-      - HERMES_AGY_ALLOWED_MODELS=${HERMES_AGY_ALLOWED_MODELS}
-      - HERMES_AGY_ALLOWED_EFFORTS=${HERMES_AGY_ALLOWED_EFFORTS}
-      - AGENT_MODEL=${AGENT_MODEL}
-      - HERMES_CONFIG_SHA=${HERMES_CONFIG_SHA}
-      - HERMES_API_TIMEOUT=1800
-      - HERMES_STREAM_READ_TIMEOUT=1800
-      - HERMES_STREAM_STALE_TIMEOUT=1800
-      - HERMES_UID=1000
-      - HERMES_GID=1000
-      # Bearer token for the Kratos MCP endpoint, same value the gateway
-      # presents. Sourced from the organization secret KRATOS_MCP_TOKEN.
-      - DOMAIN_NAME=${DOMAIN_NAME}
-      - KRATOS_MCP_TOKEN=${KRATOS_MCP_TOKEN}
-      - MCP_KRATOS_API_KEY=${KRATOS_MCP_TOKEN}
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY}
-      - MNEMOSYNE_DB_PATH=/opt/data/.hermes/mnemosyne/data/mnemosyne.db
-      - MNEMOSYNE_DATA_DIR=/opt/data/.hermes/mnemosyne/data
-      - MNEMOSYNE_HOST_LLM_ENABLED=true
-      - MNEMOSYNE_HOST_LLM_TIMEOUT=120
-      - MNEMOSYNE_LLM_ENABLED=${MNEMOSYNE_LLM_ENABLED}
-      - MNEMOSYNE_LLM_BASE_URL=${MNEMOSYNE_LLM_BASE_URL}
-      - MNEMOSYNE_LLM_API_KEY=${MUNINN_MASTER_KEY}
-      - MNEMOSYNE_LLM_MODEL=${MNEMOSYNE_LLM_MODEL}
-      - MNEMOSYNE_SKIP_CONTEXTS=flush,subagent,background,skill_loop
+      <<: *hermes-common-env
+      GATEWAY_HEALTH_URL: http://huginn-gateway:8642
     networks:
       - aether-net
       - internal
@@ -444,11 +294,9 @@ services:
   # because `:ro` on a socket bind mount does NOT do this -- read-only there
   # protects the socket file, while the API behind it stays fully writable.
   #
-  # Deliberately NOT on `internal`: that network also carries third-party
-  # images (searxng, camofox), and a socket proxy is readable by anything that
-  # can reach it. `docker inspect` of any container returns that container's
-  # environment, which is where several secrets live in this stack. Dedicated
-  # non-attachable overlay with exactly two members instead.
+  # Deliberately NOT on `internal`: dedicated non-attachable overlay with
+  # exactly two members (`huginn-gateway` and `docker-socket-proxy`) so
+  # `docker inspect` environment views stay isolated from `internal` peers.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     volumes:
@@ -493,8 +341,6 @@ services:
           memory: 16M
 
 volumes:
-  ollama_data:
-  open-webui_data:
   muninn-db_data:
 
 networks:
@@ -510,17 +356,9 @@ networks:
     internal: true
 
 configs:
-  ollama_init_script:
-    file: ./config/ollama-init/init.sh
   muninn_config:
     file: ./config/muninn/config.yaml
 secrets:
-  odin_lldap_user_pass:
-    external: true
-    name: ${LLDAP_LDAP_USER_PASS_NAME}
   hermes_ssh_key:
     external: true
     name: ${HERMES_SSH_KEY_NAME}
-  odin_webui_secret_key:
-    external: true
-    name: ${WEBUI_SECRET_KEY_NAME}
