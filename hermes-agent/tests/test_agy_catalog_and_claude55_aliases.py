@@ -592,8 +592,7 @@ class TestAgyCatalogAndClaude55Aliases(unittest.TestCase):
                 self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen", "high"), ("gemini-4-hydrogen-high", "high"))
                 self.assertEqual(mod.resolve_model_and_effort("gemini-4-hydrogen-low"), ("gemini-4-hydrogen-low", "low"))
                 for bad_model in disallowed:
-                    with self.subTest(bad_model=bad_model), self.assertRaises(ValueError):
-                        mod.resolve_model_and_effort(bad_model)
+                    self.assertRaises(ValueError, mod.resolve_model_and_effort, bad_model)
 
             with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value={}):
                 self.assertEqual(mod.resolve_model_alias("Gemini-4-Hydrogen", {}), "gemini-4-hydrogen")
@@ -638,6 +637,30 @@ class TestAgyCatalogAndClaude55Aliases(unittest.TestCase):
                     mod.default_aux_model_name()
                 with self.assertRaises(ValueError):
                     mod.resolve_model_and_effort("gemini-4-hydrogen", "low")
+
+    def test_pool2_claude55_lock_allows_claude_and_rejects_pool1_gemini(self) -> None:
+        claude_env = {
+            "HERMES_AGY_ALLOWED_MODELS": "claude-sonnet-5-5",
+            "HERMES_AGY_ALLOWED_EFFORTS": "low,medium,high",
+        }
+        parsed = {"claude-sonnet-5-5": ("low", "medium", "high")}
+        disallowed = (
+            "gemini-4-hydrogen-high",
+            "gemini-4-neon-high",
+            "gemini-4-argon-high",
+            "gemini-4-carbon-high",
+            "claude-opus-5-5-high",
+            "gemini-3.8-flash",
+        )
+        with self._patched_loaded_plugin(claude_env, "claude55_lock") as (mod, init_mod):
+            profile = init_mod.antigravity_profile
+            self.assertEqual(mod.default_model_name(), "claude-sonnet-5-5")
+            self.assertEqual(profile.default_aux_model, "claude-sonnet-5-5-low")
+            with patch.object(mod, "_catalog_cache", None), patch.object(mod, "load_catalog", return_value=parsed):
+                self.assertEqual(mod.resolve_model_and_effort("claude-sonnet-5-5-high"), ("claude-sonnet-5-5-high", "high"))
+                self.assertEqual(mod.resolve_model_and_effort("claude-sonnet-5-5", "medium"), ("claude-sonnet-5-5-medium", "medium"))
+                for bad_model in disallowed:
+                    self.assertRaises(ValueError, mod.resolve_model_and_effort, bad_model)
 
 
 if __name__ == "__main__":

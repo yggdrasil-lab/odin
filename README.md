@@ -90,28 +90,39 @@ Ollama is installed for local inference but the Gaia host is CPU-only (Qwen 2.5 
 Hermes Agent → Muninn (http://muninn:4000/v1) → DeepSeek API
 ```
 
-Current models: `agent-loop` (fast tier, now the **fallback** for the main agent loop; see below), `agent-delegate` (delegation/coding subagents, reasoning tier), `memory-extract` (Mnemosyne memory consolidation, fast tier), `compress` (Hermes context compression summarizer, fast tier), `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; each upstream DeepSeek slug appears exactly once, as a YAML anchor (`&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant; point `AGENT_MODEL` at it to re-enable auto-routing.
+Current models: `agent-loop` (heavy scheduled crons and main agent loop overflow on Gemini 3.8 Flash), `agent-delegate` (delegation primary on Gemini 3.8 Flash), `memory-extract` (Mnemosyne memory consolidation on Gemini 3.8 Flash), `app-synthesize` (Kratos/Plutus synthesis on Gemini 3.8 Flash), `gemini-4-hydrogen` (Plutus receipt vision alias on native Gemini 3.8 Flash, zero `agy-vision:8643` hops), `compress` (Hermes context compression summarizer on Gemini 3.5 Flash-Lite), and `local-model:latest` (Open WebUI default, lightweight local). These are role-named aliases defined in `config/muninn/config.yaml.template`; upstream slugs are defined via YAML anchors (`&gemini_38_flash`, `&gemini_35_flash_lite`, `&flash`, `&pro`), so repointing a role at a different model is a one-line edit there. `agent-auto` (complexity router: fast tier for simple/medium, reasoning tier for complex/reasoning) is kept defined in the Muninn config but dormant; point `AGENT_MODEL` at it to re-enable auto-routing.
 
 Live model switching via `/model` command in any chat interface.
 
-### Primary model and fallback (`model:` + `fallback_providers:`)
+### Four-Pool AI Routing (`model:`, `delegation:`, `providers.muninn`, `fallback_providers:`)
 
-The **main agent conversation loop** (every turn, not just delegated work) runs on the **Antigravity (Gemini AI Ultra) subscription** first, via the official `agy` CLI (`antigravity-subscription-directsdk`), strictly locked to **`gemini-4-hydrogen`** (`HERMES_AGY_ALLOWED_MODELS=gemini-4-hydrogen`, `HERMES_AGY_ALLOWED_EFFORTS=low,medium,high`), and rotates directly to **Muninn** when Pool 1 quota is exhausted. Under Gemini AI Ultra, **Pool 1 (Gemini)** is shared across Gemini direct models while **Pool 2 (Claude and GPT)** is reserved exclusively for Antigravity IDE (`forseti`, `vor`, `saga`, and interactive turns). Hermes intentionally uses **direct models** rather than `gemini-pro-orchestrator-*`, because Hermes manages its own `<tool_call>` loop externally and Orchestrator models re-enter Plan Mode on every incoming turn.
+AI inference is partitioned across four isolated quota pools:
+
+1. **Pool 1 (Google AI Ultra Gemini, 100% Antigravity IDE only)**: All five Court of Odin IDE specialists (`huginn`, `forseti`, `vor`, `saga` on `gemini-4-neon-high`; `sindri` on `gemini-pro-orchestrator-neon`) and interactive IDE turns. Zero Pool 1 usage in Hermes or Muninn.
+2. **Pool 2 (Google AI Ultra Claude, minimal Hermes `odin` only)**: Interactive Discord and lightweight scheduled jobs (`morning-executive-copilot`, `training-directive`) run on `claude-sonnet-5-5-high` via the official `agy` CLI (`antigravity-subscription-directsdk`), locked strictly by `HERMES_AGY_ALLOWED_MODELS=claude-sonnet-5-5` and `HERMES_AGY_ALLOWED_EFFORTS=low,medium,high`. Hermes intentionally uses **direct models** rather than `gemini-pro-orchestrator-*`, because Hermes manages its own `<tool_call>` loop externally and Orchestrator models re-enter Plan Mode on every incoming turn.
+3. **Free `$40/mo` Gemini API Credits (Muninn, `$35/30d` cap -> DeepSeek safety net)**:
+   - Heavy scheduled crons (`daily-briefing`, `weekly-topic-watch`, `mnemosyne-dreaming-consolidation`) pin to named `providers.muninn` (`model: "agent-loop"`, `gemini/gemini-3.8-flash`) authenticated with `MUNINN_MASTER_KEY`.
+   - Subagent `delegation` runs primarily on `providers.muninn` `agent-delegate` (`gemini/gemini-3.8-flash`), falling back to `claude-sonnet-5-5-high`.
+   - Stack synthesis (`app-synthesize`), memory extraction (`memory-extract`), and Plutus receipt vision (`gemini-4-hydrogen`) run natively on `gemini/gemini-3.8-flash` (zero `agy-vision:8643` calls), while `compress` stays on `gemini/gemini-3.5-flash-lite`.
+4. **TypeSafe Jev (`$50` prepaid)**: Unchanged fast zero-output classification and gating (`jev-decision`, `agent-monitor`, `jev-shim`).
 
 ```
-main agent loop -> Antigravity Pool 1 (agy CLI, gemini-4-hydrogen-high)
+main agent loop -> Antigravity Pool 2 (agy CLI, claude-sonnet-5-5-high)
                 -> usage limit reached -> Muninn (custom) -> Gemini 3.8 Flash / DeepSeek V4-Flash (agent-loop)
+
+delegation      -> Muninn (providers.muninn, agent-delegate -> Gemini 3.8 Flash / DeepSeek V4-Pro)
+                -> fallback -> Antigravity Pool 2 (claude-sonnet-5-5-high)
 ```
 
-`AGENT_MODEL` therefore names `gemini-4-hydrogen-high` exposed by the `agy` plugin - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
+`AGENT_MODEL` therefore names `claude-sonnet-5-5-high` exposed by the `agy` plugin - **not** a muninn alias like `agent-loop`, which would resolve against the wrong provider now that the `model:` block points at the plugin.
 
-This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and fails over directly to Muninn without touching Pool 2 Claude.
+This is a native Hermes fallback chain (`fallback_providers`), not custom code. Hermes classifies `agy`'s `usage_limit_reached` error as a non-retryable rate_limit/billing verdict and fails over directly to Muninn without touching Pool 1 Gemini.
 
-Compression, memory consolidation, background review, and title generation run primarily on Muninn (`compress` / `memory-extract` / `app-synthesize`) and fall back strictly to `gemini-4-hydrogen-medium` (or `gemini-4-hydrogen-low` for `title_generation`).
+Compression, memory consolidation, background review, and title generation run primarily on Muninn (`compress` / `memory-extract` / `app-synthesize`) and fall back strictly to `claude-sonnet-5-5-medium` (or `claude-sonnet-5-5-low` for `title_generation`).
 
-Hermes runs strictly in minimal single-coordinator mode (`odin` only, zero sub-profiles) for cron jobs, Discord, and auto-ingestions on `gemini-4-hydrogen-high` -> Muninn (`agent-loop` / `agent-delegate`). All 5 Court of Odin specialists (`huginn`, `sindri`, `forseti`, `vor`, `saga`) run natively inside Antigravity IDE.
+Hermes runs strictly in minimal single-coordinator mode (`odin` only, zero sub-profiles) for cron jobs, Discord, and auto-ingestions. All 5 Court of Odin specialists (`huginn`, `sindri`, `forseti`, `vor`, `saga`) run natively inside Antigravity IDE.
 
-Deliberately absent from every chain: the **metered** Gemini API (`gemini-2.5-flash` / `gemini-2.5-pro`, billed per token via `GEMINI_API_KEY`). Antigravity Pool 1 (`gemini-4-hydrogen`) and Muninn primary (`agent-loop` / `agent-delegate`) are exhausted before any metered fallback is touched, reserving Pool 2 Claude exclusively for Antigravity IDE.
+Deliberately absent from every chain: the **metered** legacy Gemini 2.5 API (`gemini-2.5-flash` / `gemini-2.5-pro`) and Pool 1 Gemini models in Hermes. Pool 1 stays isolated for Antigravity IDE, while Muninn routes within the `$35/30d` cap inside `$40/mo` Google Developer Program credits before falling back to DeepSeek.
 
 Two prerequisites, both wired in this repo and easy to break:
 

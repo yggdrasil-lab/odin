@@ -8,11 +8,10 @@
 model:
   # Default model to use (can be overridden with --model flag).
   # AGENT_MODEL names a direct model exposed by the Antigravity subscription plugin
-  # (gemini-4-hydrogen-high) rather than a muninn alias.
-  # Minimal Hermes and agy-vision are strictly locked to Pool 1 gemini-4-hydrogen via
-  # HERMES_AGY_ALLOWED_MODELS to reserve shared Google AI Ultra Pool 2 Claude headroom
-  # for Antigravity IDE. Orchestrator models are avoided inside Hermes because external
-  # <tool_call> turns trigger Plan-Mode overhead on every step.
+  # (claude-sonnet-5-5-high) rather than a muninn alias.
+  # Minimal Hermes is strictly locked to Pool 2 claude-sonnet-5-5 via HERMES_AGY_ALLOWED_MODELS
+  # to reserve Pool 1 Gemini headroom exclusively for Antigravity IDE. Orchestrator models are
+  # avoided inside Hermes because external <tool_call> turns trigger Plan-Mode overhead on every step.
   default: "${AGENT_MODEL}"
 
   # Inference provider selection: the bundled Antigravity plugin, which shells
@@ -41,8 +40,8 @@ model:
 auxiliary:
   compression:
     # Compression runs primarily on Muninn compress (Gemini 3.5 Flash-Lite, 1M context,
-    # falling back to DeepSeek on Muninn) to offload Pool 1 subscription quotas,
-    # with Antigravity Pool 1 Gemini 4 Hydrogen Medium as fallback.
+    # falling back to DeepSeek on Muninn) to preserve Antigravity subscription quotas,
+    # with Antigravity Pool 2 Claude Sonnet 5.5 Medium as fallback.
     provider: "custom"
     model: "compress"
     base_url: "http://muninn:4000/v1"
@@ -51,14 +50,14 @@ auxiliary:
     timeout: 60
     fallback_chain: &compression_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-hydrogen-medium"
+        model: "claude-sonnet-5-5-medium"
         timeout: 120
     fallback_providers: *compression_fallbacks
 
   memory:
     # Mnemosyne memory consolidation and structured fact extraction run primarily on Muninn
-    # memory-extract (Gemini 3.5 Flash-Lite -> DeepSeek), falling back strictly to
-    # Antigravity Pool 1 Gemini 4 Hydrogen Medium.
+    # memory-extract (Gemini 3.8 Flash -> DeepSeek), falling back strictly to
+    # Antigravity Pool 2 Claude Sonnet 5.5 Medium.
     provider: "custom"
     model: "memory-extract"
     base_url: "http://muninn:4000/v1"
@@ -66,31 +65,31 @@ auxiliary:
     timeout: 120
     fallback_chain: &memory_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-hydrogen-medium"
+        model: "claude-sonnet-5-5-medium"
     fallback_providers: *memory_fallbacks
 
   background_review:
-    # Background skill reviews run primarily on Muninn app-synthesize (Gemini 3.5 Flash-Lite ->
-    # DeepSeek), falling back strictly to Antigravity Pool 1 Gemini 4 Hydrogen Medium.
+    # Background skill reviews run primarily on Muninn app-synthesize (Gemini 3.8 Flash ->
+    # DeepSeek), falling back strictly to Antigravity Pool 2 Claude Sonnet 5.5 Medium.
     provider: "custom"
     model: "app-synthesize"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
     fallback_chain: &background_review_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-hydrogen-medium"
+        model: "claude-sonnet-5-5-medium"
     fallback_providers: *background_review_fallbacks
 
   title_generation:
     # Session and thread title generation runs primarily on Muninn compress (Gemini 3.5 Flash-Lite
-    # -> DeepSeek), falling back strictly to Antigravity Pool 1 Gemini 4 Hydrogen Low.
+    # -> DeepSeek), falling back strictly to Antigravity Pool 2 Claude Sonnet 5.5 Low.
     provider: "custom"
     model: "compress"
     base_url: "http://muninn:4000/v1"
     key_env: "MUNINN_MASTER_KEY"
     fallback_chain: &title_generation_fallbacks
       - provider: "antigravity-subscription-directsdk"
-        model: "gemini-4-hydrogen-low"
+        model: "claude-sonnet-5-5-low"
     fallback_providers: *title_generation_fallbacks
 
   approval:
@@ -112,9 +111,9 @@ auxiliary:
 # =============================================================================
 # Fallback chain (main agent loop)
 # =============================================================================
-# Minimal single-coordinator Odin runs strictly on Pool 1 (Gemini 4 Hydrogen) first
+# Minimal single-coordinator Odin runs strictly on Pool 2 (Claude Sonnet 5.5) first
 # and falls back directly to agent-loop on muninn (Gemini 3.8 Flash with USD 35/30d
-# cap -> DeepSeek V4-Flash), keeping Pool 2 Claude headroom reserved for Antigravity IDE.
+# cap -> DeepSeek V4-Flash), keeping Pool 1 Gemini headroom reserved for Antigravity IDE.
 fallback_providers:
   - provider: "custom"
     model: "agent-loop"
@@ -125,15 +124,15 @@ fallback_providers:
 # Delegation Configuration (coding/subagent model)
 # =============================================================================
 delegation:
-  # Delegated subagents run strictly on Pool 1 (Gemini 4 Hydrogen) and fall back
-  # directly to agent-delegate on muninn (zero Pool 2 Claude usage).
-  provider: "antigravity-subscription-directsdk"
-  model: "gemini-4-hydrogen-high"
+  # Delegated subagents run primarily on Muninn agent-delegate (Gemini 3.8 Flash via
+  # named providers.muninn -> DeepSeek overflow) and fall back to Pool 2 Claude Sonnet 5.5 High.
+  # Named provider "muninn" resolves key_env from providers.muninn (bare provider: "custom"
+  # does not read key_env in delegation config).
+  provider: "muninn"
+  model: "agent-delegate"
   fallback_providers:
-    - provider: "custom"
-      model: "agent-delegate"
-      base_url: "http://muninn:4000/v1"
-      key_env: "MUNINN_MASTER_KEY"
+    - provider: "antigravity-subscription-directsdk"
+      model: "claude-sonnet-5-5-high"
 
 # =============================================================================
 # Safety & Approvals
@@ -151,6 +150,13 @@ approvals:
 # =============================================================================
 providers:
   custom:
+    request_timeout_seconds: 300
+    stale_timeout_seconds: 300
+  muninn:
+    name: "muninn"
+    base_url: "http://muninn:4000/v1"
+    key_env: "MUNINN_MASTER_KEY"
+    api_mode: "chat_completions"
     request_timeout_seconds: 300
     stale_timeout_seconds: 300
 

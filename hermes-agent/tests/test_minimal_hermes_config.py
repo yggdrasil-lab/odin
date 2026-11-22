@@ -57,13 +57,12 @@ def _extract_indented_yaml_block(text: str, key_name: str, indent: int = 2) -> s
 class TestMinimalHermesConfig(unittest.TestCase):
     """Static invariants for minimal single-coordinator Odin stack configuration."""
 
-    def test_config_template_enforces_hydrogen_lock_and_zero_claude(self) -> None:
-        cfg_path = ODIN_ROOT / "config" / "hermes" / "config.yaml.template"
-        text = cfg_path.read_text(encoding="utf-8")
+    def test_config_template_enforces_pool2_claude_lock_and_zero_pool1(self) -> None:
+        text = (ODIN_ROOT / "config" / "hermes" / "config.yaml.template").read_text(encoding="utf-8")
 
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2013", text)
-        self.assertNotIn("claude-", text.lower())
+        self.assertNotIn("gemini-4-", text.lower())
         self.assertNotIn("argon-high", text)
         self.assertNotIn("neon-high", text)
         self.assertNotIn("multiplex_profiles", text)
@@ -71,14 +70,12 @@ class TestMinimalHermesConfig(unittest.TestCase):
 
         model_sec = _extract_top_level_yaml_section(text, "model")
         self.assertIn('default: "${AGENT_MODEL}"', model_sec)
+        self.assertIn('provider: "antigravity-subscription-directsdk"', model_sec)
 
         fallback_sec = _extract_top_level_yaml_section(text, "fallback_providers")
         self.assertIn('model: "agent-loop"', fallback_sec)
         self.assertIn('base_url: "http://muninn:4000/v1"', fallback_sec)
-
-        delegation_sec = _extract_top_level_yaml_section(text, "delegation")
-        self.assertIn('model: "gemini-4-hydrogen-high"', delegation_sec)
-        self.assertIn('model: "agent-delegate"', delegation_sec)
+        self.assertIn('key_env: "MUNINN_MASTER_KEY"', fallback_sec)
 
         plugins_sec = _extract_top_level_yaml_section(text, "plugins")
         self.assertIn('"mnemosyne"', plugins_sec)
@@ -87,28 +84,42 @@ class TestMinimalHermesConfig(unittest.TestCase):
         for expected_toolset in ("clarify", "cronjob", "delegation", "discord", "file", "memory", "skills", "terminal"):
             self.assertIn(expected_toolset, toolsets_sec)
 
+    def test_config_template_delegation_and_named_muninn_provider(self) -> None:
+        text = (ODIN_ROOT / "config" / "hermes" / "config.yaml.template").read_text(encoding="utf-8")
+
+        delegation_sec = _extract_top_level_yaml_section(text, "delegation")
+        self.assertIn('provider: "muninn"', delegation_sec)
+        self.assertIn('model: "agent-delegate"', delegation_sec)
+        self.assertIn('provider: "antigravity-subscription-directsdk"', delegation_sec)
+        self.assertIn('model: "claude-sonnet-5-5-high"', delegation_sec)
+
+        providers_sec = _extract_top_level_yaml_section(text, "providers")
+        muninn_sec = _extract_indented_yaml_block(providers_sec, "muninn", indent=2)
+        self.assertIn('base_url: "http://muninn:4000/v1"', muninn_sec)
+        self.assertIn('key_env: "MUNINN_MASTER_KEY"', muninn_sec)
+
     def test_config_template_auxiliary_chains_and_title_generation(self) -> None:
         text = (ODIN_ROOT / "config" / "hermes" / "config.yaml.template").read_text(encoding="utf-8")
         aux_sec = _extract_top_level_yaml_section(text, "auxiliary")
         for task_name in ("compression", "memory", "background_review"):
             task_sec = _extract_indented_yaml_block(aux_sec, task_name, indent=2)
-            self.assertIn('model: "gemini-4-hydrogen-medium"', task_sec, task_name)
+            self.assertIn('model: "claude-sonnet-5-5-medium"', task_sec, task_name)
 
         title_sec = _extract_indented_yaml_block(aux_sec, "title_generation", indent=2)
         self.assertIn('provider: "custom"', title_sec)
         self.assertIn('model: "compress"', title_sec)
         self.assertIn('base_url: "http://muninn:4000/v1"', title_sec)
         self.assertIn('key_env: "MUNINN_MASTER_KEY"', title_sec)
-        self.assertIn('model: "gemini-4-hydrogen-low"', title_sec)
+        self.assertIn('model: "claude-sonnet-5-5-low"', title_sec)
 
-    def test_deploy_yml_sets_hydrogen_allowlist_and_validates_config(self) -> None:
+    def test_deploy_yml_sets_claude_allowlist_and_validates_config(self) -> None:
         deploy_path = ODIN_ROOT / ".github" / "workflows" / "deploy.yml"
         text = deploy_path.read_text(encoding="utf-8")
 
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2013", text)
-        self.assertRegex(text, r"(?m)^\s*AGENT_MODEL:\s*gemini-4-hydrogen-high\s*$")
-        self.assertRegex(text, r"(?m)^\s*HERMES_AGY_ALLOWED_MODELS:\s*gemini-4-hydrogen\s*$")
+        self.assertRegex(text, r"(?m)^\s*AGENT_MODEL:\s*claude-sonnet-5-5-high\s*$")
+        self.assertRegex(text, r"(?m)^\s*HERMES_AGY_ALLOWED_MODELS:\s*claude-sonnet-5-5\s*$")
         self.assertRegex(text, r"(?m)^\s*HERMES_AGY_ALLOWED_EFFORTS:\s*low,medium,high\s*$")
         self.assertIn("Validate Required Configuration", text)
         self.assertIn('[ -z "$HERMES_AGY_ALLOWED_MODELS" ]', text)
@@ -117,6 +128,32 @@ class TestMinimalHermesConfig(unittest.TestCase):
         self.assertNotIn("render_profiles.py", text)
         self.assertNotIn("roles.json", text)
         self.assertNotIn("/opt/data/profiles", text)
+
+    def test_muninn_config_routes_free_gemini38_and_zero_agy_vision(self) -> None:
+        muninn_path = ODIN_ROOT / "config" / "muninn" / "config.yaml.template"
+        text = muninn_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("\u2014", text)
+        self.assertNotIn("\u2013", text)
+        self.assertNotIn("agy-vision:8643", text)
+        self.assertIn("&gemini_38_flash gemini/gemini-3.8-flash", text)
+        self.assertIn("&gemini_35_flash_lite gemini/gemini-3.5-flash-lite", text)
+        self.assertIn("budget_limit: 35.0", text)
+
+        for alias, expected_anchor in (
+            ("memory-extract", "*gemini_38_flash"),
+            ("compress", "&gemini_35_flash_lite gemini/gemini-3.5-flash-lite"),
+            ("app-synthesize", "*gemini_38_flash"),
+            ("gemini-4-hydrogen", "*gemini_38_flash"),
+        ):
+            match = re.search(rf"(?ms)^\s*-\s*model_name:\s*{re.escape(alias)}\b.*?(?=^\s*-\s*model_name:|\Z)", text)
+            self.assertIsNotNone(match, alias)
+            block = match.group(0) if match else ""
+            self.assertIn(f"model: {expected_anchor}", block, alias)
+            self.assertIn("api_key: os.environ/GEMINI_API_KEY", block, alias)
+
+        router_sec = _extract_top_level_yaml_section(text, "router_settings")
+        self.assertRegex(router_sec, r"(?ms)gemini-4-hydrogen:\s*-\s*gemini-3\.5-flash-lite\s*-\s*agent-loop-deepseek")
 
     def test_docker_compose_passes_allowlist_zero_defaults_and_no_muninn_ports(self) -> None:
         compose_path = ODIN_ROOT / "docker-compose.yml"

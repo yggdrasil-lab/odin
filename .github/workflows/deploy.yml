@@ -12,11 +12,12 @@ jobs:
       OLLAMA_BASE_MODEL: qwen3.5:9b
       OLLAMA_MODEL_NAME: local-model:latest
       OLLAMA_CONTEXT_LENGTH: 16384
-      # Minimal single-coordinator Hermes routing:
-      # Odin coordinator and agy-vision are hard-locked to Pool 1 Gemini 4 Hydrogen,
+      # Four-Pool AI Routing (minimal single-coordinator Hermes on Pool 2 Claude):
+      # Odin coordinator (interactive Discord and small crons) is hard-locked to Pool 2 Claude Sonnet 5.5,
       # falling back directly to Muninn (Gemini 3.8 Flash with USD 35/30d cap -> DeepSeek).
-      AGENT_MODEL: gemini-4-hydrogen-high
-      HERMES_AGY_ALLOWED_MODELS: gemini-4-hydrogen
+      # Pool 1 Gemini is reserved strictly for Antigravity IDE.
+      AGENT_MODEL: claude-sonnet-5-5-high
+      HERMES_AGY_ALLOWED_MODELS: claude-sonnet-5-5
       HERMES_AGY_ALLOWED_EFFORTS: low,medium,high
       CHAT_MODEL: local-model:latest
       HERMES_ANTIGRAVITY_CONTEXT_LENGTH: 200000
