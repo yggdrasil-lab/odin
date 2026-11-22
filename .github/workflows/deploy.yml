@@ -118,3 +118,141 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/yggdrasil-lab/yggdrasil-os/main/deploy/deploy.sh -o /tmp/deploy.sh
           chmod +x /tmp/deploy.sh
           /tmp/deploy.sh "odin" docker-compose.yml
+
+      - name: Verify Post-Deploy Swarm Convergence
+        run: |
+          set -euo pipefail
+
+          SERVICES=("odin_huginn-gateway" "odin_huginn-dashboard")
+          CONVERGENCE_TIMEOUT=120
+          POLL_INTERVAL=5
+          DWELL_CHECKS=3
+          DWELL_INTERVAL=10
+
+          dump_diagnostics() {
+            echo "=== Post-Deploy Swarm Diagnostics ===" >&2
+            timeout 10 docker service ls --filter name=odin_ >&2 || true
+            for diag_svc in "${SERVICES[@]}"; do
+              echo "--- docker service ps --no-trunc ${diag_svc} ---" >&2
+              timeout 10 docker service ps "$diag_svc" --no-trunc >&2 || true
+              echo "--- docker service logs --tail 80 ${diag_svc} ---" >&2
+              timeout 15 docker service logs --tail 80 "$diag_svc" >&2 || true
+            done
+          }
+
+          inspect_single_running_task() {
+            local svc="$1"
+            local tasks task_count task_id task_state task_err
+            if ! tasks=$(timeout 10 docker service ps "$svc" --filter desired-state=running --no-trunc --format "{{.ID}}|{{.CurrentState}}|{{.Error}}" 2>&1); then
+              echo "::error::Failed querying docker service ps for ${svc}: ${tasks}" >&2
+              return 1
+            fi
+            if [ -z "$tasks" ]; then
+              echo "Service ${svc} has no desired-running tasks." >&2
+              return 1
+            fi
+            task_count=$(printf '%s\n' "$tasks" | wc -l | tr -d ' ')
+            if [ "$task_count" -ne 1 ]; then
+              echo "Service ${svc} has ${task_count} desired-running tasks (expected 1): ${tasks}" >&2
+              return 1
+            fi
+            IFS='|' read -r task_id task_state task_err <<< "$tasks"
+            if [ -z "$task_id" ]; then
+              echo "Service ${svc} returned empty task ID: ${tasks}" >&2
+              return 1
+            fi
+            case "$task_state" in
+              Running*) ;;
+              *)
+                echo "Service ${svc} task ${task_id} is not Running (state='${task_state}', error='${task_err}')." >&2
+                return 1
+                ;;
+            esac
+            if [ -n "$task_err" ]; then
+              echo "Service ${svc} task ${task_id} reported error: ${task_err}" >&2
+              return 1
+            fi
+            printf '%s\n' "$task_id"
+          }
+
+          echo "Waiting up to ${CONVERGENCE_TIMEOUT}s for critical Odin Swarm services to converge..."
+          DEADLINE=$(( $(date +%s) + CONVERGENCE_TIMEOUT ))
+          BASELINE_IDS=()
+
+          while true; do
+            if ! SVC_LS=$(timeout 10 docker service ls --filter name=odin_ --format "{{.Name}}|{{.Replicas}}" 2>&1); then
+              echo "Warning: docker service ls failed during convergence poll: ${SVC_LS}" >&2
+              SVC_LS=""
+            fi
+
+            ALL_READY=1
+            CANDIDATE_IDS=()
+            for svc in "${SERVICES[@]}"; do
+              if ! printf '%s\n' "$SVC_LS" | grep -qxF "${svc}|1/1"; then
+                ALL_READY=0
+                break
+              fi
+
+              if ! UPDATE_STATE=$(timeout 10 docker service inspect "$svc" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}' 2>&1); then
+                echo "Warning: docker service inspect failed for ${svc}: ${UPDATE_STATE}" >&2
+                ALL_READY=0
+                break
+              fi
+              case "$UPDATE_STATE" in
+                paused|rollback_*)
+                  echo "::error::Service ${svc} entered abnormal Swarm update state '${UPDATE_STATE}'." >&2
+                  dump_diagnostics
+                  exit 1
+                  ;;
+                updating)
+                  ALL_READY=0
+                  break
+                  ;;
+              esac
+
+              if ! TASK_ID=$(inspect_single_running_task "$svc"); then
+                ALL_READY=0
+                break
+              fi
+              CANDIDATE_IDS+=("$TASK_ID")
+            done
+
+            if [ "$ALL_READY" -eq 1 ]; then
+              BASELINE_IDS=("${CANDIDATE_IDS[@]}")
+              break
+            fi
+
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::Post-deploy convergence timed out after ${CONVERGENCE_TIMEOUT}s for Odin critical services." >&2
+              dump_diagnostics
+              exit 1
+            fi
+
+            sleep "$POLL_INTERVAL"
+          done
+
+          echo "Initial 1/1 convergence reached. Running ${DWELL_CHECKS} stability dwell checks (${DWELL_INTERVAL}s apart)..."
+          for i in "${!SERVICES[@]}"; do
+            echo "  baseline ${SERVICES[$i]} -> task ${BASELINE_IDS[$i]}"
+          done
+
+          for check_idx in $(seq 1 "$DWELL_CHECKS"); do
+            sleep "$DWELL_INTERVAL"
+            for i in "${!SERVICES[@]}"; do
+              svc="${SERVICES[$i]}"
+              expected_id="${BASELINE_IDS[$i]}"
+              if ! current_id=$(inspect_single_running_task "$svc"); then
+                echo "::error::Stability dwell check ${check_idx}/${DWELL_CHECKS} failed for ${svc}." >&2
+                dump_diagnostics
+                exit 1
+              fi
+              if [ "$current_id" != "$expected_id" ]; then
+                echo "::error::Task ID churn detected for ${svc} during dwell check ${check_idx}/${DWELL_CHECKS}: expected ${expected_id}, got ${current_id}." >&2
+                dump_diagnostics
+                exit 1
+              fi
+            done
+            echo "Dwell check ${check_idx}/${DWELL_CHECKS} passed (task IDs stable and Running with zero errors)."
+          done
+
+          echo "Post-deploy Swarm convergence and stability verified."
