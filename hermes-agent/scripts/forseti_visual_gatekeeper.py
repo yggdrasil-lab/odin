@@ -56,7 +56,29 @@ VIEWPORT_PIXEL_7 = {
     "user_agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
 }
 
-STANDARD_VIEWPORTS = [VIEWPORT_IPHONE_14, VIEWPORT_PIXEL_7]
+VIEWPORT_DESKTOP = {
+    "name": "desktop",
+    "device": "Desktop",
+    "width": 1280,
+    "height": 800,
+    "scale": 1.0,
+    "is_mobile": False,
+    "has_touch": False,
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+}
+
+STANDARD_VIEWPORTS = [VIEWPORT_IPHONE_14, VIEWPORT_PIXEL_7, VIEWPORT_DESKTOP]
+SCREENSHOT_PLATFORMS: Tuple[str, ...] = ("desktop", "ios", "android")
+PLATFORM_COLUMNS: Dict[str, Tuple[str, str]] = {
+    "desktop": ("Desktop (1280x800)", "Desktop"),
+    "ios": ("iOS (iPhone 14: 390x844)", "iOS"),
+    "android": ("Android (Pixel 7: 412x915)", "Android"),
+}
+CHECKLIST_COMMON_ITEMS: Tuple[str, ...] = (
+    "- [x] Modal stacking, portal mounting, and background opacity audited.",
+    "- [x] Fixed bottom navigation and safe-area touch targets preserved.",
+    "- [x] Zero em/en dashes across layout copy.",
+)
 
 VAULT_ROOT_CANDIDATES = (
     Path("/app/vault"),
@@ -107,19 +129,18 @@ def resolve_visual_gate_script(vault_path: Optional[Path] = None) -> Path:
 def resolve_repo_path(repo_arg: str, vault_path: Optional[Path] = None) -> Path:
     """Resolve a repository name or path to an absolute Path."""
     vault = vault_path or resolve_vault_path()
-    cleaned = repo_arg.strip().strip("/")
+    raw = repo_arg.strip()
+    if not raw:
+        raise ValueError(f"Could not resolve repository path for '{repo_arg}'.")
+    cleaned = raw.rstrip("/") or "/"
 
-    # Check if absolute path
     as_path = Path(cleaned)
-    if as_path.is_absolute() and as_path.is_dir():
-        return as_path.resolve()
+    if as_path.is_absolute():
+        if as_path.is_dir():
+            return as_path.resolve()
+        raise ValueError(f"Could not resolve repository path for '{repo_arg}'. Checked: {as_path}")
 
-    # Check relative to vault/Forge/ or vault/ first
-    if cleaned.startswith("Forge/"):
-        vault_forge = vault / cleaned
-    else:
-        vault_forge = vault / "Forge" / cleaned
-
+    vault_forge = vault / cleaned if cleaned.startswith("Forge/") else vault / "Forge" / cleaned
     if vault_forge.is_dir():
         return vault_forge.resolve()
 
@@ -127,7 +148,6 @@ def resolve_repo_path(repo_arg: str, vault_path: Optional[Path] = None) -> Path:
     if direct_vault.is_dir():
         return direct_vault.resolve()
 
-    # Check relative to current working directory
     rel_path = Path.cwd() / cleaned
     if rel_path.is_dir():
         return rel_path.resolve()
@@ -214,8 +234,8 @@ def capture_browserless_screenshot(
             "width": int(viewport.get("width", 390)),
             "height": int(viewport.get("height", 844)),
             "deviceScaleFactor": float(viewport.get("scale", 2.0)),
-            "isMobile": True,
-            "hasTouch": True,
+            "isMobile": bool(viewport.get("is_mobile", True)),
+            "hasTouch": bool(viewport.get("has_touch", True)),
         },
         "options": {
             "type": "png",
@@ -257,49 +277,21 @@ def capture_browserless_screenshot(
 
 
 def discover_screenshots(repo_path: Path) -> Dict[str, Dict[str, Path]]:
-    """Scan the repository for captured mobile snapshots in screenshots/ios and screenshots/android."""
-    possible_roots = [
-        repo_path / "screenshots",
-        repo_path / "web" / "screenshots",
-    ]
-
-    screenshots_root: Optional[Path] = None
-    for candidate in possible_roots:
-        if candidate.is_dir():
-            screenshots_root = candidate
-            break
-
+    """Scan the repository for captured snapshots in screenshots/{desktop,ios,android}."""
+    possible_roots = (repo_path / "screenshots", repo_path / "web" / "screenshots")
+    screenshots_root = next((candidate for candidate in possible_roots if candidate.is_dir()), None)
     if not screenshots_root:
         return {}
 
-    ios_dir = screenshots_root / "ios"
-    android_dir = screenshots_root / "android"
-
-    all_slugs: set[str] = set()
-    ios_files: Dict[str, Path] = {}
-    android_files: Dict[str, Path] = {}
-
-    if ios_dir.is_dir():
-        for p in sorted(ios_dir.glob("*.png")):
-            slug = p.stem
-            all_slugs.add(slug)
-            ios_files[slug] = p
-
-    if android_dir.is_dir():
-        for p in sorted(android_dir.glob("*.png")):
-            slug = p.stem
-            all_slugs.add(slug)
-            android_files[slug] = p
-
     results: Dict[str, Dict[str, Path]] = {}
-    for slug in sorted(all_slugs):
-        results[slug] = {}
-        if slug in ios_files:
-            results[slug]["ios"] = ios_files[slug]
-        if slug in android_files:
-            results[slug]["android"] = android_files[slug]
+    for platform in SCREENSHOT_PLATFORMS:
+        platform_dir = screenshots_root / platform
+        if not platform_dir.is_dir():
+            continue
+        for png_path in sorted(platform_dir.glob("*.png")):
+            results.setdefault(png_path.stem, {})[platform] = png_path
 
-    return results
+    return {slug: results[slug] for slug in sorted(results)}
 
 
 def run_visual_test_harness(
@@ -335,6 +327,35 @@ def run_visual_test_harness(
         return False, err_msg
 
 
+def _active_platforms(screenshots_map: Dict[str, Dict[str, Path]]) -> Tuple[str, ...]:
+    """Return active viewport platforms, including desktop when desktop snapshots are present."""
+    has_desktop = any("desktop" in platforms for platforms in screenshots_map.values())
+    return SCREENSHOT_PLATFORMS if has_desktop else ("ios", "android")
+
+
+def _build_comparison_table(
+    screenshots_map: Dict[str, Dict[str, Path]],
+    active_platforms: Tuple[str, ...],
+) -> List[str]:
+    """Build markdown comparison rows across active viewport platforms."""
+    headers = " | ".join(PLATFORM_COLUMNS[p][0] for p in active_platforms)
+    aligns = " | ".join(":---:" for _ in active_platforms)
+    heading = "### Side-by-Side Visual Progression" if "desktop" in active_platforms else "### Side-by-Side Mobile Progression"
+    table_lines = [heading, "", f"| Screen / Interaction | {headers} | Status |", f"| :--- | {aligns} | :---: |"]
+    for slug, platforms in sorted(screenshots_map.items()):
+        label = slug.replace("-", " ").replace("_", " ").title()
+        cells = [
+            f"![{PLATFORM_COLUMNS[p][1]} {slug}](Screenshots/{p}/{platforms[p].name})"
+            if platforms.get(p)
+            else "*Missing*"
+            for p in active_platforms
+        ]
+        row_status = "Pass" if all(platforms.get(p) for p in active_platforms) else "Missing"
+        table_lines.append(f"| **{label}** | {' | '.join(cells)} | {row_status} |")
+    table_lines.append("")
+    return table_lines
+
+
 def generate_side_by_side_markdown(
     repo_name: str,
     screenshots_map: Dict[str, Dict[str, Path]],
@@ -346,59 +367,33 @@ def generate_side_by_side_markdown(
     """Generate standardized GitHub PR comment and Obsidian comparison markdown."""
     b_url = browserless_url or resolve_browserless_url()
     status_str = "PASSED" if test_passed else "FAILED"
-    status_badge = "Pass" if test_passed else "Fail"
-
-    lines: List[str] = []
-    lines.append(f"## Forseti Mobile Visual Gate Report ({status_str})")
-    lines.append("")
-    lines.append(f"- **Repository**: `yggdrasil-lab/{repo_name}`")
-    if pr_number:
-        lines.append(f"- **Pull Request**: #{pr_number}")
-    lines.append(f"- **Status**: `{status_str}`")
-    lines.append(f"- **Renderer**: Poseidon Browserless (`{b_url}`)")
-    lines.append("- **Target Viewports**: iOS (`iPhone 14`, 390x844) vs Android (`Pixel 7`, 412x915)")
-    lines.append("")
-
+    active_platforms = _active_platforms(screenshots_map)
+    has_desktop = "desktop" in active_platforms
+    target_desc = (
+        "Desktop (1280x800), iOS (`iPhone 14`, 390x844), Android (`Pixel 7`, 412x915)"
+        if has_desktop
+        else "iOS (`iPhone 14`, 390x844) vs Android (`Pixel 7`, 412x915)"
+    )
+    lines: List[str] = [
+        f"## Forseti Mobile Visual Gate Report ({status_str})",
+        "",
+        f"- **Repository**: `yggdrasil-lab/{repo_name}`",
+        *([f"- **Pull Request**: #{pr_number}"] if pr_number else []),
+        f"- **Status**: `{status_str}`",
+        f"- **Renderer**: Poseidon Browserless (`{b_url}`)",
+        f"- **Target Viewports**: {target_desc}",
+        "",
+    ]
     if not screenshots_map:
-        lines.append("> [!WARNING]")
-        lines.append("> Zero visual snapshots were discovered in repository `screenshots/` directory.")
-        lines.append("")
+        lines.extend(["> [!WARNING]", "> Zero visual snapshots were discovered in repository `screenshots/` directory.", ""])
     else:
-        lines.append("### Side-by-Side Mobile Progression")
-        lines.append("")
-        lines.append("| Screen / Interaction | iOS (iPhone 14: 390x844) | Android (Pixel 7: 412x915) | Status |")
-        lines.append("| :--- | :---: | :---: | :---: |")
+        lines.extend(_build_comparison_table(screenshots_map, active_platforms))
 
-        for slug, platforms in sorted(screenshots_map.items()):
-            label = slug.replace("-", " ").replace("_", " ").title()
-            ios_path = platforms.get("ios")
-            android_path = platforms.get("android")
-
-            ios_md = f"![iOS {slug}](Screenshots/ios/{ios_path.name})" if ios_path else "*Missing*"
-            android_md = f"![Android {slug}](Screenshots/android/{android_path.name})" if android_path else "*Missing*"
-
-            row_status = "Pass" if (ios_path and android_path) else "Missing"
-            lines.append(f"| **{label}** | {ios_md} | {android_md} | {row_status} |")
-
-        lines.append("")
-
-    lines.append("### Verification Checklist")
-    lines.append("- [x] Mobile viewport dimensions verified (iPhone 14: 390x844, Pixel 7: 412x915).")
-    lines.append("- [x] Modal stacking, portal mounting, and background opacity audited.")
-    lines.append("- [x] Fixed bottom navigation and safe-area touch targets preserved.")
-    lines.append("- [x] Zero em/en dashes across layout copy.")
-    lines.append("")
-
+    vp_check = "Desktop: 1280x800, iPhone 14: 390x844, Pixel 7: 412x915" if has_desktop else "iPhone 14: 390x844, Pixel 7: 412x915"
+    lines.extend(["### Verification Checklist", f"- [x] Viewport dimensions verified ({vp_check}).", *CHECKLIST_COMMON_ITEMS, ""])
     if not test_passed and test_output:
-        lines.append("### Failure Telemetry")
-        lines.append("```text")
-        # Tail last 20 lines of failure output
         out_lines = test_output.strip().splitlines()
-        tail = out_lines[-20:] if len(out_lines) > 20 else out_lines
-        lines.extend(tail)
-        lines.append("```")
-        lines.append("")
-
+        lines.extend(["### Failure Telemetry", "```text", *(out_lines[-20:] if len(out_lines) > 20 else out_lines), "```", ""])
     return "\n".join(lines)
 
 
@@ -432,28 +427,24 @@ def sync_snapshots_to_obsidian(
     markdown_report: str,
     vault_path: Optional[Path] = None,
 ) -> Tuple[int, Path]:
-    """Sync captured mobile screenshots and review note to Obsidian Second Brain."""
+    """Sync captured desktop and mobile screenshots and review note to Obsidian Second Brain."""
     vault = vault_path or resolve_vault_path()
     stack_name = repo_name.capitalize()
     target_area = vault / "second-brain" / "Areas" / "90-Infrastructure" / stack_name
     target_screenshots = target_area / "Screenshots"
 
-    target_ios = target_screenshots / "ios"
-    target_android = target_screenshots / "android"
-    target_ios.mkdir(parents=True, exist_ok=True)
-    target_android.mkdir(parents=True, exist_ok=True)
+    for platform in ("ios", "android"):
+        (target_screenshots / platform).mkdir(parents=True, exist_ok=True)
 
     copied = 0
-    for slug, platforms in screenshots_map.items():
-        ios_src = platforms.get("ios")
-        if ios_src and ios_src.is_file():
-            shutil.copy2(ios_src, target_ios / ios_src.name)
-            copied += 1
-
-        android_src = platforms.get("android")
-        if android_src and android_src.is_file():
-            shutil.copy2(android_src, target_android / android_src.name)
-            copied += 1
+    for platforms in screenshots_map.values():
+        for platform in SCREENSHOT_PLATFORMS:
+            src = platforms.get(platform)
+            if src and src.is_file():
+                dest_dir = target_screenshots / platform
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest_dir / src.name)
+                copied += 1
 
     review_note = target_area / f"{stack_name} PWA Visual Review.md"
     review_note.write_text(markdown_report, encoding="utf-8")
@@ -535,7 +526,7 @@ def main() -> int:
         else run_visual_test_harness(repo_path=repo_path, browserless_ws=ws_endpoint, sync_vault=args.sync_vault)
     )
     screenshots_map = discover_screenshots(repo_path)
-    logger.info("Discovered %d screenshot flows across iOS and Android", len(screenshots_map))
+    logger.info("Discovered %d screenshot flows across desktop, iOS, and Android", len(screenshots_map))
 
     pr_num = _resolve_pr_number(args.pr_number, args.pr_url)
     markdown_report = generate_side_by_side_markdown(

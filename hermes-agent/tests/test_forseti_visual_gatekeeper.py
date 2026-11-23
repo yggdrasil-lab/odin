@@ -19,6 +19,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from forseti_visual_gatekeeper import (
+    VIEWPORT_DESKTOP,
     VIEWPORT_IPHONE_14,
     VIEWPORT_PIXEL_7,
     capture_browserless_screenshot,
@@ -52,6 +53,11 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         self.assertEqual(VIEWPORT_PIXEL_7["height"], 915)
         self.assertEqual(VIEWPORT_PIXEL_7["name"], "android")
 
+        self.assertEqual(VIEWPORT_DESKTOP["width"], 1280)
+        self.assertEqual(VIEWPORT_DESKTOP["height"], 800)
+        self.assertEqual(VIEWPORT_DESKTOP["name"], "desktop")
+        self.assertFalse(VIEWPORT_DESKTOP["is_mobile"])
+
     def test_resolve_browserless_endpoints(self) -> None:
         """Verify URL and WebSocket endpoint conversions."""
         with patch.dict(os.environ, {"BROWSERLESS_URL": "http://poseidon_browserless:3000"}):
@@ -75,8 +81,17 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         res2 = resolve_repo_path("Forge/ui", vault_path=vault)
         self.assertEqual(res2, ui_repo.resolve())
 
+        worktree_repo = Path(self.temp_dir) / "midas-verify" / "midas"
+        worktree_repo.mkdir(parents=True)
+        self.assertEqual(resolve_repo_path(str(worktree_repo), vault_path=vault), worktree_repo.resolve())
+        self.assertEqual(resolve_repo_path(f"{worktree_repo}/", vault_path=vault), worktree_repo.resolve())
+
         with self.assertRaises(ValueError):
             resolve_repo_path("non_existent_stack", vault_path=vault)
+        with self.assertRaises(ValueError):
+            resolve_repo_path(str(Path(self.temp_dir) / "missing-worktree" / "midas"), vault_path=vault)
+        with self.assertRaises(ValueError):
+            resolve_repo_path("   ", vault_path=vault)
 
     def test_probe_browserless_health_success(self) -> None:
         """Verify health check returns reachable when pressure JSON is returned."""
@@ -148,6 +163,53 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         self.assertIn("02-tactile-keypad", discovered)
         self.assertIn("ios", discovered["02-tactile-keypad"])
         self.assertNotIn("android", discovered["02-tactile-keypad"])
+
+    def test_discover_screenshots_with_desktop(self) -> None:
+        """Verify discovery of screenshots across desktop, iOS, and Android directories."""
+        repo = Path(self.temp_dir)
+        screenshots = repo / "screenshots"
+        for platform in ("desktop", "ios", "android"):
+            (screenshots / platform).mkdir(parents=True)
+
+        (screenshots / "desktop" / "01-dashboard.png").write_bytes(b"desktop")
+        (screenshots / "ios" / "01-dashboard.png").write_bytes(b"ios")
+        (screenshots / "android" / "01-dashboard.png").write_bytes(b"android")
+        (screenshots / "ios" / "02-modal.png").write_bytes(b"ios")
+
+        discovered = discover_screenshots(repo)
+        self.assertEqual(set(discovered["01-dashboard"].keys()), {"desktop", "ios", "android"})
+        self.assertEqual(set(discovered["02-modal"].keys()), {"ios"})
+
+    def test_generate_side_by_side_markdown_with_desktop(self) -> None:
+        """Verify desktop (1280x800) comparison column renders alongside iOS and Android."""
+        discovered = {
+            "01-dashboard": {
+                "desktop": Path("/tmp/desktop/01-dashboard.png"),
+                "ios": Path("/tmp/ios/01-dashboard.png"),
+                "android": Path("/tmp/android/01-dashboard.png"),
+            },
+            "02-modal": {
+                "ios": Path("/tmp/ios/02-modal.png"),
+                "android": Path("/tmp/android/02-modal.png"),
+            },
+        }
+        md = generate_side_by_side_markdown(
+            repo_name="midas",
+            screenshots_map=discovered,
+            pr_number="42",
+            test_passed=True,
+        )
+
+        self.assertIn("Desktop (1280x800)", md)
+        self.assertIn("![Desktop 01-dashboard](Screenshots/desktop/01-dashboard.png)", md)
+        self.assertIn("![iOS 01-dashboard](Screenshots/ios/01-dashboard.png)", md)
+        self.assertIn("![Android 01-dashboard](Screenshots/android/01-dashboard.png)", md)
+        self.assertIn("| **01 Dashboard** | ![Desktop 01-dashboard](Screenshots/desktop/01-dashboard.png) |", md)
+        self.assertIn("| **02 Modal** | *Missing* |", md)
+        self.assertIn("| Pass |", md)
+        self.assertIn("| Missing |", md)
+        self.assertNotIn("\u2014", md)
+        self.assertNotIn("\u2013", md)
 
     def test_generate_side_by_side_markdown_passed(self) -> None:
         """Verify generated markdown table formatting and zero em/en dashes."""
@@ -222,6 +284,32 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
 
         target_ios = vault / "second-brain" / "Areas" / "90-Infrastructure" / "Ui" / "Screenshots" / "ios" / "01-app-shell.png"
         self.assertTrue(target_ios.is_file())
+
+    def test_sync_snapshots_to_obsidian_includes_desktop(self) -> None:
+        """Verify syncing desktop, iOS, and Android snapshots into Obsidian Second Brain."""
+        vault = Path(self.temp_dir)
+        repo_dir = vault / "Forge" / "midas"
+        shots_dir = repo_dir / "screenshots"
+        for platform in ("desktop", "ios", "android"):
+            (shots_dir / platform).mkdir(parents=True)
+            (shots_dir / platform / "01-home.png").write_bytes(f"fake_{platform}".encode("utf-8"))
+
+        discovered = {
+            "01-home": {
+                platform: shots_dir / platform / "01-home.png"
+                for platform in ("desktop", "ios", "android")
+            }
+        }
+        copied, note_path = sync_snapshots_to_obsidian(
+            repo_name="midas",
+            screenshots_map=discovered,
+            markdown_report="## Visual Report",
+            vault_path=vault,
+        )
+        self.assertEqual(copied, 3)
+        self.assertTrue(note_path.is_file())
+        dest_desktop = vault / "second-brain" / "Areas" / "90-Infrastructure" / "Midas" / "Screenshots" / "desktop" / "01-home.png"
+        self.assertTrue(dest_desktop.is_file())
 
     def test_resolve_visual_gate_script_container_vault_root(self) -> None:
         """Verify container /app/vault resolution to Court of Odin skills."""
