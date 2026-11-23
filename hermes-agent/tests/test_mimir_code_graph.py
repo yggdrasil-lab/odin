@@ -7,8 +7,10 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Add scripts directory to path
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +27,9 @@ from mimir_code_graph import (
     init_mimir_db,
     index_all,
     index_repository,
+    main,
+    refresh_index_if_stale,
+    resolve_max_index_age_seconds,
     resolve_mimir_db_path,
     resolve_vault_path,
     search_symbols,
@@ -212,6 +217,94 @@ class DBS_Statement_Parser:
         self.assertEqual(stats["total_files"], 1)
         self.assertIn("midas", stats["by_repo"])
         self.assertIn("component", stats["by_kind"])
+
+    def test_refresh_index_if_stale_triggers_over_24h_and_skips_when_fresh(self) -> None:
+        """Verify stale DB (>24h) auto-refreshes incrementally and fresh DB (<24h) skips."""
+        vault = Path(self.temp_dir)
+        repo_dir = vault / "Forge" / "kratos"
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "engine.py").write_text("def initial_symbol():\n    return 1\n", encoding="utf-8")
+
+        db_path = vault / "mimir_symbols.db"
+        index_all(vault, db_path, force=False)
+
+        # Fresh DB (<24h) should skip re-indexing even when a new file exists
+        (repo_dir / "added.py").write_text("def fresh_skipped_symbol():\n    return 2\n", encoding="utf-8")
+        now = time.time()
+        os.utime(db_path, (now - 3600, now - 3600))  # 1 hour old
+        self.assertFalse(refresh_index_if_stale(vault, db_path, now=now))
+        self.assertEqual(search_symbols(db_path, "fresh_skipped_symbol", exact=True), [])
+
+        # Stale DB (>24h) should trigger incremental re-index and pick up new symbol
+        stale_mtime = now - (25 * 3600)
+        os.utime(db_path, (stale_mtime, stale_mtime))
+        self.assertTrue(refresh_index_if_stale(vault, db_path, now=now))
+
+        matches = search_symbols(db_path, "fresh_skipped_symbol", exact=True)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["repo"], "kratos")
+
+        # DB mtime must be updated even when subsequent check finds zero file diffs
+        os.utime(db_path, (stale_mtime, stale_mtime))
+        self.assertTrue(refresh_index_if_stale(vault, db_path, now=now))
+        self.assertGreater(db_path.stat().st_mtime, stale_mtime)
+
+    def test_refresh_index_if_stale_env_and_failsafe(self) -> None:
+        """Verify MIMIR_MAX_INDEX_AGE_HOURS config and fail-safe handling on read-only/errors."""
+        vault = Path(self.temp_dir)
+        db_path = vault / "missing.db"
+        self.assertFalse(refresh_index_if_stale(vault, db_path))
+
+        with patch.dict(os.environ, {"MIMIR_MAX_INDEX_AGE_HOURS": "2"}, clear=False):
+            self.assertEqual(resolve_max_index_age_seconds(), 7200.0)
+        with patch.dict(os.environ, {"MIMIR_MAX_INDEX_AGE_HOURS": "0"}, clear=False):
+            self.assertIsNone(resolve_max_index_age_seconds())
+        with patch.dict(os.environ, {"MIMIR_MAX_INDEX_AGE_HOURS": "not-a-number"}, clear=False):
+            self.assertEqual(resolve_max_index_age_seconds(), 86400.0)
+
+        repo_dir = vault / "Forge" / "odin"
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "mod.py").write_text("def resilient_query_symbol():\n    pass\n", encoding="utf-8")
+        db_path = vault / "ro.db"
+        index_all(vault, db_path, force=False)
+        stale_mtime = time.time() - (26 * 3600)
+        os.utime(db_path, (stale_mtime, stale_mtime))
+
+        # Read-only DB must skip without crashing
+        with patch("os.access", return_value=False):
+            self.assertFalse(refresh_index_if_stale(vault, db_path))
+
+        # Indexing exception must be swallowed safely
+        with patch("mimir_code_graph.index_all", side_effect=RuntimeError("disk full")):
+            self.assertFalse(refresh_index_if_stale(vault, db_path))
+
+    def test_cli_query_auto_refreshes_unless_disabled(self) -> None:
+        """Verify CLI symbol queries auto-refresh stale DB unless --no-auto-refresh or --index is used."""
+        vault = Path(self.temp_dir)
+        repo_dir = vault / "Forge" / "iris"
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "base.py").write_text("def base_handler():\n    pass\n", encoding="utf-8")
+        db_path = vault / "cli_mimir.db"
+        index_all(vault, db_path, force=False)
+
+        (repo_dir / "new_route.py").write_text("def newly_added_cli_symbol():\n    pass\n", encoding="utf-8")
+        stale_mtime = time.time() - (30 * 3600)
+        os.utime(db_path, (stale_mtime, stale_mtime))
+
+        env = {"VAULT": str(vault), "MIMIR_DB_PATH": str(db_path)}
+        with patch.dict(os.environ, env, clear=False):
+            with patch.object(sys, "argv", ["mimir-code", "newly_added_cli_symbol", "--no-auto-refresh", "--json"]):
+                self.assertEqual(main(), 0)
+            self.assertEqual(search_symbols(db_path, "newly_added_cli_symbol", exact=True), [])
+
+            with patch.object(sys, "argv", ["mimir-code", "newly_added_cli_symbol", "--json"]):
+                self.assertEqual(main(), 0)
+            self.assertEqual(len(search_symbols(db_path, "newly_added_cli_symbol", exact=True)), 1)
+
+            with patch("mimir_code_graph.refresh_index_if_stale") as mock_refresh:
+                with patch.object(sys, "argv", ["mimir-code", "--index", "--json"]):
+                    self.assertEqual(main(), 0)
+                mock_refresh.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -65,6 +65,9 @@ PYTHON_EXTS = {".py"}
 TS_JS_EXTS = {".ts", ".tsx", ".js", ".jsx"}
 DOC_EXTS = {".md"}
 
+DEFAULT_MAX_INDEX_AGE_HOURS = 24.0
+SECONDS_PER_HOUR = 3600.0
+
 
 @dataclass
 class CodeSymbol:
@@ -784,8 +787,75 @@ def get_index_stats(db_path: Path) -> Dict[str, Any]:
     }
 
 
-def main() -> int:
-    """CLI Entry point for Mimir Code Graph."""
+def resolve_max_index_age_seconds(max_age_hours: Optional[float] = None) -> Optional[float]:
+    """Return max allowed DB age in seconds, or None when auto-refresh is disabled."""
+    if max_age_hours is None:
+        raw = os.environ.get("MIMIR_MAX_INDEX_AGE_HOURS", "").strip()
+        if not raw:
+            return DEFAULT_MAX_INDEX_AGE_HOURS * SECONDS_PER_HOUR
+        try:
+            hours = float(raw)
+        except ValueError:
+            logger.warning("Invalid MIMIR_MAX_INDEX_AGE_HOURS=%r; using %.1fh default.", raw, DEFAULT_MAX_INDEX_AGE_HOURS)
+            return DEFAULT_MAX_INDEX_AGE_HOURS * SECONDS_PER_HOUR
+    else:
+        hours = float(max_age_hours)
+
+    if hours <= 0:
+        return None
+    return hours * SECONDS_PER_HOUR
+
+
+def refresh_index_if_stale(
+    vault_root: Path,
+    db_path: Path,
+    max_age_hours: Optional[float] = None,
+    now: Optional[float] = None,
+) -> bool:
+    """Incrementally re-index when an existing DB is older than max_age_hours; fail-safe on errors."""
+    if not db_path.is_file():
+        return False
+
+    max_age_seconds = resolve_max_index_age_seconds(max_age_hours)
+    if max_age_seconds is None:
+        return False
+
+    try:
+        db_mtime = db_path.stat().st_mtime
+    except OSError as exc:
+        logger.warning("Could not stat Mimir DB %s: %s; skipping auto-refresh.", db_path, exc)
+        return False
+
+    current_time = time.time() if now is None else now
+    age_seconds = current_time - db_mtime
+    if age_seconds <= max_age_seconds:
+        return False
+
+    if not os.access(db_path, os.W_OK) or not os.access(db_path.parent, os.W_OK):
+        logger.warning(
+            "Mimir DB %s is %.1fh old but not writable; skipping auto-refresh.",
+            db_path,
+            age_seconds / SECONDS_PER_HOUR,
+        )
+        return False
+
+    logger.info(
+        "Mimir DB %s is %.1fh old (>%.1fh); running incremental auto-refresh.",
+        db_path,
+        age_seconds / SECONDS_PER_HOUR,
+        max_age_seconds / SECONDS_PER_HOUR,
+    )
+    try:
+        index_all(vault_root, db_path, force=False)
+        os.utime(db_path, None)
+        return True
+    except (OSError, sqlite3.Error, Exception) as exc:
+        logger.warning("Auto-refresh failed for %s: %s; continuing with existing index.", db_path, exc)
+        return False
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build CLI argument parser for Mimir Code Graph."""
     parser = argparse.ArgumentParser(
         description="Mimir Cross-Repo Code Graph & Symbol Navigator (Pillar 4)"
     )
@@ -798,41 +868,72 @@ def main() -> int:
     parser.add_argument("--index", action="store_true", help="Run incremental code symbol indexing across Forge & vault")
     parser.add_argument("--reindex", action="store_true", help="Force complete rebuild of code symbol index")
     parser.add_argument("--stats", action="store_true", help="Display index statistics and breakdown")
+    parser.add_argument("--no-auto-refresh", action="store_true", help="Skip automatic incremental re-index when DB is stale")
+    return parser
 
+
+def _handle_index_command(vault_root: Path, db_path: Path, force: bool, output_json: bool) -> int:
+    """Execute --index or --reindex command and print summary."""
+    res = index_all(vault_root, db_path, force=force)
+    if output_json:
+        print(json.dumps(res, indent=2))
+        return 0
+    print(f"[mimir-code] Indexed {res['files_indexed']} files and {res['symbols_indexed']} symbols in {res['elapsed_ms']:.1f}ms")
+    for r, c in sorted(res["repositories"].items(), key=lambda x: -x[1])[:10]:
+        print(f"  - {r}: {c} symbols")
+    return 0
+
+
+def _handle_stats_command(db_path: Path, output_json: bool) -> int:
+    """Display symbol index statistics."""
+    stats = get_index_stats(db_path)
+    if output_json:
+        print(json.dumps(stats, indent=2))
+        return 0
+    print("[mimir-code] Index Statistics:")
+    print(f"  Database:      {db_path}")
+    print(f"  Total Symbols: {stats.get('total_symbols', 0):,}")
+    print(f"  Total Files:   {stats.get('total_files', 0):,}")
+    print("\n  Top Repositories:")
+    for r, c in list(stats.get("by_repo", {}).items())[:10]:
+        print(f"    - {r:<18} {c:>5} symbols")
+    print("\n  Symbol Kinds:")
+    for k, c in list(stats.get("by_kind", {}).items()):
+        print(f"    - {k:<18} {c:>5}")
+    return 0
+
+
+def _print_search_results(query: str, matches: List[Dict[str, Any]], search_ms: float) -> None:
+    """Format and print symbol search results."""
+    if not matches:
+        print(f"[mimir-code] No symbols found for '{query}' in {search_ms:.1f}ms.")
+        return
+
+    print(f"[mimir-code] Found {len(matches)} symbols in {search_ms:.1f}ms:\n")
+    for idx, sym in enumerate(matches, 1):
+        print(f"{idx}. {sym['name']} ({sym['kind']})")
+        print(f"   Repo: {sym['repo']}")
+        print(f"   Path: {sym['file_path']}:{sym['line_number']}")
+        if sym.get("signature") and sym["signature"] != sym["name"]:
+            print(f"   Sig:  {sym['signature']}")
+        if sym.get("docstring"):
+            print(f"   Doc:  {sym['docstring']}")
+        print("")
+
+
+def main() -> int:
+    """CLI Entry point for Mimir Code Graph."""
+    parser = _build_arg_parser()
     args = parser.parse_args()
-
     vault_root = resolve_vault_path()
     db_path = resolve_mimir_db_path()
 
     if args.reindex or args.index:
-        res = index_all(vault_root, db_path, force=args.reindex)
-        if args.output_json:
-            print(json.dumps(res, indent=2))
-        else:
-            print(f"[mimir-code] Indexed {res['files_indexed']} files and {res['symbols_indexed']} symbols in {res['elapsed_ms']:.1f}ms")
-            for r, c in sorted(res['repositories'].items(), key=lambda x: -x[1])[:10]:
-                print(f"  - {r}: {c} symbols")
-        return 0
-
+        return _handle_index_command(vault_root, db_path, force=args.reindex, output_json=args.output_json)
     if args.stats:
-        stats = get_index_stats(db_path)
-        if args.output_json:
-            print(json.dumps(stats, indent=2))
-        else:
-            print("[mimir-code] Index Statistics:")
-            print(f"  Database:      {db_path}")
-            print(f"  Total Symbols: {stats.get('total_symbols', 0):,}")
-            print(f"  Total Files:   {stats.get('total_files', 0):,}")
-            print("\n  Top Repositories:")
-            for r, c in list(stats.get("by_repo", {}).items())[:10]:
-                print(f"    - {r:<18} {c:>5} symbols")
-            print("\n  Symbol Kinds:")
-            for k, c in list(stats.get("by_kind", {}).items()):
-                print(f"    - {k:<18} {c:>5}")
-        return 0
+        return _handle_stats_command(db_path, output_json=args.output_json)
 
     if not args.query:
-        # If no query provided and index is empty, suggest running --index
         stats = get_index_stats(db_path)
         if stats.get("total_symbols", 0) == 0:
             print("[mimir-code] Index is empty. Run 'mimir-code --index' to build the cross-repo symbol graph.")
@@ -840,44 +941,19 @@ def main() -> int:
         parser.print_help()
         return 0
 
+    if not args.no_auto_refresh:
+        refresh_index_if_stale(vault_root=vault_root, db_path=db_path)
+
     start_search = time.time()
     matches = search_symbols(
-        db_path=db_path,
-        query=args.query,
-        repo=args.repo,
-        kind=args.kind,
-        limit=args.limit,
-        exact=args.exact,
+        db_path=db_path, query=args.query, repo=args.repo, kind=args.kind, limit=args.limit, exact=args.exact
     )
     search_ms = (time.time() - start_search) * 1000.0
 
     if args.output_json:
         print(json.dumps(matches, indent=2))
         return 0
-
-    if not matches:
-        print(f"[mimir-code] No symbols found for '{args.query}' in {search_ms:.1f}ms.")
-        return 0
-
-    print(f"[mimir-code] Found {len(matches)} symbols in {search_ms:.1f}ms:\n")
-    for idx, sym in enumerate(matches, 1):
-        name = sym["name"]
-        kind = sym["kind"]
-        repo = sym["repo"]
-        file_path = sym["file_path"]
-        line = sym["line_number"]
-        sig = sym.get("signature") or ""
-        doc = sym.get("docstring") or ""
-
-        print(f"{idx}. {name} ({kind})")
-        print(f"   Repo: {repo}")
-        print(f"   Path: {file_path}:{line}")
-        if sig and sig != name:
-            print(f"   Sig:  {sig}")
-        if doc:
-            print(f"   Doc:  {doc}")
-        print("")
-
+    _print_search_results(args.query, matches, search_ms)
     return 0
 
 
