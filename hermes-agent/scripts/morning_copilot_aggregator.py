@@ -54,6 +54,7 @@ logger = logging.getLogger("morning-copilot")
 DEFAULT_EIR_URL = os.environ.get("EIR_API_URL", "http://eir-api:8000")
 DEFAULT_KRATOS_URL = os.environ.get("KRATOS_API_URL", "http://kratos-api:8000")
 DEFAULT_PLUTUS_URL = os.environ.get("PLUTUS_API_URL", "http://plutus-api:8000")
+DEFAULT_CHRONOS_URL = os.environ.get("CHRONOS_API_URL", "http://chronos-api:8000")
 DEFAULT_HUGINN_URL = os.environ.get("HUGINN_GATEWAY_URL", "http://huginn-gateway:8642")
 
 OBSIDIAN_VAULT_PATH = os.environ.get(
@@ -519,7 +520,268 @@ def fetch_plutus_telemetry(base_url: str, as_of_date: str) -> PlutusTelemetry:
 
 
 # ----------------------------------------------------------------------
-# 4. ODIN Swarm Health & Overlay IPAM
+# 4. CHRONOS Schedule, Exceptions & Habit Signals
+# ----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ChronosCommitment:
+    title: str
+    start_minute: Optional[int] = None
+    end_minute: Optional[int] = None
+    all_day: bool = False
+    source: str = ""
+    tentative: bool = False
+    has_conflict: bool = False
+    notes: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ChronosGridException:
+    action: str
+    grid_block_id: Optional[int] = None
+    new_start_minute: Optional[int] = None
+    new_end_minute: Optional[int] = None
+    extension_count: int = 0
+    notes: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ChronosWorkoutHydration:
+    status: str = "unknown"
+    planned_routine_name: Optional[str] = None
+    planned_day_of_week: Optional[str] = None
+    completed_sessions: int = 0
+    attached_grid_block_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ChronosFrictionNote:
+    tag: str = ""
+    note: str = ""
+    habit_cue_id: Optional[int] = None
+    grid_block_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ChronosPassiveSignal:
+    cue_title: str
+    rule_key: str
+    observed: bool
+    fact_label: str = ""
+    peer_status: str = ""
+
+
+@dataclass(frozen=True)
+class ChronosSummary:
+    date: str = ""
+    yesterday: str = ""
+    available: bool = False
+    commitments: Tuple[ChronosCommitment, ...] = ()
+    tentative_count: int = 0
+    conflict_count: int = 0
+    grid_exceptions: Tuple[ChronosGridException, ...] = ()
+    workout_hydration: Optional[ChronosWorkoutHydration] = None
+    yesterday_friction_notes: Tuple[ChronosFrictionNote, ...] = ()
+    yesterday_passive_signals: Tuple[ChronosPassiveSignal, ...] = ()
+    degraded_peers: Tuple[str, ...] = ()
+
+
+def _validate_iso_date(value: str) -> str:
+    """Validates strict YYYY-MM-DD date string before network or container fallback."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError(f"Invalid target_date format (expected YYYY-MM-DD): {value!r}")
+    date.fromisoformat(value)
+    return value
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Expected int, got {type(value).__name__}")
+    return value
+
+
+def _as_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Expected int or None, got {type(value).__name__}")
+    return value
+
+
+def _as_optional_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"Expected str or None, got {type(value).__name__}")
+    return value
+
+
+def _parse_chronos_commitments(raw: Any) -> Tuple[ChronosCommitment, ...]:
+    if not isinstance(raw, list):
+        raise ValueError("commitments must be a list")
+    items: List[ChronosCommitment] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("title"), str):
+            raise ValueError("commitment item must be a dict with string title")
+        items.append(
+            ChronosCommitment(
+                title=entry["title"],
+                start_minute=_as_optional_int(entry.get("start_minute")),
+                end_minute=_as_optional_int(entry.get("end_minute")),
+                all_day=bool(entry.get("all_day", False)),
+                source=_as_optional_str(entry.get("source")) or "",
+                tentative=bool(entry.get("tentative", False)),
+                has_conflict=bool(entry.get("has_conflict", False)),
+                notes=_as_optional_str(entry.get("notes")),
+            )
+        )
+    return tuple(items)
+
+
+def _parse_chronos_exceptions(raw: Any) -> Tuple[ChronosGridException, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("grid_exceptions must be a list")
+    items: List[ChronosGridException] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("action"), str):
+            raise ValueError("grid_exception item must be a dict with string action")
+        items.append(
+            ChronosGridException(
+                action=entry["action"],
+                grid_block_id=_as_optional_int(entry.get("grid_block_id")),
+                new_start_minute=_as_optional_int(entry.get("new_start_minute")),
+                new_end_minute=_as_optional_int(entry.get("new_end_minute")),
+                extension_count=_as_int(entry.get("extension_count"), 0),
+                notes=_as_optional_str(entry.get("notes")),
+            )
+        )
+    return tuple(items)
+
+
+def _parse_chronos_workout(raw: Any) -> Optional[ChronosWorkoutHydration]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("workout_hydration must be a dict or None")
+    raw_sessions = raw.get("completed_sessions")
+    completed_count = len(raw_sessions) if isinstance(raw_sessions, list) else _as_int(raw_sessions, 0)
+    return ChronosWorkoutHydration(
+        status=_as_optional_str(raw.get("status")) or "unknown",
+        planned_routine_name=_as_optional_str(raw.get("planned_routine_name")),
+        planned_day_of_week=_as_optional_str(raw.get("planned_day_of_week")),
+        completed_sessions=completed_count,
+        attached_grid_block_id=_as_optional_int(raw.get("attached_grid_block_id")),
+        error=_as_optional_str(raw.get("error")),
+    )
+
+
+def _parse_chronos_friction_notes(raw: Any) -> Tuple[ChronosFrictionNote, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("yesterday_friction_notes must be a list")
+    items: List[ChronosFrictionNote] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("note"), str):
+            raise ValueError("friction note item must be a dict with string note")
+        items.append(
+            ChronosFrictionNote(
+                tag=_as_optional_str(entry.get("tag")) or "",
+                note=entry["note"],
+                habit_cue_id=_as_optional_int(entry.get("habit_cue_id")),
+                grid_block_id=_as_optional_int(entry.get("grid_block_id")),
+            )
+        )
+    return tuple(items)
+
+
+def _parse_chronos_passive_signals(raw: Any) -> Tuple[ChronosPassiveSignal, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("yesterday_passive_signals must be a list")
+    items: List[ChronosPassiveSignal] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("rule_key"), str):
+            raise ValueError("passive signal item must be a dict with string rule_key")
+        cue_title = _as_optional_str(entry.get("cue_title")) or entry["rule_key"]
+        items.append(
+            ChronosPassiveSignal(
+                cue_title=cue_title,
+                rule_key=entry["rule_key"],
+                observed=bool(entry.get("observed", False)),
+                fact_label=_as_optional_str(entry.get("fact_label")) or "",
+                peer_status=_as_optional_str(entry.get("peer_status")) or "",
+            )
+        )
+    return tuple(items)
+
+
+def _parse_chronos_peers(raw: Any) -> Tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        raise ValueError("degraded_peers must be a list of strings")
+    return tuple(raw)
+
+
+def parse_chronos_summary(data: Any, target_date: str) -> ChronosSummary:
+    """Parses Chronos daily-summary payload into a frozen ChronosSummary."""
+    if not isinstance(data, dict) or not isinstance(data.get("date"), str):
+        return ChronosSummary(date=target_date, available=False)
+    try:
+        commitments = _parse_chronos_commitments(data.get("commitments"))
+        exceptions = _parse_chronos_exceptions(data.get("grid_exceptions"))
+        workout = _parse_chronos_workout(data.get("workout_hydration"))
+        friction_notes = _parse_chronos_friction_notes(data.get("yesterday_friction_notes"))
+        passive_signals = _parse_chronos_passive_signals(data.get("yesterday_passive_signals"))
+        degraded_peers = _parse_chronos_peers(data.get("degraded_peers"))
+        yesterday = _as_optional_str(data.get("yesterday")) or ""
+        tentative_count = _as_int(
+            data.get("tentative_count"), sum(1 for item in commitments if item.tentative)
+        )
+        conflict_count = _as_int(
+            data.get("conflict_count"), sum(1 for item in commitments if item.has_conflict)
+        )
+    except ValueError as exc:
+        logger.warning("Malformed Chronos daily-summary payload for %s: %s", target_date, exc)
+        return ChronosSummary(date=target_date, available=False)
+
+    return ChronosSummary(
+        date=data["date"],
+        yesterday=yesterday,
+        available=True,
+        commitments=commitments,
+        tentative_count=tentative_count,
+        conflict_count=conflict_count,
+        grid_exceptions=exceptions,
+        workout_hydration=workout,
+        yesterday_friction_notes=friction_notes,
+        yesterday_passive_signals=passive_signals,
+        degraded_peers=degraded_peers,
+    )
+
+
+def fetch_chronos_summary(base_url: str, target_date: str) -> ChronosSummary:
+    """Fetches daily schedule, exceptions, and habit signals from Chronos API."""
+    validated_date = _validate_iso_date(target_date)
+    clean_base = base_url.rstrip("/")
+    if not clean_base:
+        return ChronosSummary(date=validated_date, available=False)
+    url = f"{clean_base}/integrations/daily-summary?target_date={validated_date}"
+    data = fetch_overlay_json(url)
+    if data is None:
+        return ChronosSummary(date=validated_date, available=False)
+    return parse_chronos_summary(data, validated_date)
+
+
+# ----------------------------------------------------------------------
+# 5. ODIN Swarm Health & Overlay IPAM
 # ----------------------------------------------------------------------
 
 @dataclass
@@ -542,7 +804,7 @@ def fetch_odin_telemetry() -> OdinTelemetry:
 
 
 # ----------------------------------------------------------------------
-# 5. Executive Synthesis & Markdown Generation
+# 6. Executive Synthesis & Markdown Generation
 # ----------------------------------------------------------------------
 
 @dataclass
@@ -552,6 +814,7 @@ class MorningCopilotReport:
     kratos: KratosTelemetry
     plutus: PlutusTelemetry
     odin: OdinTelemetry
+    chronos: ChronosSummary = field(default_factory=ChronosSummary)
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -562,6 +825,7 @@ class MorningCopilotReport:
             "kratos": asdict(self.kratos),
             "plutus": asdict(self.plutus),
             "odin": asdict(self.odin),
+            "chronos": asdict(self.chronos),
         }
 
 
@@ -645,9 +909,126 @@ def _render_swarm_lines(odin: OdinTelemetry) -> List[str]:
     return lines
 
 
+def _format_minute_hhmm(minute: Optional[int]) -> str:
+    """Formats minutes since midnight as HH:MM."""
+    if minute is None or minute < 0 or minute > 1440:
+        return "--:--"
+    hours, mins = divmod(minute, 60)
+    return f"{hours:02d}:{mins:02d}"
+
+
+def _format_chronos_commitment(commitment: ChronosCommitment) -> str:
+    """Formats a single Chronos commitment bullet with time and markers."""
+    if commitment.all_day:
+        time_str = "all-day"
+    elif commitment.start_minute is not None and commitment.end_minute is not None:
+        time_str = f"{_format_minute_hhmm(commitment.start_minute)}-{_format_minute_hhmm(commitment.end_minute)}"
+    elif commitment.start_minute is not None:
+        time_str = _format_minute_hhmm(commitment.start_minute)
+    else:
+        time_str = "unscheduled"
+
+    markers: List[str] = []
+    if commitment.tentative:
+        markers.append("[Tentative]")
+    if commitment.has_conflict:
+        markers.append("[Conflict]")
+    suffix = f" {' '.join(markers)}" if markers else ""
+    return f"  - {time_str}: {commitment.title}{suffix}"
+
+
+def _format_chronos_exception(exc: ChronosGridException) -> str:
+    """Formats a concise grid exception descriptor."""
+    if exc.new_start_minute is not None and exc.new_end_minute is not None:
+        return (
+            f"{exc.action} ({_format_minute_hhmm(exc.new_start_minute)}-"
+            f"{_format_minute_hhmm(exc.new_end_minute)})"
+        )
+    if exc.extension_count > 0:
+        return f"{exc.action} (x{exc.extension_count})"
+    return exc.action
+
+
+def _render_chronos_habits_lines(chronos: ChronosSummary) -> List[str]:
+    """Formats yesterday's observed passive signals, friction notes, and peer status."""
+    lines: List[str] = []
+    if chronos.yesterday_passive_signals:
+        observed = [sig for sig in chronos.yesterday_passive_signals if sig.observed]
+        if observed:
+            labels = [
+                f"{sig.cue_title} ({sig.fact_label})" if sig.fact_label else sig.cue_title
+                for sig in observed
+            ]
+            lines.append(
+                f"- **Yesterday Signals ({len(observed)}/{len(chronos.yesterday_passive_signals)} "
+                f"observed)**: {', '.join(labels)}"
+            )
+        else:
+            lines.append(
+                f"- **Yesterday Signals**: 0/{len(chronos.yesterday_passive_signals)} observed"
+            )
+    else:
+        lines.append("- **Yesterday Signals**: none")
+
+    if chronos.yesterday_friction_notes:
+        notes_fmt = [
+            f"[{fn.tag}] {fn.note}" if fn.tag else fn.note
+            for fn in chronos.yesterday_friction_notes[:5]
+        ]
+        lines.append(
+            f"- **Yesterday Friction Notes ({len(chronos.yesterday_friction_notes)})**: "
+            f"{'; '.join(notes_fmt)}"
+        )
+    else:
+        lines.append("- **Yesterday Friction Notes**: 0")
+
+    if chronos.degraded_peers:
+        lines.append(f"- **Chronos Degraded Peers**: {', '.join(chronos.degraded_peers)}")
+    return lines
+
+
+def _render_chronos_lines(chronos: ChronosSummary) -> List[str]:
+    """Formats Chronos commitments, grid exceptions, workout hydration, and habit signals."""
+    lines = ["## 📅 Schedule & Habits (Chronos)"]
+    if not chronos.available:
+        lines.append("- **Chronos**: Summary unavailable (API unreachable or malformed payload).")
+        lines.append("")
+        return lines
+
+    lines.append(
+        f"- **Commitments**: {len(chronos.commitments)} scheduled "
+        f"({chronos.tentative_count} tentative, {chronos.conflict_count} conflicts)"
+    )
+    for commitment in chronos.commitments:
+        lines.append(_format_chronos_commitment(commitment))
+
+    if chronos.grid_exceptions:
+        exc_items = [_format_chronos_exception(exc) for exc in chronos.grid_exceptions[:5]]
+        if len(chronos.grid_exceptions) > 5:
+            exc_items.append(f"+{len(chronos.grid_exceptions) - 5} more")
+        lines.append(f"- **Grid Exceptions**: {len(chronos.grid_exceptions)} active ({', '.join(exc_items)})")
+    else:
+        lines.append("- **Grid Exceptions**: 0 active")
+
+    if chronos.workout_hydration:
+        wh = chronos.workout_hydration
+        routine = wh.planned_routine_name or "None"
+        err_note = f" | error: {wh.error}" if wh.error else ""
+        lines.append(
+            f"- **Workout Hydration**: {wh.status} | Routine: {routine} | "
+            f"Completed: {wh.completed_sessions}{err_note}"
+        )
+    else:
+        lines.append("- **Workout Hydration**: none reported")
+
+    lines.extend(_render_chronos_habits_lines(chronos))
+    lines.append("")
+    return lines
+
+
 def generate_executive_markdown(report: MorningCopilotReport, section: str = "all") -> str:
     """Formats aggregated cross-stack intelligence into an executive Markdown briefing.
-    section: 'all', 'executive' (wealth + homelab), or 'training' (biological recovery).
+    section: 'all', 'executive' (wealth + homelab + chronos), or 'training' (biological recovery).
     """
     if section == "training":
         lines = [f"# 🏋️ Biological Recovery & Training Directive - {report.date}", ""]
@@ -663,11 +1044,12 @@ def generate_executive_markdown(report: MorningCopilotReport, section: str = "al
         lines.extend(_render_biometrics_lines(report.eir, report.kratos))
         lines.append("")
 
+    lines.extend(_render_chronos_lines(report.chronos))
     lines.extend(_render_wealth_lines(report.plutus))
     lines.extend(_render_swarm_lines(report.odin))
 
     lines.append("## 🔍 Operational Review & Run Frictions")
-    scope_note = "Plutus and Odin" if section == "executive" else "Eir, Kratos, Plutus, and Odin"
+    scope_note = "Chronos, Plutus, and Odin" if section == "executive" else "Eir, Kratos, Chronos, Plutus, and Odin"
     lines.append(f"- Execution: {'Executive intelligence' if section == 'executive' else 'Cross-stack telemetry'} aggregated successfully across {scope_note}.")
     lines.append("- 0 frictions or inefficiencies encountered; run was clean and optimal.")
     return "\n".join(lines)
@@ -707,6 +1089,7 @@ def run_morning_copilot(
     eir_url: str = DEFAULT_EIR_URL,
     kratos_url: str = DEFAULT_KRATOS_URL,
     plutus_url: str = DEFAULT_PLUTUS_URL,
+    chronos_url: str = DEFAULT_CHRONOS_URL,
     vault_path: str = OBSIDIAN_VAULT_PATH,
     save_journal: bool = False,
     section: str = "all",
@@ -723,12 +1106,21 @@ def run_morning_copilot(
 
     if section != "training":
         plutus = fetch_plutus_telemetry(plutus_url, date_str)
+        chronos = fetch_chronos_summary(chronos_url, date_str)
         odin = fetch_odin_telemetry()
     else:
         plutus = PlutusTelemetry(as_of_date=date_str)
+        chronos = ChronosSummary(date=date_str, available=False)
         odin = OdinTelemetry()
 
-    report = MorningCopilotReport(date=date_str, eir=eir, kratos=kratos, plutus=plutus, odin=odin)
+    report = MorningCopilotReport(
+        date=date_str,
+        eir=eir,
+        kratos=kratos,
+        plutus=plutus,
+        odin=odin,
+        chronos=chronos,
+    )
     if save_journal:
         append_to_obsidian_journal(vault_path, date_str, generate_executive_markdown(report, section=section))
     return report
@@ -745,6 +1137,7 @@ def main() -> int:
     parser.add_argument("--eir-url", type=str, default=DEFAULT_EIR_URL, help="Eir API base URL")
     parser.add_argument("--kratos-url", type=str, default=DEFAULT_KRATOS_URL, help="Kratos API base URL")
     parser.add_argument("--plutus-url", type=str, default=DEFAULT_PLUTUS_URL, help="Plutus API base URL")
+    parser.add_argument("--chronos-url", type=str, default=DEFAULT_CHRONOS_URL, help="Chronos API base URL")
     parser.add_argument("--vault-path", type=str, default=OBSIDIAN_VAULT_PATH, help="Path to Obsidian vault")
     parser.add_argument("--output-file", type=str, default=None, help="Save markdown output to specified file path")
     args = parser.parse_args()
@@ -754,6 +1147,7 @@ def main() -> int:
         eir_url=args.eir_url,
         kratos_url=args.kratos_url,
         plutus_url=args.plutus_url,
+        chronos_url=args.chronos_url,
         vault_path=args.vault_path,
         save_journal=args.journal,
         section=args.section,
