@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """test_morning_copilot_aggregator.py - Comprehensive Unit Tests for Morning Copilot Aggregator."""
 
+import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from unittest.mock import patch
 
@@ -15,6 +18,12 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from morning_copilot_aggregator import (
+    ChronosCommitment,
+    ChronosFrictionNote,
+    ChronosGridException,
+    ChronosPassiveSignal,
+    ChronosSummary,
+    ChronosWorkoutHydration,
     CreditCardDeadline,
     EirTelemetry,
     KratosTelemetry,
@@ -23,13 +32,16 @@ from morning_copilot_aggregator import (
     PlutusTelemetry,
     append_to_obsidian_journal,
     evaluate_biological_recovery,
+    fetch_chronos_summary,
     fetch_eir_telemetry,
     fetch_kratos_telemetry,
     fetch_odin_telemetry,
     fetch_plutus_telemetry,
     generate_executive_markdown,
+    main as copilot_main,
     parse_settlement_date_from_text,
     resolve_iso_week,
+    run_morning_copilot,
 )
 
 
@@ -299,6 +311,215 @@ class TestMorningCopilotAggregator(unittest.TestCase):
             with open(expected_path, "r", encoding="utf-8") as f:
                 saved = f.read()
             self.assertIn(test_content, saved)
+
+    @patch("morning_copilot_aggregator.fetch_overlay_json")
+    def test_fetch_chronos_summary_populated(self, mock_fetch):
+        """Verify Chronos daily summary parsing and executive markdown rendering."""
+        mock_fetch.return_value = {
+            "date": "2026-11-26",
+            "yesterday": "2026-11-25",
+            "commitments": [
+                {
+                    "id": 10,
+                    "title": "Dentist Checkup",
+                    "target_date": "2026-11-26",
+                    "start_minute": 540,
+                    "end_minute": 600,
+                    "all_day": False,
+                    "source": "google",
+                    "tentative": True,
+                    "has_conflict": False,
+                    "notes": None,
+                },
+                {
+                    "id": 11,
+                    "title": "Flight NZ502 to Wellington",
+                    "target_date": "2026-11-26",
+                    "start_minute": None,
+                    "end_minute": None,
+                    "all_day": True,
+                    "source": "manual",
+                    "tentative": False,
+                    "has_conflict": True,
+                    "notes": "Terminal check-in",
+                },
+            ],
+            "tentative_count": 1,
+            "conflict_count": 1,
+            "grid_exceptions": [
+                {
+                    "id": 5,
+                    "grid_block_id": 2,
+                    "target_date": "2026-11-26",
+                    "action": "move",
+                    "new_start_minute": 840,
+                    "new_end_minute": 900,
+                    "extension_count": 0,
+                    "notes": "Adjusted around appointment",
+                }
+            ],
+            "workout_hydration": {
+                "status": "hydrated",
+                "planned_routine_name": "Upper Push A",
+                "planned_day_of_week": "Thu",
+                "completed_sessions": 0,
+                "attached_grid_block_id": 3,
+                "error": None,
+            },
+            "yesterday_friction_notes": [
+                {
+                    "id": 7,
+                    "target_date": "2026-11-25",
+                    "tag": "energy",
+                    "note": "Late afternoon focus dip",
+                    "habit_cue_id": 1,
+                    "grid_block_id": None,
+                }
+            ],
+            "yesterday_passive_signals": [
+                {
+                    "cue_id": 1,
+                    "cue_title": "Morning Weigh-In",
+                    "rule_key": "eir_morning_weigh_in",
+                    "observed": True,
+                    "fact_label": "82.4 kg logged",
+                    "peer_status": "ok",
+                },
+                {
+                    "cue_id": 2,
+                    "cue_title": "Fasted Walk",
+                    "rule_key": "eir_fasted_walk_40m",
+                    "observed": False,
+                    "fact_label": "Not detected",
+                    "peer_status": "ok",
+                },
+            ],
+            "degraded_peers": [],
+        }
+
+        summary = fetch_chronos_summary("http://mock-chronos/", "2026-11-26")
+        mock_fetch.assert_called_once_with(
+            "http://mock-chronos/integrations/daily-summary?target_date=2026-11-26"
+        )
+        self.assertTrue(summary.available)
+        self.assertEqual(summary.tentative_count, 1)
+        self.assertEqual(summary.conflict_count, 1)
+        self.assertEqual(len(summary.commitments), 2)
+        self.assertEqual(summary.workout_hydration.planned_routine_name, "Upper Push A")
+
+        report = MorningCopilotReport(
+            date="2026-11-26",
+            eir=EirTelemetry(date="2026-11-26"),
+            kratos=KratosTelemetry(date="2026-11-26", iso_week="2026-W48"),
+            plutus=PlutusTelemetry(as_of_date="2026-11-26"),
+            odin=OdinTelemetry(),
+            chronos=summary,
+        )
+        md = generate_executive_markdown(report, section="all")
+        self.assertIn("## 📅 Schedule & Habits (Chronos)", md)
+        self.assertIn("09:00-10:00: Dentist Checkup [Tentative]", md)
+        self.assertIn("all-day: Flight NZ502 to Wellington [Conflict]", md)
+        self.assertIn("1 active (move (14:00-15:00))", md)
+        self.assertIn("hydrated | Routine: Upper Push A | Completed: 0", md)
+        self.assertIn("Morning Weigh-In (82.4 kg logged)", md)
+        self.assertIn("[energy] Late afternoon focus dip", md)
+        self.assertNotIn("\u2014", md)
+        self.assertNotIn("\u2013", md)
+
+    @patch("morning_copilot_aggregator.fetch_overlay_json")
+    def test_fetch_chronos_summary_degrades_and_validates_date(self, mock_fetch):
+        """Verify unreachable/malformed Chronos degrades cleanly and invalid date fails before fallback."""
+        with self.assertRaises(ValueError):
+            fetch_chronos_summary("http://mock-chronos", "2026-11-26'; rm -rf /")
+        mock_fetch.assert_not_called()
+
+        for payload in (
+            None,
+            {},
+            {"date": "2026-11-26", "commitments": "not-a-list"},
+            {"date": "2026-11-26", "commitments": [123]},
+            {"date": "2026-11-26", "commitments": [], "workout_hydration": "bad"},
+        ):
+            mock_fetch.return_value = payload
+            summary = fetch_chronos_summary("http://mock-chronos", "2026-11-26")
+            self.assertFalse(summary.available)
+            self.assertEqual(summary.date, "2026-11-26")
+
+        report = MorningCopilotReport(
+            date="2026-11-26",
+            eir=EirTelemetry(date="2026-11-26"),
+            kratos=KratosTelemetry(date="2026-11-26", iso_week="2026-W48"),
+            plutus=PlutusTelemetry(as_of_date="2026-11-26"),
+            odin=OdinTelemetry(),
+            chronos=ChronosSummary(date="2026-11-26", available=False),
+        )
+        md = generate_executive_markdown(report, section="executive")
+        self.assertIn("## 📅 Schedule & Habits (Chronos)", md)
+        self.assertIn("Summary unavailable", md)
+
+    @patch("morning_copilot_aggregator.fetch_odin_telemetry")
+    @patch("morning_copilot_aggregator.fetch_plutus_telemetry")
+    @patch("morning_copilot_aggregator.fetch_chronos_summary")
+    @patch("morning_copilot_aggregator.fetch_kratos_telemetry")
+    @patch("morning_copilot_aggregator.fetch_eir_telemetry")
+    def test_chronos_section_routing_and_json_cli(
+        self, mock_eir, mock_kratos, mock_chronos, mock_plutus, mock_odin
+    ):
+        """Verify executive includes Chronos, training skips it, and --json/--chronos-url work."""
+        mock_eir.return_value = EirTelemetry(date="2026-11-26")
+        mock_kratos.return_value = KratosTelemetry(date="2026-11-26", iso_week="2026-W48")
+        mock_plutus.return_value = PlutusTelemetry(as_of_date="2026-11-26")
+        mock_odin.return_value = OdinTelemetry()
+        mock_chronos.return_value = ChronosSummary(
+            date="2026-11-26",
+            yesterday="2026-11-25",
+            available=True,
+            commitments=(ChronosCommitment(title="Dentist Checkup", start_minute=540, end_minute=600, tentative=True),),
+            tentative_count=1,
+            grid_exceptions=(ChronosGridException(action="skip"),),
+            workout_hydration=ChronosWorkoutHydration(status="hydrated", planned_routine_name="Upper Push A"),
+            yesterday_friction_notes=(ChronosFrictionNote(tag="focus", note="Midday interruption"),),
+            yesterday_passive_signals=(
+                ChronosPassiveSignal(cue_title="Morning Weigh-In", rule_key="eir_morning_weigh_in", observed=True),
+            ),
+        )
+
+        exec_report = run_morning_copilot(
+            target_date="2026-11-26",
+            chronos_url="http://custom-chronos:8000",
+            section="executive",
+        )
+        mock_chronos.assert_called_once_with("http://custom-chronos:8000", "2026-11-26")
+        exec_md = generate_executive_markdown(exec_report, section="executive")
+        self.assertIn("Schedule & Habits (Chronos)", exec_md)
+        self.assertIn("Dentist Checkup [Tentative]", exec_md)
+
+        mock_chronos.reset_mock()
+        train_report = run_morning_copilot(target_date="2026-11-26", section="training")
+        mock_chronos.assert_not_called()
+        train_md = generate_executive_markdown(train_report, section="training")
+        self.assertNotIn("Schedule & Habits (Chronos)", train_md)
+
+        buf = io.StringIO()
+        argv = [
+            "morning_copilot_aggregator.py",
+            "--date",
+            "2026-11-26",
+            "--chronos-url",
+            "http://cli-chronos:8000",
+            "--json",
+        ]
+        with patch.object(sys, "argv", argv), redirect_stdout(buf):
+            rc = copilot_main()
+        self.assertEqual(rc, 0)
+        mock_chronos.assert_called_with("http://cli-chronos:8000", "2026-11-26")
+        parsed = json.loads(buf.getvalue())
+        self.assertIn("chronos", parsed)
+        self.assertTrue(parsed["chronos"]["available"])
+        self.assertEqual(parsed["chronos"]["commitments"][0]["title"], "Dentist Checkup")
+        self.assertEqual(parsed["chronos"]["workout_hydration"]["planned_routine_name"], "Upper Push A")
+        self.assertNotIn("\u2014", exec_md)
+        self.assertNotIn("\u2013", exec_md)
 
 
 if __name__ == "__main__":
