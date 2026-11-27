@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 
@@ -240,24 +240,82 @@ def fetch_odysseus_travel_briefings(
         return OdysseusTravelDigest(status="error", error=str(exc))
 
 
-def _describe_entry(entry: Any) -> str:
-    """Render a compact single-line summary for a leg, segment, or itinerary item."""
+def _extract_hhmm(raw_local: Any) -> str:
+    """Extract HH:MM wall-clock time from an ISO local datetime string."""
+    if not isinstance(raw_local, str) or not raw_local.strip():
+        return ""
+    try:
+        return datetime.fromisoformat(raw_local.strip()).strftime("%H:%M")
+    except ValueError:
+        return ""
+
+
+def _format_time_with_tz(raw_local: Any, raw_tz: Any) -> str:
+    """Format an ISO local datetime string as HH:MM with optional IANA timezone."""
+    hhmm = _extract_hhmm(raw_local)
+    if not hhmm:
+        return ""
+    tz = str(raw_tz or "").strip()
+    return f"{hhmm} ({tz})" if tz else hhmm
+
+
+def _format_leg_entry(entry: Any) -> str:
+    """Render a compact summary for an Odysseus active_legs entry."""
     if not isinstance(entry, Mapping):
         return str(entry)
-    label = str(
-        entry.get("title")
-        or entry.get("name")
-        or entry.get("summary")
-        or entry.get("destination")
-        or entry.get("reference")
-        or "Item"
+    name = str(entry.get("name") or "").strip()
+    city = str(entry.get("primary_city") or "").strip()
+    if name and city and city.lower() != name.lower():
+        return f"{name} ({city})"
+    return name or city or "Leg"
+
+
+def _format_segment_entry(entry: Any, *, is_arrival: bool = False) -> str:
+    """Render a compact summary for a departing or arriving booking segment."""
+    if not isinstance(entry, Mapping):
+        return str(entry)
+    time_field, tz_field = (
+        ("arrival_local", "arrival_tz") if is_arrival else ("departure_local", "departure_tz")
     )
-    time_part = entry.get("time") or entry.get("start_time") or entry.get("departure_time")
-    origin = entry.get("origin")
-    dest = entry.get("destination")
-    route = f"{origin} -> {dest}" if origin and dest else ""
-    parts = [p for p in (str(time_part) if time_part else "", label, route) if p]
+    time_str = _format_time_with_tz(entry.get(time_field), entry.get(tz_field))
+    day_offset = entry.get("day_offset")
+    if is_arrival and time_str and isinstance(day_offset, int) and not isinstance(day_offset, bool) and day_offset > 0:
+        time_str = f"{time_str} +{day_offset}d"
+
+    service = str(entry.get("flight_or_service_number") or entry.get("carrier") or "").strip()
+    booking_title = str(entry.get("booking_title") or "").strip()
+    if service and booking_title and service.lower() not in booking_title.lower():
+        label = f"{service} ({booking_title})"
+    else:
+        label = service or booking_title or "Segment"
+
+    origin = str(entry.get("origin_code") or entry.get("origin_label") or "").strip()
+    dest = str(entry.get("destination_code") or entry.get("destination_label") or "").strip()
+    route = f"{origin} -> {dest}" if origin and dest else (origin or dest)
+
+    ref = str(entry.get("confirmation_code") or "").strip()
+    ref_part = f"Ref {ref}" if ref else ""
+    parts = [p for p in (time_str, label, route, ref_part) if p]
     return " | ".join(parts)
+
+
+def _format_itinerary_entry(entry: Any) -> str:
+    """Render a compact summary for an Odysseus itinerary_items entry."""
+    if not isinstance(entry, Mapping):
+        return str(entry)
+    time_str = _format_time_with_tz(entry.get("start_local"), entry.get("start_tz"))
+    title = str(entry.get("title") or "Item").strip()
+    place = str(entry.get("place_name") or "").strip()
+    parts = [p for p in (time_str, title, place) if p]
+    return " | ".join(parts)
+
+
+_BRIEF_SECTIONS: Tuple[Tuple[str, str, int, Callable[[Any], str]], ...] = (
+    ("active_legs", "Legs", 3, _format_leg_entry),
+    ("departing_segments", "Departing", 3, lambda item: _format_segment_entry(item, is_arrival=False)),
+    ("arriving_segments", "Arriving", 3, lambda item: _format_segment_entry(item, is_arrival=True)),
+    ("itinerary_items", "Itinerary", 5, _format_itinerary_entry),
+)
 
 
 def _format_trip_brief_lines(brief: Mapping[str, Any]) -> List[str]:
@@ -273,16 +331,11 @@ def _format_trip_brief_lines(brief: Mapping[str, Any]) -> List[str]:
     meta = f"{timing}, {target_date}" if target_date else timing
     lines = [f"- **{title}** ({meta})"]
 
-    for key, label, limit in (
-        ("active_legs", "Legs", 3),
-        ("departing_segments", "Departing", 3),
-        ("arriving_segments", "Arriving", 3),
-        ("itinerary_items", "Itinerary", 5),
-    ):
+    for key, label, limit, formatter in _BRIEF_SECTIONS:
         raw_items = brief.get(key)
         if not isinstance(raw_items, list) or not raw_items:
             continue
-        rendered = [_describe_entry(item) for item in raw_items[:limit]]
+        rendered = [formatter(item) for item in raw_items[:limit]]
         if len(raw_items) > limit:
             rendered.append(f"+{len(raw_items) - limit} more")
         lines.append(f"  - {label}: {'; '.join(rendered)}")

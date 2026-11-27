@@ -124,13 +124,65 @@ class TestOdysseusBriefing(unittest.TestCase):
             return _FakeHttpResponse(
                 _mcp_tool_envelope(
                     {
-                        "trip_title": "Wellington" if args["trip_id"] == "trip-act" else "Tokyo",
+                        "trip_id": args["trip_id"],
+                        "trip_title": "Wellington" if args["trip_id"] == "trip-act" else "Singapore & Cebu",
                         "target_date": args["target_date"],
                         "days_until_departure": -1 if args["trip_id"] == "trip-act" else 4,
-                        "active_legs": [{"title": "Central Leg"}],
-                        "departing_segments": [{"title": "NZ401", "origin": "AKL", "destination": "WLG", "departure_time": "08:00"}],
+                        "day": {"id": "day-1", "date": args["target_date"], "title": "Arrival", "notes": None},
+                        "active_legs": [
+                            {
+                                "id": "leg-1",
+                                "name": "Central",
+                                "primary_city": "Wellington",
+                                "country_code": "NZ",
+                                "base_timezone": "Pacific/Auckland",
+                                "start_date": "2026-11-26",
+                                "end_date": "2026-11-28",
+                                "notes": None,
+                            }
+                        ],
+                        "departing_segments": [
+                            {
+                                "booking_id": "bkg-1",
+                                "booking_title": "AKL to WLG Flight",
+                                "booking_type": "flight",
+                                "booking_status": "confirmed",
+                                "confirmation_code": "NZ401A",
+                                "provider": "Air New Zealand",
+                                "segment_id": "seg-1",
+                                "carrier": "NZ",
+                                "flight_or_service_number": "NZ401",
+                                "origin_label": "Auckland",
+                                "origin_code": "AKL",
+                                "destination_label": "Wellington",
+                                "destination_code": "WLG",
+                                "departure_local": f"{args['target_date']}T08:00:00",
+                                "departure_tz": "Pacific/Auckland",
+                                "arrival_local": f"{args['target_date']}T09:05:00",
+                                "arrival_tz": "Pacific/Auckland",
+                                "day_offset": 0,
+                                "projected_arrival_date": None,
+                                "seat_or_cabin": "12C",
+                                "terminal_gate": "D4",
+                            }
+                        ],
                         "arriving_segments": [],
-                        "itinerary_items": [{"time": "10:00", "title": "Coffee with Alex Tan"}],
+                        "itinerary_items": [
+                            {
+                                "id": "item-1",
+                                "title": "Coffee with Alex Tan",
+                                "category": "dining",
+                                "status": "scheduled",
+                                "start_local": f"{args['target_date']}T10:00:00",
+                                "start_tz": "Pacific/Auckland",
+                                "end_local": f"{args['target_date']}T11:00:00",
+                                "end_tz": "Pacific/Auckland",
+                                "place_id": "place-1",
+                                "place_name": "Flight Coffee Hangar",
+                                "sort_order": 0,
+                                "notes": None,
+                            }
+                        ],
                     }
                 )
             )
@@ -197,20 +249,102 @@ class TestOdysseusBriefing(unittest.TestCase):
                 status="ok",
                 trips=(
                     {
-                        "trip_title": "Tokyo \u2014 Autumn",
+                        "trip_id": "trip-sg",
+                        "trip_title": "Singapore & Cebu \u2014 Winter",
                         "target_date": "2026-12-01",
                         "days_until_departure": 4,
-                        "active_legs": [{"title": "Shinjuku \u2013 Stay"}],
-                        "departing_segments": [{"title": "NZ99", "origin": "AKL", "destination": "NRT", "departure_time": "09:50"}],
-                        "itinerary_items": [{"time": "19:00", "title": "Hotel Check-in"}],
+                        "day": {"id": "day-1", "date": "2026-12-01", "title": "Arrival", "notes": None},
+                        "active_legs": [
+                            {
+                                "id": "leg-sg",
+                                "name": "Marina \u2013 Stay",
+                                "primary_city": "Singapore",
+                                "country_code": "SG",
+                                "base_timezone": "Asia/Singapore",
+                                "start_date": "2026-12-01",
+                                "end_date": "2026-12-04",
+                                "notes": None,
+                            }
+                        ],
+                        "departing_segments": [
+                            {
+                                "booking_id": "bkg-sq",
+                                "booking_title": "AKL to SIN Flight",
+                                "booking_type": "flight",
+                                "booking_status": "confirmed",
+                                "confirmation_code": "SQ991A",
+                                "provider": "Singapore Airlines",
+                                "segment_id": "seg-dep",
+                                "carrier": "SQ",
+                                "flight_or_service_number": "SQ286",
+                                "origin_label": "Auckland",
+                                "origin_code": "AKL",
+                                "destination_label": "Singapore",
+                                "destination_code": "SIN",
+                                "departure_local": "2026-12-01T13:30:00",
+                                "departure_tz": "Pacific/Auckland",
+                                "arrival_local": "2026-12-01T19:15:00",
+                                "arrival_tz": "Asia/Singapore",
+                                "day_offset": 0,
+                                "projected_arrival_date": None,
+                                "seat_or_cabin": "14A",
+                                "terminal_gate": "I",
+                            }
+                        ],
+                        "arriving_segments": [
+                            {
+                                "booking_id": "bkg-sq-arr",
+                                "booking_title": "AKL to SIN Overnight",
+                                "booking_type": "flight",
+                                "booking_status": "confirmed",
+                                "confirmation_code": "SQ991B",
+                                "provider": "Singapore Airlines",
+                                "segment_id": "seg-arr",
+                                "carrier": "SQ",
+                                "flight_or_service_number": "SQ286",
+                                "origin_label": "Auckland",
+                                "origin_code": "AKL",
+                                "destination_label": "Singapore",
+                                "destination_code": "SIN",
+                                "departure_local": "2026-11-30T23:55:00",
+                                "departure_tz": "Pacific/Auckland",
+                                "arrival_local": "2026-12-01T19:15:00",
+                                "arrival_tz": "Asia/Singapore",
+                                "day_offset": 1,
+                                "projected_arrival_date": "2026-12-01",
+                                "seat_or_cabin": "14A",
+                                "terminal_gate": "I",
+                            }
+                        ],
+                        "itinerary_items": [
+                            {
+                                "id": "item-1",
+                                "title": "Check in Marina Bay",
+                                "category": "lodging",
+                                "status": "scheduled",
+                                "start_local": "2026-12-01T15:00:00",
+                                "start_tz": "Asia/Singapore",
+                                "end_local": "2026-12-01T16:00:00",
+                                "end_tz": "Asia/Singapore",
+                                "place_id": "place-mb",
+                                "place_name": "Marina Bay",
+                                "sort_order": 0,
+                                "notes": None,
+                            }
+                        ],
                     },
                 ),
             )
         )
         self.assertIn("## Travel Brief (Odysseus)", ok_md)
-        self.assertIn("**Tokyo - Autumn** (In 4d, 2026-12-01)", ok_md)
-        self.assertIn("AKL -> NRT", ok_md)
-        self.assertIn("Hotel Check-in", ok_md)
+        self.assertIn("**Singapore & Cebu - Winter** (In 4d, 2026-12-01)", ok_md)
+        self.assertIn("Marina - Stay (Singapore)", ok_md)
+        self.assertIn("SQ286", ok_md)
+        self.assertIn("AKL -> SIN", ok_md)
+        self.assertIn("13:30 (Pacific/Auckland)", ok_md)
+        self.assertIn("19:15 (Asia/Singapore) +1d", ok_md)
+        self.assertIn("Ref SQ991A", ok_md)
+        self.assertIn("15:00 (Asia/Singapore) | Check in Marina Bay | Marina Bay", ok_md)
         self.assertNotIn("\u2014", ok_md)
         self.assertNotIn("\u2013", ok_md)
 
@@ -230,7 +364,19 @@ class TestOdysseusBriefing(unittest.TestCase):
         mock_odin.return_value = mca.OdinTelemetry()
         mock_odysseus.return_value = OdysseusTravelDigest(
             status="ok",
-            trips=({"trip_title": "Wellington", "target_date": "2026-11-27", "days_until_departure": 0},),
+            trips=(
+                {
+                    "trip_id": "trip-wlg",
+                    "trip_title": "Wellington",
+                    "target_date": "2026-11-27",
+                    "days_until_departure": 0,
+                    "day": None,
+                    "active_legs": [],
+                    "departing_segments": [],
+                    "arriving_segments": [],
+                    "itinerary_items": [],
+                },
+            ),
         )
 
         train_report = mca.run_morning_copilot(target_date="2026-11-27", section="training")
