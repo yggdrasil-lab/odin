@@ -53,6 +53,7 @@ jobs:
           API_SERVER_KEY: ${{ secrets.API_SERVER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          ODYSSEUS_MCP_TOKEN: ${{ secrets.ODYSSEUS_MCP_TOKEN }}
           HERMES_AGY_ALLOWED_MODELS: ${{ env.HERMES_AGY_ALLOWED_MODELS }}
           HERMES_AGY_ALLOWED_EFFORTS: ${{ env.HERMES_AGY_ALLOWED_EFFORTS }}
         run: |
@@ -65,6 +66,7 @@ jobs:
           [ -z "$API_SERVER_KEY" ] && MISSING="$MISSING API_SERVER_KEY"
           [ -z "$GEMINI_API_KEY" ] && MISSING="$MISSING GEMINI_API_KEY"
           [ -z "$GH_TOKEN" ] && MISSING="$MISSING GH_TOKEN"
+          [ -z "$ODYSSEUS_MCP_TOKEN" ] && MISSING="$MISSING ODYSSEUS_MCP_TOKEN"
           [ -z "$HERMES_AGY_ALLOWED_MODELS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_MODELS"
           [ -z "$HERMES_AGY_ALLOWED_EFFORTS" ] && MISSING="$MISSING HERMES_AGY_ALLOWED_EFFORTS"
           if [ -n "$MISSING" ]; then
@@ -102,6 +104,8 @@ jobs:
           TYPESAFE_ENDPOINT: ${{ vars.TYPESAFE_ENDPOINT || 'https://api.typesafe.ai/v1/systemone' }}
           TYPESAFE_DEFAULT_MODEL: ${{ vars.TYPESAFE_DEFAULT_MODEL || 'jev-latest' }}
           HOST_AGY_CONFIG_DIR: ${{ vars.HOST_AGY_CONFIG_DIR || '/home/raymund/.gemini/antigravity-cli' }}
+          ODYSSEUS_MCP_URL: http://odysseus-api:8000/mcp
+          ODYSSEUS_MCP_TOKEN: ${{ secrets.ODYSSEUS_MCP_TOKEN }}
         run: |
           # Create backup directory for huginn-backup if it doesn't exist
           docker run --rm -v /mnt/storage/backups/odin/hermes:/backup alpine sh -c "mkdir -p /backup && chown -R 1000:1000 /backup && chmod 775 /backup"

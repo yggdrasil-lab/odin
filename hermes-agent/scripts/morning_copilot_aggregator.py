@@ -21,12 +21,35 @@ from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.request
+
+
+def _ensure_odin_runtime_on_path() -> None:
+    """Ensure odin_runtime is importable in both repo tests and container /usr/local/bin."""
+    repo_hermes_dir = Path(__file__).resolve().parents[1]
+    if (repo_hermes_dir / "odin_runtime").is_dir() and str(repo_hermes_dir) not in sys.path:
+        sys.path.insert(0, str(repo_hermes_dir))
+        return
+    venv_lib = Path("/opt/hermes/.venv/lib")
+    if venv_lib.is_dir():
+        for site_dir in sorted(venv_lib.glob("python*/site-packages")):
+            if (site_dir / "odin_runtime").is_dir() and str(site_dir) not in sys.path:
+                sys.path.insert(0, str(site_dir))
+                return
+
+
+_ensure_odin_runtime_on_path()
+from odin_runtime.odysseus_briefing import (  # noqa: E402
+    OdysseusTravelDigest,
+    fetch_odysseus_travel_briefings,
+    format_odysseus_briefing_section,
+)
 
 try:
     from audit_swarm_health import audit_swarm_services
@@ -55,6 +78,8 @@ DEFAULT_EIR_URL = os.environ.get("EIR_API_URL", "http://eir-api:8000")
 DEFAULT_KRATOS_URL = os.environ.get("KRATOS_API_URL", "http://kratos-api:8000")
 DEFAULT_PLUTUS_URL = os.environ.get("PLUTUS_API_URL", "http://plutus-api:8000")
 DEFAULT_CHRONOS_URL = os.environ.get("CHRONOS_API_URL", "http://chronos-api:8000")
+DEFAULT_ODYSSEUS_MCP_URL = os.environ.get("ODYSSEUS_MCP_URL", "http://odysseus-api:8000/mcp")
+DEFAULT_ODYSSEUS_MCP_TOKEN = os.environ.get("ODYSSEUS_MCP_TOKEN", "")
 DEFAULT_HUGINN_URL = os.environ.get("HUGINN_GATEWAY_URL", "http://huginn-gateway:8642")
 
 OBSIDIAN_VAULT_PATH = os.environ.get(
@@ -815,6 +840,9 @@ class MorningCopilotReport:
     plutus: PlutusTelemetry
     odin: OdinTelemetry
     chronos: ChronosSummary = field(default_factory=ChronosSummary)
+    odysseus: OdysseusTravelDigest = field(
+        default_factory=lambda: OdysseusTravelDigest(status="none")
+    )
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -826,6 +854,7 @@ class MorningCopilotReport:
             "plutus": asdict(self.plutus),
             "odin": asdict(self.odin),
             "chronos": asdict(self.chronos),
+            "odysseus": asdict(self.odysseus),
         }
 
 
@@ -1045,6 +1074,10 @@ def generate_executive_markdown(report: MorningCopilotReport, section: str = "al
         lines.append("")
 
     lines.extend(_render_chronos_lines(report.chronos))
+    travel_section = format_odysseus_briefing_section(report.odysseus)
+    if travel_section:
+        lines.extend(travel_section.splitlines())
+        lines.append("")
     lines.extend(_render_wealth_lines(report.plutus))
     lines.extend(_render_swarm_lines(report.odin))
 
@@ -1084,6 +1117,29 @@ def append_to_obsidian_journal(vault_path: str, target_date: str, content: str) 
         return False
 
 
+def _fetch_odysseus_section(
+    date_str: str,
+    odysseus_mcp_url: Optional[str],
+    odysseus_mcp_token: Optional[str],
+) -> OdysseusTravelDigest:
+    """Resolve Odysseus MCP config from args or env and fetch travel briefings."""
+    resolved_url = (
+        odysseus_mcp_url
+        if odysseus_mcp_url is not None
+        else os.environ.get("ODYSSEUS_MCP_URL", DEFAULT_ODYSSEUS_MCP_URL)
+    )
+    resolved_token = (
+        odysseus_mcp_token
+        if odysseus_mcp_token is not None
+        else os.environ.get("ODYSSEUS_MCP_TOKEN", DEFAULT_ODYSSEUS_MCP_TOKEN)
+    )
+    return fetch_odysseus_travel_briefings(
+        mcp_url=resolved_url,
+        token=resolved_token,
+        today=date.fromisoformat(_validate_iso_date(date_str)),
+    )
+
+
 def run_morning_copilot(
     target_date: Optional[str] = None,
     eir_url: str = DEFAULT_EIR_URL,
@@ -1093,6 +1149,8 @@ def run_morning_copilot(
     vault_path: str = OBSIDIAN_VAULT_PATH,
     save_journal: bool = False,
     section: str = "all",
+    odysseus_mcp_url: Optional[str] = None,
+    odysseus_mcp_token: Optional[str] = None,
 ) -> MorningCopilotReport:
     """Executes full cross-stack aggregation cycle."""
     date_str = target_date or get_auckland_today()
@@ -1108,10 +1166,12 @@ def run_morning_copilot(
         plutus = fetch_plutus_telemetry(plutus_url, date_str)
         chronos = fetch_chronos_summary(chronos_url, date_str)
         odin = fetch_odin_telemetry()
+        odysseus = _fetch_odysseus_section(date_str, odysseus_mcp_url, odysseus_mcp_token)
     else:
         plutus = PlutusTelemetry(as_of_date=date_str)
         chronos = ChronosSummary(date=date_str, available=False)
         odin = OdinTelemetry()
+        odysseus = OdysseusTravelDigest(status="none")
 
     report = MorningCopilotReport(
         date=date_str,
@@ -1120,6 +1180,7 @@ def run_morning_copilot(
         plutus=plutus,
         odin=odin,
         chronos=chronos,
+        odysseus=odysseus,
     )
     if save_journal:
         append_to_obsidian_journal(vault_path, date_str, generate_executive_markdown(report, section=section))
@@ -1138,6 +1199,7 @@ def main() -> int:
     parser.add_argument("--kratos-url", type=str, default=DEFAULT_KRATOS_URL, help="Kratos API base URL")
     parser.add_argument("--plutus-url", type=str, default=DEFAULT_PLUTUS_URL, help="Plutus API base URL")
     parser.add_argument("--chronos-url", type=str, default=DEFAULT_CHRONOS_URL, help="Chronos API base URL")
+    parser.add_argument("--odysseus-mcp-url", type=str, default=None, help="Odysseus MCP endpoint URL")
     parser.add_argument("--vault-path", type=str, default=OBSIDIAN_VAULT_PATH, help="Path to Obsidian vault")
     parser.add_argument("--output-file", type=str, default=None, help="Save markdown output to specified file path")
     args = parser.parse_args()
@@ -1151,6 +1213,7 @@ def main() -> int:
         vault_path=args.vault_path,
         save_journal=args.journal,
         section=args.section,
+        odysseus_mcp_url=args.odysseus_mcp_url,
     )
 
     if args.require_data and args.section == "training":
