@@ -25,6 +25,7 @@ from forseti_visual_gatekeeper import (
     capture_browserless_screenshot,
     discover_screenshots,
     generate_side_by_side_markdown,
+    main,
     probe_browserless_health,
     resolve_browserless_url,
     resolve_browserless_ws,
@@ -436,6 +437,67 @@ class TestForsetiVisualGatekeeper(unittest.TestCase):
         ):
             with self.assertRaises(FileNotFoundError):
                 resolve_vault_path()
+
+    def _setup_repo_with_leftover_png(self, repo_name: str = "midas") -> Path:
+        repo = Path(self.temp_dir) / repo_name
+        ios_dir = repo / "screenshots" / "ios"
+        ios_dir.mkdir(parents=True)
+        (ios_dir / "01-home.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        return repo
+
+    def test_main_skips_vault_sync_when_visual_gate_fails(self) -> None:
+        """Verify failed visual gate logs warning, skips Obsidian sync, and keeps outputs."""
+        repo = self._setup_repo_with_leftover_png("midas")
+        md_out = Path(self.temp_dir) / "failed_report.md"
+        argv = [
+            "forseti_visual_gatekeeper.py",
+            "midas",
+            "--sync-vault",
+            "--markdown-out",
+            str(md_out),
+            "--post-comment",
+            "--pr",
+            "99",
+        ]
+        with (
+            patch.object(sys, "argv", argv),
+            patch("forseti_visual_gatekeeper.resolve_repo_path", return_value=repo),
+            patch("forseti_visual_gatekeeper.probe_browserless_health", return_value={"reachable": True}),
+            patch("forseti_visual_gatekeeper.run_visual_test_harness", return_value=(False, "Phase 1 build failed")),
+            patch("forseti_visual_gatekeeper.sync_snapshots_to_obsidian") as mock_sync,
+            patch("forseti_visual_gatekeeper.post_github_pr_comment", return_value=True) as mock_comment,
+            patch("sys.stdout", new_callable=io.StringIO) as mock_stdout,
+            self.assertLogs("forseti-gatekeeper", level="WARNING") as logs,
+        ):
+            rc = main()
+
+        self.assertEqual(rc, 1)
+        mock_sync.assert_not_called()
+        mock_comment.assert_called_once()
+        self.assertTrue(md_out.is_file())
+        self.assertIn("FAILED", mock_stdout.getvalue())
+        self.assertTrue(any("Skipping Obsidian Vault sync because visual gate failed." in msg for msg in logs.output))
+
+    def test_main_syncs_vault_when_visual_gate_passes(self) -> None:
+        """Verify passing visual gate still syncs discovered screenshots to Obsidian."""
+        repo = self._setup_repo_with_leftover_png("midas")
+        review_note = Path(self.temp_dir) / "Midas PWA Visual Review.md"
+        argv = ["forseti_visual_gatekeeper.py", "midas", "--sync-vault"]
+        with (
+            patch.object(sys, "argv", argv),
+            patch("forseti_visual_gatekeeper.resolve_repo_path", return_value=repo),
+            patch("forseti_visual_gatekeeper.probe_browserless_health", return_value={"reachable": True}),
+            patch("forseti_visual_gatekeeper.run_visual_test_harness", return_value=(True, "All visual checks passed")),
+            patch("forseti_visual_gatekeeper.sync_snapshots_to_obsidian", return_value=(1, review_note)) as mock_sync,
+            patch("sys.stdout", new_callable=io.StringIO) as mock_stdout,
+        ):
+            rc = main()
+
+        self.assertEqual(rc, 0)
+        mock_sync.assert_called_once()
+        self.assertEqual(mock_sync.call_args.kwargs["repo_name"], "midas")
+        self.assertIn("01-home", mock_sync.call_args.kwargs["screenshots_map"])
+        self.assertIn("PASSED", mock_stdout.getvalue())
 
 
 if __name__ == "__main__":

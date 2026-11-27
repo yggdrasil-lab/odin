@@ -489,17 +489,21 @@ def _publish_gate_outputs(
     screenshots_map: Dict[str, Dict[str, Path]],
     markdown_report: str,
     pr_num: Optional[str],
+    *,
+    passed: bool,
 ) -> None:
-    """Write markdown output file, sync Vault screenshots, and post GitHub PR comment."""
+    """Write markdown output file, sync Vault screenshots on pass, and post GitHub PR comment."""
     if args.markdown_out:
         out_p = Path(args.markdown_out)
         out_p.parent.mkdir(parents=True, exist_ok=True)
         out_p.write_text(markdown_report, encoding="utf-8")
         logger.info("Saved markdown comparison report to %s", out_p)
 
-    if args.sync_vault and screenshots_map:
+    if args.sync_vault and passed and screenshots_map:
         copied, note_path = sync_snapshots_to_obsidian(repo_name=repo_name, screenshots_map=screenshots_map, markdown_report=markdown_report)
         logger.info("Obsidian sync complete: %d snapshots copied to %s", copied, note_path)
+    elif args.sync_vault and not passed:
+        logger.warning("Skipping Obsidian Vault sync because visual gate failed.")
 
     if args.post_comment and pr_num:
         comment_ok = post_github_pr_comment(repo_name, pr_num, markdown_report)
@@ -533,7 +537,7 @@ def main() -> int:
         repo_name=repo_name, screenshots_map=screenshots_map, pr_number=pr_num,
         test_passed=passed, test_output=output, browserless_url=browserless_url,
     )
-    _publish_gate_outputs(args, repo_name, screenshots_map, markdown_report, pr_num)
+    _publish_gate_outputs(args, repo_name, screenshots_map, markdown_report, pr_num, passed=passed)
     print("\n" + markdown_report)
     return 0 if passed else 1
 
