@@ -34,6 +34,8 @@ x-hermes-common-env: &hermes-common-env
   MNEMOSYNE_LLM_API_KEY: ${MUNINN_MASTER_KEY}
   MNEMOSYNE_LLM_MODEL: ${MNEMOSYNE_LLM_MODEL}
   MNEMOSYNE_SKIP_CONTEXTS: flush,subagent,background,skill_loop
+  ODYSSEUS_MCP_URL: ${ODYSSEUS_MCP_URL}
+  ODYSSEUS_MCP_TOKEN: ${ODYSSEUS_MCP_TOKEN}
 
 services:
   muninn-db:
