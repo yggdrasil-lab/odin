@@ -323,7 +323,6 @@ def compute_sleep_and_nap_trends(
     nap_days = 0
     total_nap_hours = 0.0
     yesterday_summary: Optional[Dict[str, Any]] = None
-
     for day_str, summary in window_summaries:
         if day_str == yesterday_date:
             yesterday_summary = summary
@@ -337,14 +336,9 @@ def compute_sleep_and_nap_trends(
         if nap_count > 0 or (nap_h is not None and nap_h > 0.0):
             nap_days += 1
             total_nap_hours += nap_h or 0.0
-
     nights = len(populated_sleeps)
     avg_sleep = round(sum(populated_sleeps) / nights, 2) if nights > 0 else None
-    debt_hours = (
-        round(sum(max(0.0, sleep_target_hours - h) for h in populated_sleeps), 2)
-        if nights > 0
-        else None
-    )
+    debt_hours = round(sum(max(0.0, sleep_target_hours - h) for h in populated_sleeps), 2) if nights > 0 else None
     return {
         "sleep_target_hours": sleep_target_hours,
         "sleep_nights_7d": nights,
@@ -382,40 +376,15 @@ def _fetch_eir_sleep_window(
     return window, yesterday_str
 
 
-def fetch_eir_telemetry(base_url: str, target_date: str) -> EirTelemetry:
-    """Fetches and evaluates daily biometrics and 7d sleep/nap trends from Eir API."""
-    validated_date = _validate_iso_date(target_date)
-    clean_base = base_url.rstrip("/")
-    daily_data = _fetch_eir_daily_safe(clean_base, validated_date)
-    window_summaries, yesterday_str = _fetch_eir_sleep_window(clean_base, validated_date, daily_data)
-    trends = compute_sleep_and_nap_trends(window_summaries, yesterday_str)
-
-    data = daily_data
-    if not data:
-        # Retry with latest only for current-day vitals if target day not yet seeded
-        data = fetch_overlay_json(f"{clean_base}/biometrics/latest")
-
-    if not data:
-        return EirTelemetry(
-            date=validated_date,
-            recovery_tier="unpopulated",
-            recovery_label="⚪ Pending (Telemetry Unavailable)",
-            recovery_rationale="Eir API did not return biometrics; telemetry syncing pending.",
-            **trends,
-        )
-
+def _build_eir_telemetry(validated_date: str, data: Dict[str, Any], trends: Dict[str, Any]) -> EirTelemetry:
+    """Parses current-day Eir vitals, scores biological recovery, and merges 7d sleep trends."""
     sleep_h = _to_optional_float(data.get("sleep_duration_hours"))
     deep_h = _to_optional_float(data.get("sleep_deep_hours"))
     rhr = int(data["resting_hr_bpm"]) if data.get("resting_hr_bpm") is not None else None
     hrv = _to_optional_float(data.get("hrv_ms"))
     overnight_hrv = _to_optional_float(data.get("overnight_hrv_ms"))
     effective_hrv, hrv_source = _resolve_effective_hrv(overnight_hrv, hrv)
-    weight = _to_optional_float(data.get("latest_weight_kg"))
-    fat = _to_optional_float(data.get("latest_body_fat_pct"))
-    energy = int(data["active_energy_kcal"]) if data.get("active_energy_kcal") is not None else None
-
     tier, label, rationale = evaluate_biological_recovery(sleep_h, deep_h, rhr, effective_hrv)
-
     return EirTelemetry(
         date=validated_date,
         sleep_duration_hours=sleep_h,
@@ -425,15 +394,34 @@ def fetch_eir_telemetry(base_url: str, target_date: str) -> EirTelemetry:
         overnight_hrv_ms=overnight_hrv,
         effective_hrv_ms=effective_hrv,
         hrv_source=hrv_source,
-        weight_kg=weight,
-        body_fat_pct=fat,
-        active_energy_kcal=energy,
+        weight_kg=_to_optional_float(data.get("latest_weight_kg")),
+        body_fat_pct=_to_optional_float(data.get("latest_body_fat_pct")),
+        active_energy_kcal=int(data["active_energy_kcal"]) if data.get("active_energy_kcal") is not None else None,
         recovery_tier=tier,
         recovery_label=label,
         recovery_rationale=rationale,
         readiness_notes=data.get("readiness_notes") or [],
         **trends,
     )
+
+
+def fetch_eir_telemetry(base_url: str, target_date: str) -> EirTelemetry:
+    """Fetches and evaluates daily biometrics and 7d sleep/nap trends from Eir API."""
+    validated_date = _validate_iso_date(target_date)
+    clean_base = base_url.rstrip("/")
+    daily_data = _fetch_eir_daily_safe(clean_base, validated_date)
+    window_summaries, yesterday_str = _fetch_eir_sleep_window(clean_base, validated_date, daily_data)
+    trends = compute_sleep_and_nap_trends(window_summaries, yesterday_str)
+    data = daily_data or fetch_overlay_json(f"{clean_base}/biometrics/latest")
+    if not data:
+        return EirTelemetry(
+            date=validated_date,
+            recovery_tier="unpopulated",
+            recovery_label="⚪ Pending (Telemetry Unavailable)",
+            recovery_rationale="Eir API did not return biometrics; telemetry syncing pending.",
+            **trends,
+        )
+    return _build_eir_telemetry(validated_date, data, trends)
 
 
 # ----------------------------------------------------------------------
