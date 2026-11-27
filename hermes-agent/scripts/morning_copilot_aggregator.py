@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -27,6 +28,7 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.request
+from zoneinfo import ZoneInfo
 
 try:
     from audit_swarm_health import audit_swarm_services
@@ -61,6 +63,8 @@ OBSIDIAN_VAULT_PATH = os.environ.get(
     "OBSIDIAN_VAULT_PATH",
     "/app/vault" if os.path.exists("/app/vault") else "/opt/atlas/vault",
 )
+DEFAULT_SLEEP_TARGET_HOURS = 7.0
+SLEEP_LOOKBACK_DAYS = 6
 
 
 def get_auckland_today() -> str:
@@ -123,9 +127,19 @@ class EirTelemetry:
     sleep_deep_hours: Optional[float] = None
     resting_hr_bpm: Optional[int] = None
     hrv_ms: Optional[float] = None
+    overnight_hrv_ms: Optional[float] = None
+    effective_hrv_ms: Optional[float] = None
+    hrv_source: Optional[str] = None
     weight_kg: Optional[float] = None
     body_fat_pct: Optional[float] = None
     active_energy_kcal: Optional[int] = None
+    sleep_target_hours: float = DEFAULT_SLEEP_TARGET_HOURS
+    sleep_nights_7d: int = 0
+    avg_overnight_sleep_7d: Optional[float] = None
+    sleep_debt_7d_hours: Optional[float] = None
+    nap_days_7d: int = 0
+    total_nap_hours_7d: float = 0.0
+    yesterday_nap: Optional[Dict[str, Any]] = None
     recovery_tier: str = "amber"  # green, amber, red
     recovery_label: str = "🟡 Amber (Moderate Fatigue)"
     recovery_rationale: str = ""
@@ -208,46 +222,217 @@ def evaluate_biological_recovery(
     return tier, label, rationale
 
 
+def _to_optional_float(value: Any) -> Optional[float]:
+    """Parses int, float, Decimal, or numeric string into a finite float or None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _to_nonneg_int(value: Any, default: int = 0) -> int:
+    """Parses int or numeric string into a non-negative integer."""
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _resolve_effective_hrv(
+    overnight_hrv: Optional[float],
+    latest_hrv: Optional[float],
+) -> Tuple[Optional[float], Optional[str]]:
+    """Prefers overnight HRV over latest daytime HRV for recovery scoring."""
+    if overnight_hrv is not None:
+        return overnight_hrv, "overnight"
+    if latest_hrv is not None:
+        return latest_hrv, "latest"
+    return None, None
+
+
+def _parse_auckland_hhmm(iso_ts: Any) -> Optional[Tuple[datetime, str]]:
+    """Parses an ISO-8601 timestamp and formats HH:MM in Pacific/Auckland."""
+    if not isinstance(iso_ts, str) or not iso_ts.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(iso_ts.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed, parsed.strftime("%H:%M")
+    try:
+        local_dt = parsed.astimezone(ZoneInfo("Pacific/Auckland"))
+    except Exception:
+        local_dt = parsed
+    return local_dt, local_dt.strftime("%H:%M")
+
+
+def _extract_latest_nap_end_local(naps: Any) -> Optional[str]:
+    """Returns the latest nap end time (HH:MM Pacific/Auckland) from a naps list."""
+    if not isinstance(naps, list):
+        return None
+    latest_pair: Optional[Tuple[datetime, str]] = None
+    for entry in naps:
+        if not isinstance(entry, dict):
+            continue
+        parsed = _parse_auckland_hhmm(entry.get("end_at"))
+        if parsed is None:
+            continue
+        if latest_pair is None or parsed[0] > latest_pair[0]:
+            latest_pair = parsed
+    return latest_pair[1] if latest_pair is not None else None
+
+
+def _extract_yesterday_nap(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Extracts yesterday's nap summary dict or None when no naps were logged."""
+    if not isinstance(summary, dict):
+        return None
+    nap_count = _to_nonneg_int(summary.get("nap_count"), 0)
+    nap_hours = _to_optional_float(summary.get("nap_duration_hours"))
+    naps_list = summary.get("naps")
+    has_naps_list = isinstance(naps_list, list) and len(naps_list) > 0
+    if nap_count <= 0 and (nap_hours is None or nap_hours <= 0.0) and not has_naps_list:
+        return None
+    if nap_hours is None and has_naps_list:
+        nap_hours = sum(
+            _to_optional_float(item.get("duration_hours")) or 0.0
+            for item in naps_list
+            if isinstance(item, dict)
+        )
+    resolved_count = nap_count if nap_count > 0 else (len(naps_list) if has_naps_list else 1)
+    return {
+        "duration_hours": round(nap_hours or 0.0, 2),
+        "nap_count": resolved_count,
+        "latest_end_local": _extract_latest_nap_end_local(naps_list),
+    }
+
+
+def compute_sleep_and_nap_trends(
+    window_summaries: List[Tuple[str, Optional[Dict[str, Any]]]],
+    yesterday_date: str,
+    sleep_target_hours: float = DEFAULT_SLEEP_TARGET_HOURS,
+) -> Dict[str, Any]:
+    """Computes 7-day rolling overnight sleep debt, nap totals, and yesterday's nap."""
+    populated_sleeps: List[float] = []
+    nap_days = 0
+    total_nap_hours = 0.0
+    yesterday_summary: Optional[Dict[str, Any]] = None
+
+    for day_str, summary in window_summaries:
+        if day_str == yesterday_date:
+            yesterday_summary = summary
+        if not isinstance(summary, dict):
+            continue
+        sleep_h = _to_optional_float(summary.get("sleep_duration_hours"))
+        if sleep_h is not None:
+            populated_sleeps.append(sleep_h)
+        nap_count = _to_nonneg_int(summary.get("nap_count"), 0)
+        nap_h = _to_optional_float(summary.get("nap_duration_hours"))
+        if nap_count > 0 or (nap_h is not None and nap_h > 0.0):
+            nap_days += 1
+            total_nap_hours += nap_h or 0.0
+
+    nights = len(populated_sleeps)
+    avg_sleep = round(sum(populated_sleeps) / nights, 2) if nights > 0 else None
+    debt_hours = (
+        round(sum(max(0.0, sleep_target_hours - h) for h in populated_sleeps), 2)
+        if nights > 0
+        else None
+    )
+    return {
+        "sleep_target_hours": sleep_target_hours,
+        "sleep_nights_7d": nights,
+        "avg_overnight_sleep_7d": avg_sleep,
+        "sleep_debt_7d_hours": debt_hours,
+        "nap_days_7d": nap_days,
+        "total_nap_hours_7d": round(total_nap_hours, 2),
+        "yesterday_nap": _extract_yesterday_nap(yesterday_summary),
+    }
+
+
+def _fetch_eir_daily_safe(base_url: str, day_str: str) -> Optional[Dict[str, Any]]:
+    """Fetches a single day's Eir summary, failing soft without /latest fallback."""
+    try:
+        data = fetch_overlay_json(f"{base_url}/biometrics/daily/{day_str}")
+    except Exception as exc:
+        logger.debug("Eir daily lookup failed for %s: %s", day_str, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _fetch_eir_sleep_window(
+    base_url: str,
+    target_date: str,
+    target_daily: Optional[Dict[str, Any]],
+) -> Tuple[List[Tuple[str, Optional[Dict[str, Any]]]], str]:
+    """Fetches prior 6 days [target-6d..target-1d] and combines with target_date summary."""
+    anchor = date.fromisoformat(target_date)
+    yesterday_str = (anchor - timedelta(days=1)).isoformat()
+    window: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+    for offset in range(SLEEP_LOOKBACK_DAYS, 0, -1):
+        day_str = (anchor - timedelta(days=offset)).isoformat()
+        window.append((day_str, _fetch_eir_daily_safe(base_url, day_str)))
+    window.append((target_date, target_daily))
+    return window, yesterday_str
+
+
 def fetch_eir_telemetry(base_url: str, target_date: str) -> EirTelemetry:
-    """Fetches and evaluates daily biometrics from Eir API."""
-    data = fetch_overlay_json(f"{base_url}/biometrics/daily/{target_date}")
+    """Fetches and evaluates daily biometrics and 7d sleep/nap trends from Eir API."""
+    validated_date = _validate_iso_date(target_date)
+    clean_base = base_url.rstrip("/")
+    daily_data = _fetch_eir_daily_safe(clean_base, validated_date)
+    window_summaries, yesterday_str = _fetch_eir_sleep_window(clean_base, validated_date, daily_data)
+    trends = compute_sleep_and_nap_trends(window_summaries, yesterday_str)
+
+    data = daily_data
     if not data:
-        # Retry with latest if target day not yet seeded
-        data = fetch_overlay_json(f"{base_url}/biometrics/latest")
+        # Retry with latest only for current-day vitals if target day not yet seeded
+        data = fetch_overlay_json(f"{clean_base}/biometrics/latest")
 
     if not data:
         return EirTelemetry(
-            date=target_date,
+            date=validated_date,
             recovery_tier="unpopulated",
             recovery_label="⚪ Pending (Telemetry Unavailable)",
             recovery_rationale="Eir API did not return biometrics; telemetry syncing pending.",
+            **trends,
         )
 
-    sleep_h = float(data["sleep_duration_hours"]) if data.get("sleep_duration_hours") is not None else None
-    deep_h = float(data["sleep_deep_hours"]) if data.get("sleep_deep_hours") is not None else None
+    sleep_h = _to_optional_float(data.get("sleep_duration_hours"))
+    deep_h = _to_optional_float(data.get("sleep_deep_hours"))
     rhr = int(data["resting_hr_bpm"]) if data.get("resting_hr_bpm") is not None else None
-    hrv = float(data["hrv_ms"]) if data.get("hrv_ms") is not None else None
-    weight = float(data["latest_weight_kg"]) if data.get("latest_weight_kg") is not None else None
-    fat = float(data["latest_body_fat_pct"]) if data.get("latest_body_fat_pct") is not None else None
+    hrv = _to_optional_float(data.get("hrv_ms"))
+    overnight_hrv = _to_optional_float(data.get("overnight_hrv_ms"))
+    effective_hrv, hrv_source = _resolve_effective_hrv(overnight_hrv, hrv)
+    weight = _to_optional_float(data.get("latest_weight_kg"))
+    fat = _to_optional_float(data.get("latest_body_fat_pct"))
     energy = int(data["active_energy_kcal"]) if data.get("active_energy_kcal") is not None else None
 
-    tier, label, rationale = evaluate_biological_recovery(sleep_h, deep_h, rhr, hrv)
-
-    notes = data.get("readiness_notes") or []
+    tier, label, rationale = evaluate_biological_recovery(sleep_h, deep_h, rhr, effective_hrv)
 
     return EirTelemetry(
-        date=target_date,
+        date=validated_date,
         sleep_duration_hours=sleep_h,
         sleep_deep_hours=deep_h,
         resting_hr_bpm=rhr,
         hrv_ms=hrv,
+        overnight_hrv_ms=overnight_hrv,
+        effective_hrv_ms=effective_hrv,
+        hrv_source=hrv_source,
         weight_kg=weight,
         body_fat_pct=fat,
         active_energy_kcal=energy,
         recovery_tier=tier,
         recovery_label=label,
         recovery_rationale=rationale,
-        readiness_notes=notes,
+        readiness_notes=data.get("readiness_notes") or [],
+        **trends,
     )
 
 
@@ -829,14 +1014,38 @@ class MorningCopilotReport:
         }
 
 
+def _render_sleep_trend_line(eir: EirTelemetry) -> Optional[str]:
+    """Formats the 7-day overnight sleep debt and yesterday nap trend bullet."""
+    if eir.sleep_nights_7d <= 0 and not eir.yesterday_nap:
+        return None
+    parts: List[str] = []
+    if (
+        eir.sleep_nights_7d > 0
+        and eir.avg_overnight_sleep_7d is not None
+        and eir.sleep_debt_7d_hours is not None
+    ):
+        parts.append(f"Avg {eir.avg_overnight_sleep_7d:.1f}h overnight ({eir.sleep_nights_7d}d)")
+        parts.append(f"Debt {eir.sleep_debt_7d_hours:.1f}h vs {eir.sleep_target_hours:.1f}h")
+    parts.append(f"Naps: {eir.nap_days_7d}d ({eir.total_nap_hours_7d:.1f}h)")
+    if eir.yesterday_nap:
+        y_dur = _to_optional_float(eir.yesterday_nap.get("duration_hours"))
+        y_end = eir.yesterday_nap.get("latest_end_local")
+        dur_str = f"{y_dur:.1f}h" if y_dur is not None else "logged"
+        end_str = f" (ended {y_end})" if y_end else ""
+        parts.append(f"Yesterday nap: {dur_str}{end_str}")
+    return f"- **Sleep Trend (7d)**: {' | '.join(parts)}"
+
+
 def _render_biometrics_lines(eir: EirTelemetry, kratos: KratosTelemetry) -> List[str]:
     """Formats Eir biometrics and Kratos training prescription lines."""
     vitals_parts = []
     if eir.sleep_duration_hours is not None:
         deep_str = f" ({eir.sleep_deep_hours:.1f}h deep)" if eir.sleep_deep_hours is not None else ""
         vitals_parts.append(f"Sleep {eir.sleep_duration_hours:.1f}h{deep_str}")
-    if eir.hrv_ms is not None:
-        vitals_parts.append(f"HRV {eir.hrv_ms:.1f}ms")
+    display_hrv = eir.effective_hrv_ms if eir.effective_hrv_ms is not None else eir.hrv_ms
+    if display_hrv is not None:
+        hrv_label = "Overnight HRV" if eir.hrv_source == "overnight" else "HRV"
+        vitals_parts.append(f"{hrv_label} {display_hrv:.1f}ms")
     if eir.resting_hr_bpm is not None:
         vitals_parts.append(f"RHR {eir.resting_hr_bpm}bpm")
     if eir.weight_kg is not None:
@@ -845,9 +1054,14 @@ def _render_biometrics_lines(eir: EirTelemetry, kratos: KratosTelemetry) -> List
 
     lines = [
         f"- **Vitals**: {' | '.join(vitals_parts) if vitals_parts else 'Telemetry syncing'}",
+    ]
+    sleep_trend_line = _render_sleep_trend_line(eir)
+    if sleep_trend_line:
+        lines.append(sleep_trend_line)
+    lines.extend([
         f"- **Readiness**: {eir.recovery_label} - {eir.recovery_rationale}",
         f"- **Scheduled Split**: {kratos.today_activity} ({kratos.volume_adaptation})",
-    ]
+    ])
     if kratos.badminton_buffer_note:
         lines.append(f"- **🏸 Athletic Buffer**: {kratos.badminton_buffer_note}")
     if kratos.recommended_exercises:
@@ -1155,7 +1369,11 @@ def main() -> int:
 
     if args.require_data and args.section == "training":
         has_useful_data = (
-            (report.eir.sleep_duration_hours is not None or report.eir.hrv_ms is not None)
+            (
+                report.eir.sleep_duration_hours is not None
+                or report.eir.effective_hrv_ms is not None
+                or report.eir.hrv_ms is not None
+            )
             and report.eir.recovery_tier != "unpopulated"
         )
         if not has_useful_data:
